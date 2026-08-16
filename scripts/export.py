@@ -146,7 +146,11 @@ def main() -> int:
         row["launchable"] = (regs * thr <= hw.regs_per_sm) if regs and thr else None
         row["has_spill"] = ((k.get("spill_stores") or 0)
                             + (k.get("spill_loads") or 0)) > 0
-        row["smem_matches"] = k.get("smem_dynamic") == k.get("smem_computed")
+        # smem_computed 는 kernels.jsonl 에 빌드 시점 공식으로 박혀 있으므로
+        # 항상 지금 공식으로 재계산한다 (append-only 파일은 고칠 수 없다).
+        row["smem_computed"] = backend.smem_bytes(cfg, 2)
+        row["smem_computed_at_build"] = k.get("smem_computed")
+        row["smem_matches"] = k.get("smem_dynamic") == row["smem_computed"]
         row["hmma_matches"] = k.get("hmma_count") == k.get("expected_hmma")
 
         # 성능 파생

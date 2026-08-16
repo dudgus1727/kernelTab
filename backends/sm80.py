@@ -184,7 +184,7 @@ class Sm80Backend:
         epilogue (EpilogueBase::SharedStorage, element = ElementAccumulator):
             rows = warps_m * kRowsPerIteration(8) * warps_k * kFragmentsPerIteration
             cols = tile_n + Padding(8)
-            kFragmentsPerIteration = 2 if warps_k == 1 else 1
+            kFragmentsPerIteration = 2 if (warps_k == 1 and align_c == 8) else 1
         """
         e: Sm80Ext = cfg.ext  # type: ignore[assignment]
         mainloop = e.stages * cfg.tile_k * (cfg.tile_m + cfg.tile_n) * dtype_bytes
@@ -192,7 +192,12 @@ class Sm80Backend:
         warps_m = cfg.tile_m // e.warp_m
         warps_n = cfg.tile_n // e.warp_n
         warps_k = cfg.tile_k // e.warp_k
-        frags = 2 if warps_k == 1 else 1
+        # kFragmentsPerIteration = (kPartitionsK == 1 ? DefaultIterators::... : 1)
+        # 이고, DefaultIteratorsTensorOp 는 <half_t, float, **8**, ...> 특수화에서만
+        # 2 이며 그 외(align_c = 4/2/1)는 일반형이라 1 이다.
+        # 실측: align_c=2 커널 120개에서 이 항 때문에 계산이 18432 로 과대평가됐다
+        # (실제 16384). align_c 를 조건에 넣어 해결.
+        frags = 2 if (warps_k == 1 and cfg.align_c == 8) else 1
         rows = warps_m * 8 * warps_k * frags
         cols = warps_n * e.warp_n + _EPILOGUE_PAD_COLS
         epilogue = rows * cols * _ACC_BYTES

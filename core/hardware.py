@@ -5,7 +5,9 @@ GPU 스펙을 파이썬 코드에 하드코딩하지 않는다.
 
 * API로 얻는 값: arch, sm_count, smem_per_block, max_threads_per_sm,
   regs_per_sm, l2_bytes, 이름  -> CUDA Driver API (libcuda, ctypes)
-* API로 못 얻는 값: peak_tflops_f16, bandwidth_gbps -> hwspec/known.json
+* API로 못 얻는 값: peak_tflops_f16 -> hwspec/known.json (없으면 중단)
+* 대역폭: 버스 폭 x 2(DDR) x 메모리 클럭 으로 API 에서 유도한다.
+  known.json 의 bandwidth_gbps_spec 은 교차검증용이다.
 
 Driver API 를 ctypes 로 직접 쓰는 이유:
   - cudaGetDeviceProperties 는 struct 레이아웃이 CUDA 버전마다 달라
@@ -33,6 +35,9 @@ __all__ = [
     "hardware_to_dict",
     "device_uuid",
     "peak_reference_mhz",
+    "bandwidth_reference_mhz",
+    "bandwidth_from_api",
+    "known_spec",
     "hardware_from_env",
 ]
 
@@ -176,22 +181,53 @@ def peak_reference_mhz(name: str) -> int | None:
     return int(v) if v else None
 
 
-def _lookup_perf(name: str) -> tuple[float, float]:
+def known_spec(name: str) -> dict:
+    """known.json 항목 전체 (교차검증용)."""
+    return dict(_load_known().get(name) or {})
+
+
+def bandwidth_reference_mhz(name: str) -> int | None:
+    """bandwidth_gbps 가 성립하는 메모리 클럭. 클럭 고정 측정 시 보정에 쓴다."""
+    entry = _load_known().get(name)
+    if entry is None:
+        return None
+    v = entry.get("bandwidth_gbps_at_mem_mhz")
+    return int(v) if v else None
+
+
+def _lookup_peak(name: str) -> float:
+    """peak_tflops_f16. **API 로 얻을 방법이 없어 known.json 에 의존한다.**
+
+    없으면 추정하지 않고 중단한다. roofline 의 분자가 여기 직접 달려 있다.
+    (대역폭은 버스 폭 x 2 x 클럭 으로 API 에서 유도되므로 표가 필요 없다.)
+    """
     known = _load_known()
     entry = known.get(name)
     if entry is None:
         raise UnknownGpuError(
             f"GPU '{name}' 가 {HWSPEC_PATH} 에 없다.\n"
             f"  등록된 GPU: {sorted(known)}\n"
-            "  peak_tflops_f16 / bandwidth_gbps 는 추정할 수 없다. roofline 과 "
-            "ridge point 계산이 여기에 직접 의존하므로 공식 스펙시트 값을 "
+            "  peak_tflops_f16 은 API 로 얻을 수 없고 추정해서도 안 된다. "
+            "roofline 의 분자가 여기 직접 의존하므로 공식 스펙시트 값을 "
             "known.json 에 추가한 뒤 다시 실행하라.\n"
-            "  주의: peak_tflops_f16 은 FP32 누산 기준(dense) 값이어야 한다."
+            "  필수 키: peak_tflops_f16 (FP32 누산 기준 dense), "
+            "peak_tflops_f16_at_mhz (그 값이 성립하는 SM 클럭)."
         )
     try:
-        return float(entry["peak_tflops_f16"]), float(entry["bandwidth_gbps"])
+        return float(entry["peak_tflops_f16"])
     except KeyError as e:  # pragma: no cover - 설정 실수
         raise UnknownGpuError(f"'{name}' 항목에 {e} 키가 없다.") from e
+
+
+def bandwidth_from_api(bus_bits: int, mem_mhz: float) -> float:
+    """대역폭 = 버스 폭 x 2(DDR) x 클럭. **유일한 계산 경로다.**
+
+    GDDR6/GDDR6X/HBM 모두 nvidia-smi 가 보고하는 메모리 클럭의 2배가 데이터
+    레이트다 (A6000 8001->16 Gbps, 4090 10501->21 Gbps, H100 2619->5.2 Gbps).
+    known.json 의 bandwidth_gbps_spec 은 교차검증용으로만 쓴다 — 계산 경로가
+    하나여야 다른 GPU 에서 표 항목을 빼먹어도 조용히 틀리지 않는다.
+    """
+    return bus_bits * 2 * mem_mhz * 1e6 / 8 / 1e9
 
 
 # ---------------------------------------------------------------------------
@@ -204,7 +240,10 @@ def detect_hardware(device_index: int = 0) -> Hardware:
     minor = _attr(dev, "compute_capability_minor")
     arch = f"sm_{major}{minor}"
     name = _name(dev)
-    peak_tflops, bw = _lookup_perf(name)
+    peak_tflops = _lookup_peak(name)
+    # 대역폭은 표가 아니라 API 에서 유도한다 (P0 최대 메모리 클럭 기준).
+    bw = round(bandwidth_from_api(_attr(dev, "global_memory_bus_width"),
+                                  _attr(dev, "memory_clock_rate_khz") / 1000.0), 2)
 
     return Hardware(
         name=name,
@@ -249,6 +288,9 @@ def hardware_from_env(env: dict) -> Hardware:
     eff = env.get("peak_tflops_f16_effective")
     if eff and eff != hw.peak_tflops_f16:
         hw = dc_replace(hw, peak_tflops_f16=float(eff))
+    bw = env.get("bandwidth_gbps_effective")
+    if bw and bw != hw.bandwidth_gbps:
+        hw = dc_replace(hw, bandwidth_gbps=float(bw))
     return hw
 
 

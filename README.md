@@ -39,7 +39,8 @@ results/         측정 산출물 (.gitignore 대상)
 ```bash
 # 0) 관리자가 클럭 고정 (권한 필요). 이 하네스는 권한이 없어도 동작한다.
 sudo nvidia-smi -i 3 -pm 1
-sudo nvidia-smi -i 3 -lgc 1350,1350
+sudo nvidia-smi -i 3 -lgc 1350,1350     # SM 클럭
+sudo nvidia-smi -i 3 -lmc 8001          # 메모리 클럭 (아래 주의 참조)
 
 python3 scripts/phase0_env.py --device 3 --externally-locked-mhz 1350
 python3 scripts/verify_clock_lock.py --minutes 5   # 부하 상태에서 정말 유지되는가
@@ -57,7 +58,7 @@ python3 scripts/export.py                          # -> results/table.parquet
 
 > ### ⚠️ 측정이 끝나면 클럭 고정을 반드시 해제할 것
 > ```bash
-> sudo nvidia-smi -i 3 -rgc
+> sudo nvidia-smi -i 3 -rgc && sudo nvidia-smi -i 3 -rmc
 > ```
 > 고정된 채로 두면 그 GPU 를 쓰는 다른 사용자가 원인 모를 성능 저하를 겪는다.
 > 부팅해도 persistence mode 가 켜져 있으면 유지될 수 있다.
@@ -78,26 +79,48 @@ python3 scripts/export.py                          # -> results/table.parquet
   동안 부하를 걸어 메모리 클럭을 램프업시킨다. 램프업 전후 값을 로그에 남긴다.
 * 측정 줄마다 `mem_clock_mhz` 를 기록한다. 나중에 이상치를 만나면 이 값으로
   램프업 문제인지 판별할 수 있다.
-* 더 확실히 하려면 관리자가 메모리 클럭도 고정하면 된다:
-  `sudo nvidia-smi -i N -lmc 8001`
+* 관리자가 메모리 클럭도 고정하면 근본 해결이다:
+  `sudo nvidia-smi -i N -lmc 8001`. 워밍업은 그대로 유지한다 — 클럭을 고정해도
+  캐시/드라이버 상태 워밍업 효과는 남으므로 이중 안전장치다.
+
+> **주의: 요청한 값과 실제 값이 다르다.** A6000 에 `-lmc 8001` 을 걸어도 컴퓨트
+> 워크로드는 P2 상태로 동작해 실제 메모리 클럭은 **7601 MHz** 다 (P0 최대치가
+> 8001). 고정의 효과는 "유휴 810 ↔ 부하 7601" 이 "항상 7601" 로 바뀌는 것이다.
+> `env.json` 의 `locked_mem_mhz` 에는 **부하 중 실제 관측값**을 넣어야 한다.
+
+### 대역폭도 클럭에 맞춰 보정한다
+
+`peak_tflops_f16` 을 SM 클럭으로 보정하는 것과 같은 이유로, `bandwidth_gbps`
+도 메모리 클럭으로 보정해야 한다. `known.json` 의 `bandwidth_gbps_at_mem_mhz`
+가 기준 클럭이다.
+
+```
+A6000 스펙 : 768.0 GB/s @ 8001 MHz (P0)
+P2 실측     : 729.7 GB/s @ 7601 MHz     <- 컴퓨트 워크로드의 실제 값
+```
+
+이 보정을 하지 않으면 ridge point 의 **분모**가 5% 틀린다. SM 클럭 보정과
+합쳐서 최종 ridge point 가 결정된다. `phase0_env.py` 는 버스 폭 x 2(DDR) x
+클럭 으로 독립 교차 검증도 한다 (384-bit x 2 x 7601 MHz / 8 = 729.7 GB/s).
 
 `results/env.json` 은 Phase 0 이 한 번 쓰고 이후 단계는 읽기만 한다.
 모든 측정 줄이 `env_hash` 로 이 파일을 참조하므로 나중에 고치면 안 된다.
 조건이 바뀌면(예: 클럭 고정) 기존 파일을 `env.<조건>.json` 으로 보관하고
 새로 생성한다.
 
-### 클럭 고정과 roofline 보정
+### 클럭 고정과 roofline 보정 (분자)
 
-`nvidia-smi -lgc` 는 **SM 클럭만** 내린다. 메모리 클럭은 그대로이므로
-스펙 피크(부스트 클럭 기준)를 그대로 쓰면 ridge point 가 실제보다 높게 나오고,
-"이 형상이 메모리 바운드인가" 판정이 틀린다.
-
+클럭을 고정하면 스펙 피크(부스트 클럭 기준)를 그대로 쓸 수 없다. ridge point
+가 실제보다 높게 나와 "이 형상이 메모리 바운드인가" 판정이 틀린다.
 `hwspec/known.json` 의 `peak_tflops_f16_at_mhz` 로 보정한다.
 
 ```
-A6000 스펙 : 154.8 TFLOP/s @ 1800 MHz  -> ridge point 201.6 FLOP/byte
-1350 MHz 고정: 116.1 TFLOP/s           -> ridge point 151.2 FLOP/byte
+A6000 스펙 : 154.8 TFLOP/s @ 1800 MHz
+1350 MHz 고정: 116.1 TFLOP/s
 ```
+
+분모(대역폭)도 같은 방식으로 보정한다 — 바로 위 "대역폭도 클럭에 맞춰
+보정한다" 참조. **둘을 모두 보정해야** 최종 ridge point 가 맞는다.
 
 `env.json` 에 `peak_tflops_f16_effective` 로 기록한다. **모든 호출부는
 `core.hardware.hardware_from_env(env)` 로만 `Hardware` 를 만든다** —
@@ -113,8 +136,8 @@ A6000 스펙 : 154.8 TFLOP/s @ 1800 MHz  -> ridge point 201.6 FLOP/byte
 > 마다 달라져 전이 실험이 오염된다. A6000 을 1350 MHz 로 고정하면 ridge
 > point 가 201.6 → 151.2 로 25% 이동하고, 그 사이에 있는 형상들의 bound
 > 분류가 통째로 뒤집힌다. 새 GPU 를 추가할 때는 `known.json` 에
-> `peak_tflops_f16_at_mhz` 를 **반드시** 같이 넣어야 하며, 없으면 보정이
->조용히 생략된다.
+> `peak_tflops_f16_at_mhz` 와 `bandwidth_gbps_at_mem_mhz` 를 **반드시** 같이
+> 넣어야 하며, 없으면 보정이 조용히 생략된다.
 
 ### 측정 조건이 다른 데이터는 섞지 말 것
 

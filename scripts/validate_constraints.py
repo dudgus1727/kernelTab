@@ -18,9 +18,11 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+from backends import get_backend  # noqa: E402
 from backends.sm80 import (  # noqa: E402
     epilogue_thread_map_ok, mainloop_smem_thread_map_ok,
 )
+from core.types import KernelConfig  # noqa: E402
 from build import paths  # noqa: E402
 
 KERNELS = paths.RESULTS_DIR / "kernels.jsonl"
@@ -110,12 +112,27 @@ def main() -> int:
 
     # --- 2) smem / hmma 대조 ------------------------------------------------
     ok = [r for r in rows if r.get("build_status") == "ok"]
-    smem_bad = [r for r in ok if r.get("smem_dynamic") != r.get("smem_computed")]
+    # kernels.jsonl 은 append-only 라 smem_computed 는 빌드 시점의 공식 값이다.
+    # 공식을 고쳤을 수 있으므로 **지금 공식으로 다시 계산해** 대조한다.
+    be = get_backend(ok[0]["arch"]) if ok else None
+    def recompute(r):
+        cfg = KernelConfig(
+            tile_m=r["tile"]["m"], tile_n=r["tile"]["n"], tile_k=r["tile"]["k"],
+            align_a=r["align"]["a"], align_b=r["align"]["b"],
+            align_c=r["align"]["c"], arch=r["arch"],
+            ext=be.ext_from_dict(r["ext"]))
+        return be.smem_bytes(cfg, 2)
+    for r in ok:
+        r["smem_recomputed"] = recompute(r)
+    stale = [r for r in ok if r["smem_recomputed"] != r.get("smem_computed")]
+    print(f"\n(참고) 저장된 smem_computed 가 현재 공식과 다른 줄: {len(stale)} "
+          f"— 공식 수정 이력. export.py 는 항상 재계산한다.")
+    smem_bad = [r for r in ok if r.get("smem_dynamic") != r["smem_recomputed"]]
     hmma_bad = [r for r in ok if r.get("hmma_count") != r.get("expected_hmma")]
     print("\n" + "=" * 72)
     print(f"smem_computed vs sizeof(SharedStorage): 불일치 {len(smem_bad)}/{len(ok)}")
     for r in smem_bad[:5]:
-        print(f"  {r['kernel_id']}: {r['smem_computed']} vs {r['smem_dynamic']}")
+        print(f"  {r['kernel_id']}: {r['smem_recomputed']} vs {r['smem_dynamic']}")
     print(f"expected_hmma vs SASS HMMA:             불일치 {len(hmma_bad)}/{len(ok)}")
     ratios = Counter()
     for r in hmma_bad:

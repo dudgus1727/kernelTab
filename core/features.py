@@ -23,6 +23,8 @@ __all__ = [
     "tail_waste",
     "mainloop_iters",
     "arith_intensity",
+    "min_access_bytes",
+    "can_use_cp_async",
     "ridge_point",
     "is_memory_bound",
     "flops",
@@ -58,6 +60,27 @@ def ridge_point(hw: Hardware) -> float:
 
 def is_memory_bound(p: Problem, hw: Hardware) -> bool:
     return arith_intensity(p) < ridge_point(hw)
+
+
+def min_access_bytes(p: Problem) -> int:
+    """A/B 전역 로드의 최소 벡터 접근 폭(바이트). 형상+레이아웃에서 결정된다."""
+    from core.config import alignments_for
+
+    al_a, al_b, _ = alignments_for(p)
+    return min(al_a, al_b) * dtype_bytes(p.dtype)
+
+
+def can_use_cp_async(p: Problem) -> bool:
+    """이 형상이 cp.async(LDGSTS) 기반 multistage 파이프라인을 쓸 수 있는가.
+
+    cp.async 는 4/8/16 바이트 접근만 지원한다. fp16 x alignment 1 = 2 바이트는
+    불가능하고, 그런 형상은 2단 파이프라인(MmaPipelined)만 쓸 수 있다.
+    실측: K=4097 형상에서 stages=2 는 31/31 성공, stages>=3 은 0/140 성공.
+
+    형상만으로 결정되는 물리적 제약이므로 피처로 둔다 — 규칙이 "왜 이 형상만
+    stages 축이 없는가" 를 설명할 수 있어야 한다.
+    """
+    return min_access_bytes(p) >= 4
 
 
 def grid_tiles(p: Problem, cfg: KernelConfig, rc: RuntimeConfig) -> int:

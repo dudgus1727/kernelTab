@@ -28,6 +28,9 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from build import paths  # noqa: E402
 from core.hardware import (  # noqa: E402
+    bandwidth_from_api,
+    bandwidth_reference_mhz,
+    known_spec,
     detect_hardware,
     peak_reference_mhz,
     device_uuid,
@@ -303,6 +306,10 @@ def main() -> int:
     ap.add_argument("--device", type=int, default=0, help="사용할 GPU 인덱스")
     ap.add_argument("--cutlass", default=None, help="CUTLASS 저장소 경로")
     ap.add_argument("--lock-mhz", type=int, default=None, help="고정할 SM 클럭")
+    ap.add_argument("--externally-locked-mem-mhz", type=int, default=None,
+                    help="관리자가 nvidia-smi -lmc 로 메모리 클럭을 고정한 경우. "
+                         "요청값이 아니라 **부하 중 실제 관측값**을 넣을 것 "
+                         "(컴퓨트 P2 상태에서는 P0 최대치보다 낮다).")
     ap.add_argument("--externally-locked-mhz", type=int, default=None,
                     help="관리자가 이미 nvidia-smi -lgc 로 고정해 둔 경우 그 값. "
                          "부하 테스트(scripts/verify_clock_lock.py)로 유지되는 것을 "
@@ -411,8 +418,7 @@ def main() -> int:
         print(f"\n--- 실효 피크 (클럭 고정 보정) ---")
         print(f"  스펙 {hw.peak_tflops_f16} TFLOP/s @ {peak_ref} MHz")
         print(f"  실효 {peak_eff} TFLOP/s @ {lock.mhz} MHz")
-        print(f"  ridge point {hw.peak_tflops_f16 * 1e12 / (hw.bandwidth_gbps * 1e9):.1f}"
-              f" -> {peak_eff * 1e12 / (hw.bandwidth_gbps * 1e9):.1f} FLOP/byte")
+        print(f"  (ridge point 는 대역폭 보정 후 아래에서 최종 출력)")
     clk_state = clock_state(args.device)
     print(f"\n--- 클럭 상태 ---")
     print(f"  SM {clk_state.get('sm_clock_mhz')} MHz "
@@ -421,6 +427,45 @@ def main() -> int:
           f"(최대 {clk_state.get('max_memory_mhz')})")
     ck = paths.RESULTS_DIR / "clock_lock_check.json"
     clock_check = json.loads(ck.read_text()) if ck.exists() else None
+
+    # --- 실효 대역폭 (메모리 클럭 보정) --------------------------------
+    # -lgc 는 SM 클럭만, -lmc 는 메모리 클럭만 고정한다. 게다가 컴퓨트
+    # 워크로드는 P2 상태로 내려가 메모리 클럭이 P0 최대치보다 낮다.
+    # 스펙 대역폭(P0 기준)을 그대로 쓰면 roofline 의 분모가 틀린다.
+    # 실효 대역폭은 **오직 하나의 경로**로 계산한다: 버스 폭 x 2 x 관측 클럭.
+    # known.json 의 스펙 값은 교차검증에만 쓴다.
+    spec = known_spec(hw.name)
+    bus = extra.get("memory_bus_width_bits")
+    mem_locked = args.externally_locked_mem_mhz
+    mem_obs = (clock_check or {}).get("mem_clk_median") or clk_state.get("mem_clock_mhz")
+    mem_used = mem_locked or mem_obs
+    bw_eff = round(bandwidth_from_api(bus, mem_used), 2) if (bus and mem_used) else None
+    bw_ref = bandwidth_reference_mhz(hw.name)
+    bw_spec = spec.get("bandwidth_gbps_spec")
+    checks = []
+    if spec.get("mem_bus_bits") is not None:
+        ok = spec["mem_bus_bits"] == bus
+        checks.append(f"버스 폭 API {bus} vs known {spec['mem_bus_bits']} "
+                      f"{'일치' if ok else '<-- 불일치!'}")
+    if bw_spec and bw_ref:
+        at_ref = bandwidth_from_api(bus, bw_ref)
+        ok = abs(at_ref - bw_spec) / bw_spec < 0.02
+        checks.append(f"기준 클럭 {bw_ref} MHz 에서 계산 {at_ref:.1f} vs "
+                      f"스펙 {bw_spec} {'일치' if ok else '<-- 불일치!'}")
+    print("\n--- 실효 대역폭 (계산 경로: 버스 폭 x 2(DDR) x 관측 클럭) ---")
+    print(f"  {bus}-bit x 2 x {mem_used} MHz / 8 = {bw_eff} GB/s "
+          f"({'고정' if mem_locked else '관측'})")
+    for c in checks:
+        print(f"  교차검증: {c}")
+    print(f"  참고: 스펙 {bw_spec} GB/s 는 P0({bw_ref} MHz) 기준이며, 컴퓨트 "
+          f"워크로드는 P2 로 동작하므로 도달 불가능한 값이다.")
+    bw_from_api = bw_eff
+
+    print(f"\n--- roofline ---")
+    print(f"  스펙 기준 ridge point "
+          f"{hw.peak_tflops_f16 * 1e12 / (hw.bandwidth_gbps * 1e9):.1f} FLOP/byte")
+    print(f"  실효 기준 ridge point {peak_eff * 1e12 / (bw_eff * 1e9):.1f} FLOP/byte"
+          f"   ({peak_eff} TFLOP/s / {bw_eff} GB/s)")
 
     seed = args.seed if args.seed is not None else int.from_bytes(os.urandom(4), "big")
     env = {
@@ -445,6 +490,15 @@ def main() -> int:
         "peak_tflops_f16_spec": hw.peak_tflops_f16,
         "peak_tflops_f16_at_mhz": peak_ref,
         "peak_tflops_f16_effective": peak_eff,
+        "bandwidth_gbps_spec": bw_spec,
+        "bandwidth_gbps_api_at_p0": hw.bandwidth_gbps,
+        "mem_bus_bits": bus,
+        "bandwidth_gbps_at_mem_mhz": bw_ref,
+        "bandwidth_gbps_effective": bw_eff,
+        "bandwidth_gbps_from_bus_width": bw_from_api,
+        "mem_clock_locked": bool(mem_locked),
+        "locked_mem_mhz": mem_locked,
+        "mem_clock_used_mhz": mem_used,
         "clock_lock_check": clock_check,
         "clocks": clk_state,
         "sm_clock_mhz": clk_state.get("sm_clock_mhz"),

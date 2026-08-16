@@ -165,6 +165,10 @@ def main() -> int:
           f"mean={statistics.mean(clks):.1f} median={statistics.median(clks)} MHz")
     print(f"              기대치({expect}) 이상 유지: {at_target}/{n} "
           f"= {100 * at_target / n:.1f}%")
+    mem = [t["mem"] for t in tel]
+    print(f"  clocks.mem  min={min(mem)} max={max(mem)} "
+          f"median={statistics.median(mem)} MHz "
+          f"(고정 안 하면 유휴 시 810 까지 떨어진다)")
     print(f"  power.draw  min={min(pw):.1f} max={max(pw):.1f} "
           f"mean={statistics.mean(pw):.1f} W  (캡 300W)")
     print(f"  temp        시작={tp[0]} 최고={max(tp)} 마지막={tp[-1]} °C")
@@ -203,6 +207,8 @@ def main() -> int:
         "clk_mean": statistics.mean(clks), "clk_at_target_frac": at_target / n,
         "power_min": min(pw), "power_max": max(pw), "power_mean": statistics.mean(pw),
         "temp_start": tp[0], "temp_max": max(tp), "temp_end": tp[-1],
+        "mem_clk_min": min(mem), "mem_clk_max": max(mem),
+        "mem_clk_median": statistics.median(mem),
         "throttle_seconds": dict(thr), "sw_power_cap_frac": swpc,
         "time_first_quartile_ms": first_q, "time_last_quartile_ms": last_q,
         "time_min_ms": min(ts), "time_max_ms": max(ts),
