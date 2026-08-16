@@ -106,6 +106,8 @@ def main() -> int:
         "smem_capacity",
         "accumulator_registers",
         "horizontal_swizzle_n",
+        "mainloop_smem_thread_map",
+        "epilogue_thread_map",
     ]
     remaining = raw
     print(f"  {'축 곱집합(raw)':30s} {raw:7d}")

@@ -66,6 +66,14 @@ class Backend(Protocol):
         ...
 
     # -- 자원/코드 --------------------------------------------------------
+    def pipeline_kind(self, cfg: KernelConfig) -> str:
+        """파이프라인 구현 계열. SM80 은 pipelined(2단) | multistage(3단 이상).
+
+        같은 `stages` 축 위에 있어 보이지만 구현이 다른 별개 커널이므로
+        분석 시점에 구분할 수 있어야 한다.
+        """
+        ...
+
     def smem_bytes(self, cfg: KernelConfig, dtype_bytes: int) -> int:
         """커널이 실제로 잡는 static shared memory 바이트 수."""
         ...

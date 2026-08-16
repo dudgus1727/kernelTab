@@ -56,6 +56,21 @@ NUMERICAL_TOL = 5e-2
 #: outlier_frac 이 이 값을 넘으면 status 에 표시
 OUTLIER_TOL = 0.20
 
+
+def launchable(krow: dict, regs_per_sm: int) -> bool:
+    """런치 가능한가.
+
+    cutlass::Kernel2 에는 __launch_bounds__ 가 없어서 ptxas 가 스레드 수에 맞춰
+    레지스터를 제한하지 않는다. 그 결과 regs_per_thread * threads 가 SM 당
+    레지스터 수를 넘는 커널이 만들어지고, 이런 커널은 런치 자체가 실패한다
+    (cudaOccupancyMaxActiveBlocksPerMultiprocessor 도 0 을 돌려준다).
+    실제로 런치를 시도해 에러를 받기보다 미리 판정하는 편이 명확하고 빠르다.
+    """
+    r, t = krow.get("regs_per_thread"), krow.get("threads")
+    if not r or not t:
+        return True
+    return r * t <= regs_per_sm
+
 THROTTLE_BITS = {
     0x0004: "sw_power_cap",
     0x0008: "hw_slowdown",
@@ -68,9 +83,11 @@ THROTTLE_BITS = {
 # ---------------------------------------------------------------------------
 # 커널 표본 — 층화 표집 (완전 무작위는 개수 많은 구성에 쏠린다)
 # ---------------------------------------------------------------------------
-def stratified_sample(rows: list[dict], n: int, seed: int) -> list[dict]:
+def stratified_sample(rows: list[dict], n: int, seed: int,
+                      regs_per_sm: int) -> list[dict]:
     """검증하려는 코드 경로가 표본에서 빠지지 않도록 층을 먼저 채운다."""
     rng = random.Random(seed)
+    rows = [r for r in rows if launchable(r, regs_per_sm)]  # 런치 불가는 제외
     pool = sorted(rows, key=lambda r: r["kernel_id"])
     rng.shuffle(pool)
 
@@ -220,7 +237,7 @@ def main() -> int:
         by_align[(a["a"], a["b"], a["c"])].append(r)
 
     base = by_align.get((8, 8, 8), [])
-    picked = stratified_sample(base, args.n_kernels, seed)
+    picked = stratified_sample(base, args.n_kernels, seed, hw.regs_per_sm)
     # a448 대응짝: 동일 구성의 alignment 변형. 이러면 (1024,4096,4100) 형상에서
     # alignment 효과만 분리해서 볼 수 있다.
     a448_by_key = {config_key(r): r for r in by_align.get((4, 4, 8), [])}
@@ -281,6 +298,16 @@ def main() -> int:
     tele_proc, tele_file = start_telemetry(env["device_index"])
     print(f"[telemetry] {TELEMETRY} (1초 간격)")
 
+    # --- alignment 가드가 실제로 필요한지 확인 (측정 전에) ---------------
+    print("\n[가드 검증] (1024,4096,4100) 에 a888 커널을 강제로 물려본다")
+    guard = alignment_guard_probe(ctx, sample, kernels, hw)
+    for g in guard:
+        print(f"  {g['kernel_id'][:52]:52s} can_implement={g['can_implement']}"
+              + (f"  max_rel_error={g['max_rel_error']:.3e}"
+                 if g.get("max_rel_error") is not None else ""))
+    (paths.RESULTS_DIR / "guard_probe.json").write_text(
+        json.dumps(guard, indent=2, ensure_ascii=False))
+
     cublas_cache: dict[tuple, dict] = {}
     drift_kernel_id = picked[0]["kernel_id"]
     last_drift = 0.0
@@ -292,7 +319,7 @@ def main() -> int:
         with RESULTS.open("a") as out:
             for (krow, p, rc) in jobs:
                 row = measure_one(ctx, kernels[krow["kernel_id"]], krow, p, rc,
-                                  probe, env, launch_overhead_ms)
+                                  probe, env, launch_overhead_ms, hw.regs_per_sm)
                 out.write(json.dumps(row, ensure_ascii=False) + "\n")
                 out.flush()
                 stats[row["status"]] += 1
@@ -316,7 +343,7 @@ def main() -> int:
             # --- 재현성 검증 ---------------------------------------------
             print("\n[재현성] 무작위 20개 조합 재측정")
             repro = reproducibility(ctx, kernels, jobs, probe, env,
-                                    launch_overhead_ms, seed)
+                                    launch_overhead_ms, seed, hw.regs_per_sm)
     finally:
         tele_proc.terminate()
         try:
@@ -332,7 +359,7 @@ def main() -> int:
 
 
 def measure_one(ctx, kern, krow, p: Problem, rc: RuntimeConfig, probe, env,
-                launch_overhead_ms: float) -> dict:
+                launch_overhead_ms: float, regs_per_sm: int) -> dict:
     from measure.runner import KtProblemC
 
     parallel = rc.split_k_mode == "parallel"
@@ -346,6 +373,12 @@ def measure_one(ctx, kern, krow, p: Problem, rc: RuntimeConfig, probe, env,
         "clock_locked": env["clock_locked"],
         "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
+
+    if not launchable(krow, regs_per_sm):
+        row.update(status="launch_infeasible",
+                   error=f"regs_per_thread({krow.get('regs_per_thread')}) * "
+                         f"threads({krow.get('threads')}) > regs_per_sm({regs_per_sm})")
+        return row
 
     try:
         ctx.prepare_problem(p.M, p.N, p.K)
@@ -415,6 +448,44 @@ def measure_one(ctx, kern, krow, p: Problem, rc: RuntimeConfig, probe, env,
     return row
 
 
+def alignment_guard_probe(ctx, sample, kernels, hw) -> list[dict]:
+    """is_valid_runtime 의 alignment 조건이 실제로 필요한지 직접 확인한다.
+
+    (1024, 4096, 4100) 은 K % 8 != 0 이라 align_a/b = 4 다. 여기에 a888 커널을
+    쓰면 8원소 벡터 로드가 경계를 넘는다. 우리 열거기는 이 조합을 만들지
+    않지만, "만들면 정말로 틀리는가" 를 확인해 두지 않으면 그 가드가 왜
+    있는지 알 수 없게 된다.
+    """
+    from measure.runner import KtProblemC
+
+    p = Problem(1024, 4096, 4100)
+    out = []
+    a888 = [r for r in sample
+            if (r["align"]["a"], r["align"]["b"], r["align"]["c"]) == (8, 8, 8)][:3]
+    ctx.prepare_problem(p.M, p.N, p.K)
+    for r in a888:
+        k = kernels[r["kernel_id"]]
+        kp = KtProblemC(p.M, p.N, p.K, 1, 0)
+        can = k.can_implement(kp)
+        rec = {"kernel_id": r["kernel_id"],
+               "problem": {"M": p.M, "N": p.N, "K": p.K},
+               "can_implement": k.status_string(can)}
+        if can == 0:
+            bufs = ctx.buffers(k.workspace_bytes(kp), False)
+            st, h = k.prepare(kp, bufs)
+            if st == 0 and h:
+                try:
+                    rs = ctx.run_once(k.launch_addr, h, 0)
+                    rec["run_status"] = rs
+                    rec["max_rel_error"] = ctx.max_rel_error() if rs == 0 else None
+                finally:
+                    k.release(h)
+            else:
+                rec["prepare_status"] = k.status_string(st)
+        out.append(rec)
+    return out
+
+
 def measure_cublas(ctx, p: Problem, probe, env, out) -> dict:
     ctx.prepare_problem(p.M, p.N, p.K)
     st, m = ctx.measure_cublas()
@@ -464,7 +535,8 @@ def drift_check(ctx, kern, kernel_id, probe, env) -> None:
         }) + "\n")
 
 
-def reproducibility(ctx, kernels, jobs, probe, env, launch_overhead_ms, seed):
+def reproducibility(ctx, kernels, jobs, probe, env, launch_overhead_ms,
+                    seed, regs_per_sm):
     rng = random.Random(seed + 1)
     pick = rng.sample(jobs, min(20, len(jobs)))
     first = {}
@@ -481,7 +553,7 @@ def reproducibility(ctx, kernels, jobs, probe, env, launch_overhead_ms, seed):
     out = []
     for (krow, p, rc) in pick:
         row = measure_one(ctx, kernels[krow["kernel_id"]], krow, p, rc, probe,
-                          env, launch_overhead_ms)
+                          env, launch_overhead_ms, regs_per_sm)
         key = (krow["kernel_id"], p.M, p.N, p.K, rc.split_k, rc.split_k_mode)
         t0 = first.get(key)
         t1 = row.get("time_ms")

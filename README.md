@@ -156,8 +156,9 @@ GPU 스펙을 파이썬 코드에 하드코딩하지 않는다. 같은 이미지
 ### 실패를 결측치로 두지 않는다
 
 `status` 를 `ok | build_fail | runtime_fail | oom | numerical_fail |
-below_launch_overhead | high_outlier_frac` 로 명시 기록한다. 빈 줄로 남기면
-"측정을 안 한 것" 과 "측정했더니 실패한 것" 을 구분할 수 없다.
+below_launch_overhead | high_outlier_frac | launch_infeasible` 로 명시
+기록한다. 빈 줄로 남기면 "측정을 안 한 것" 과 "측정했더니 실패한 것" 을
+구분할 수 없다.
 
 ---
 
@@ -224,11 +225,94 @@ effective_split_k(p, rc) == rc.split_k    # 요청 == CUTLASS 가 실제로 만�
 지시가 든 예시 `(1024, 4096, 512)` 에서 이 조건이 실제로 거르는 것은 그대로다
 (split_k=6/12/16 탈락). `(1024, 4096, 4100)` 은 15 개 런타임 config 를 얻는다.
 
-### 3. Backend Protocol 에 메서드 3 개 추가
+### 3. 탐색 축 확대: `warp_count ∈ {4,8}` → `{4,8,16}`, 누산기 상한 200 → 256
 
-명세된 목록 외에 `enumerate_runtime`, `explain_kernel`, `effective_split_k` /
-`workspace_bytes` 를 두었다. 각각 split-K 축 값 집합의 아키텍처 종속성, 제약
-funnel 집계, CUTLASS split-K 의미론 때문이며 전부 백엔드 뒤에 있다.
+원래 값은 추정치였다. 레지스터 실사용량과 스필은 빌드 시 `-Xptxas -v` 로
+**실측**해 `kernels.jsonl` 에 남기므로, 추정치로 미리 자르는 것보다 빌드해서
+기록하는 편이 데이터로서 낫다. "성능 기준으로 거르지 마라" 원칙과도 일관된다.
+
+부수적으로 `threads_per_block <= min(1024, hw.max_threads_per_sm)` 가드를
+추가했다. warp_k 분할(PartitionsK)까지 곱하면 블록 스레드 수가 CUDA 한도를
+넘을 수 있는데, 이건 런치 자체가 불가능한 조합이다.
+
+결과: alignment 조합당 1,155 → 1,575 개.
+
+### 4. `is_valid_kernel` 에 CUTLASS 컴파일 제약 2 개 추가
+
+빌드해 보면 특정 조합이 `static_assert` 로 거부된다. **성능이 아니라 컴파일
+가능성** 문제이므로 `is_valid_kernel` 의 본래 역할에 해당한다. 두 제약 모두
+CUTLASS 소스에서 유도한 뒤 실측 1,263 개 빌드와 대조해 **오탐 0 / 미탐 0**
+을 확인하고 넣었다 (`scripts/validate_constraints.py`).
+
+**`mainloop_smem_thread_map`** — `transform/pitch_linear_thread_map.h`
+```
+tile_m · tile_k >= 8 · threads   and   tile_n · tile_k >= 8 · threads
+```
+A/B 모두 smem 에서 crosswise 레이아웃이고 smem 접근 폭은 전역 alignment 와
+무관하게 128 비트 고정이라, 조건이 이렇게 단순해진다.
+
+**`epilogue_thread_map`** — `output_tile_thread_map.h` / `predicated_tile_iterator.h`
+`RowArrangement` 가 `8 > warps_n · warps_k` 로 갈리고 각 분기에서
+`Iterations::kRow / kColumn` 이 0 이 되면 거부된다.
+
+결과: alignment 조합당 1,575 → 1,365 개 (13.3% 제거). 통째로 죽는 축은 없다.
+
+### 5. horizontal 스위즐을 직접 구현 (`measure/kt_swizzle.h`)
+
+CUTLASS 의 `GemmHorizontalThreadblockSwizzle` 은 `get_tile_offset(GemmCoord)`
+시그니처라 `get_tile_offset(int log_tile)` 로 호출하는 `kernel::GemmUniversal`
+과 **컴파일되지 않는다** (구버전 `device::Gemm` 경로 전용). 그냥 빼면 커널의
+20% 가 사라지고, 무엇보다 **래스터 방향 축 자체가 사라진다.** 이 축은 SM90
+3.x API 의 `raster_order = along_m | along_n` 과 직접 대응하므로 여기서 잃으면
+나중에 SM80 ↔ SM90 전이 실험이 성립하지 않는다.
+
+직접 짠 코드이므로 별도로 검증했다 (`scripts/verify_swizzle.py`):
+
+| 형상 | 타일 격자 | identity(1) | horizontal |
+|---|---|---|---|
+| (8192, 2048, 4096) | m=64 ≫ n=16 | 1.621 ms | **1.124 ms** |
+| (2048, 8192, 4096) | m=16 ≪ n=64 | **1.119 ms** | 1.590 ms |
+
+* grid dim 이 `(64,16) ↔ (16,64)` 로 실제로 뒤바뀌는 것을 `get_grid_shape()` 로 실측
+* 네 형상 모두 `max_rel_error = 0.0` (cuBLAS 와 비트 단위 일치)
+* 성능이 **대칭적으로 역전**된다 — 스위즐이 실제로 적용된다는 증거. 단순히
+  "값이 다르다" 가 아니라 물리적으로 기대되는 방향으로 다르다.
+
+### 6. split-K parallel 은 fp16 부분합을 쓴다
+
+CUTLASS 라이브러리는 parallel split-K 에서
+`find_gemm_operation_for_parallel_reduction()` 으로 **ElementC = float 인 별도
+커널 인스턴스**로 갈아탄다. 우리는 그러지 않는다. 그러면 split_k_mode 가
+런타임 인자가 아니라 빌드 축이 되어 커널 수가 2 배가 되고, KernelConfig /
+RuntimeConfig 분리의 전제가 깨지기 때문이다.
+
+같은 fp16-C 커널에 `kGemmSplitKParallel` 모드를 주면 정상 동작하되 부분합이
+fp16 으로 저장된다. 리덕션은 fp32 로 누산하므로 오차는 슬라이스 수에 비례해
+작게 커지며, `max_rel_error` 로 그대로 관측된다. 측정 시간에는 리덕션 커널을
+포함한다 (빼면 serial 과 비교 자체가 불가능하다).
+
+### 7. `launch_infeasible` status 추가
+
+`cutlass::Kernel2` 에는 `__launch_bounds__` 가 없어서 ptxas 가 스레드 수에 맞춰
+레지스터를 제한하지 않는다. 그 결과 `regs_per_thread × threads > regs_per_sm`
+인 커널이 만들어지는데, 이건 빌드는 되지만 **런치가 불가능**하다
+(`cudaOccupancyMaxActiveBlocksPerMultiprocessor` 가 0 을 돌려준다).
+빌드 전에는 예측할 수 없고(레지스터는 ptxas 의 결과) 빌드 후에는 정확히
+판정되므로, 측정 직전에 확인해 실행하지 않고 이 status 로 기록한다.
+
+### 8. `pipeline_kind` 필드 추가
+
+`stages == 2` 는 `MmaPipelined`(동기 LDG + STS), `stages >= 3` 은
+`MmaMultistage`(cp.async / LDGSTS) 로 **구현이 다른 별개 커널**이다.
+SASS 에서도 정확히 갈린다 (stages=2 는 LDGSTS 0 개, stages≥3 은 795/795 사용).
+`stages` 를 하나의 연속 축으로 보면 잘못된 결론이 나오므로 명시적으로 남긴다.
+
+### 9. Backend Protocol 에 메서드 추가
+
+명세된 목록 외에 `enumerate_runtime`, `explain_kernel`, `ext_from_dict`,
+`pipeline_kind`, `effective_split_k` / `workspace_bytes` 를 두었다. 각각
+split-K 축 값 집합의 아키텍처 종속성, 제약 funnel 집계, JSONL 역직렬화,
+파이프라인 계열 구분, CUTLASS split-K 의미론 때문이며 전부 백엔드 뒤에 있다.
 
 ---
 

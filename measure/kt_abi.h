@@ -46,6 +46,8 @@ typedef struct KtInfo {
 int kt_info(KtInfo *out);
 size_t kt_workspace_bytes(const KtProblem *p);
 int kt_grid_k(const KtProblem *p);        // 실제 K 슬라이스 수 (요청값과 다를 수 있다)
+void kt_grid_shape(const KtProblem *p, int out_xyz[3]);  // 런치 grid (x,y,z)
+void kt_tiled_shape(const KtProblem *p, int out_mnk[3]); // 논리 타일 격자 (m,n,k)
 int kt_can_implement(const KtProblem *p); // 0 = ok, 그 외 = cutlass::Status
 int kt_prepare(const KtProblem *p, const KtBuffers *b, void **handle);
 int kt_launch(void *handle, void *stream);  // 비동기 런치 1회

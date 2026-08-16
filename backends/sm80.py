@@ -260,7 +260,34 @@ class Sm80Backend:
         if e.swizzle_type == "horizontal" and e.swizzle_n != 1:
             return "horizontal_swizzle_n"
 
+        # 아래 둘은 CUTLASS 의 static_assert 로 컴파일이 아예 거부되는 조합이다.
+        # 성능 필터가 아니라 컴파일 가능성 판정이며, 실측 1,263개 빌드와 대조해
+        # 오탐 0 / 미탐 0 을 확인했다 (scripts/validate_constraints.py).
+        if not mainloop_smem_thread_map_ok(
+            cfg.tile_m, cfg.tile_n, cfg.tile_k, threads
+        ):
+            return "mainloop_smem_thread_map"
+
+        if not epilogue_thread_map_ok(
+            cfg.tile_n, cfg.tile_m // e.warp_m, cfg.tile_n // e.warp_n,
+            cfg.tile_k // e.warp_k, cfg.align_c,
+        ):
+            return "epilogue_thread_map"
+
         return None
+
+    # -- 파이프라인 계열 ---------------------------------------------------
+    def pipeline_kind(self, cfg: KernelConfig) -> str:
+        """stages=2 와 stages>=3 은 구현이 다른 별개 커널이다.
+
+        CUTLASS DefaultMma 는 Stages==2 이면 MmaPipelined (동기 LDG + STS),
+        Stages>=3 이면 MmaMultistage (cp.async / LDGSTS) 를 고른다.
+        SASS 에서도 stages=2 는 LDGSTS 가 0개, stages>=3 은 전부 사용으로
+        갈린다. 분석 시점에 이 둘을 같은 축의 연속값으로 다루면 잘못된
+        결론이 나오므로 명시적으로 기록한다.
+        """
+        e: Sm80Ext = cfg.ext  # type: ignore[assignment]
+        return "pipelined" if e.stages == 2 else "multistage"
 
     def is_valid_kernel(self, cfg: KernelConfig, hw: Hardware, dtype_bytes: int) -> bool:
         return self.explain_kernel(cfg, hw, dtype_bytes) is None

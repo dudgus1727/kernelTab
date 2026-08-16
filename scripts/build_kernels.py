@@ -158,6 +158,7 @@ def main() -> int:
                 "ext": asdict(cfg.ext),
                 "smem_computed": backend.smem_bytes(cfg, nb),
                 "expected_hmma": backend.expected_hmma(cfg),
+                "pipeline_kind": backend.pipeline_kind(cfg),
                 "cutlass_commit": env["cutlass"]["commit"],
                 "nvcc_arch": env["nvcc_arch_flag"],
             }

@@ -160,6 +160,10 @@ class Kernel:
         L.kt_workspace_bytes.restype = ctypes.c_size_t
         L.kt_grid_k.argtypes = [ctypes.POINTER(KtProblemC)]
         L.kt_grid_k.restype = ctypes.c_int
+        L.kt_grid_shape.argtypes = [
+            ctypes.POINTER(KtProblemC), ctypes.POINTER(ctypes.c_int * 3)]
+        L.kt_tiled_shape.argtypes = [
+            ctypes.POINTER(KtProblemC), ctypes.POINTER(ctypes.c_int * 3)]
         L.kt_can_implement.argtypes = [ctypes.POINTER(KtProblemC)]
         L.kt_can_implement.restype = ctypes.c_int
         L.kt_prepare.argtypes = [
@@ -176,6 +180,16 @@ class Kernel:
 
     def grid_k(self, p: KtProblemC) -> int:
         return self.lib.kt_grid_k(ctypes.byref(p))
+
+    def grid_shape(self, p: KtProblemC) -> tuple[int, int, int]:
+        a = (ctypes.c_int * 3)()
+        self.lib.kt_grid_shape(ctypes.byref(p), ctypes.byref(a))
+        return (a[0], a[1], a[2])
+
+    def tiled_shape(self, p: KtProblemC) -> tuple[int, int, int]:
+        a = (ctypes.c_int * 3)()
+        self.lib.kt_tiled_shape(ctypes.byref(p), ctypes.byref(a))
+        return (a[0], a[1], a[2])
 
     def can_implement(self, p: KtProblemC) -> int:
         return self.lib.kt_can_implement(ctypes.byref(p))

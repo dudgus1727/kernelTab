@@ -103,6 +103,23 @@ int kt_grid_k(const KtProblem *p) {
   return int(KtGemm::get_grid_shape(kt::make_args(p, &b)).z);
 }
 
+void kt_grid_shape(const KtProblem *p, int out_xyz[3]) {
+  KtBuffers b;
+  std::memset(&b, 0, sizeof(b));
+  dim3 g = KtGemm::get_grid_shape(kt::make_args(p, &b));
+  out_xyz[0] = int(g.x);
+  out_xyz[1] = int(g.y);
+  out_xyz[2] = int(g.z);
+}
+
+void kt_tiled_shape(const KtProblem *p, int out_mnk[3]) {
+  // 스위즐과 무관한 논리 타일 격자. grid 와 비교하면 래스터 방향을 알 수 있다.
+  using TbShape = typename kt::GemmKernel::Mma::Shape;
+  out_mnk[0] = (p->M + TbShape::kM - 1) / TbShape::kM;
+  out_mnk[1] = (p->N + TbShape::kN - 1) / TbShape::kN;
+  out_mnk[2] = kt_grid_k(p);
+}
+
 int kt_can_implement(const KtProblem *p) {
   KtBuffers b;
   std::memset(&b, 0, sizeof(b));
