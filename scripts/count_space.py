@@ -99,9 +99,10 @@ def main() -> int:
     raw = sum(funnel.values())
     order = [
         "tile_divisible_by_warp",
-        "warp_count_4_or_8",
+        "warp_count_mn",
         "warp_shape_vs_instruction",
         "warp_k_divisible",
+        "threads_per_block",
         "smem_capacity",
         "accumulator_registers",
         "horizontal_swizzle_n",

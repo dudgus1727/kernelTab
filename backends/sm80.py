@@ -41,14 +41,93 @@ SPLIT_MODE = ["serial", "parallel"]
 # mma.m16n8k16 (fp16 입력, fp32 누산)
 INSTRUCTION_SHAPE = (16, 8, 16)
 
-#: 스레드당 누산기 레지스터 상한. 초과하면 스필이 확정적이다.
-MAX_ACCUM_REGS_PER_THREAD = 200
+#: threadblock 당 warp 개수 (M,N 방향). warp_k 분할은 여기에 곱해진다.
+WARP_COUNT_MN = (4, 8, 16)
+
+#: 스레드당 누산기 레지스터 상한.
+#: 이 값은 "확실히 불가능한 것"만 자르는 용도다. 실제 레지스터 사용량과
+#: 스필 여부는 빌드 시 `-Xptxas -v` 로 실측해 kernels.jsonl 에 남기므로,
+#: 추정치로 미리 자르는 것보다 빌드해서 기록하는 편이 데이터로서 낫다.
+MAX_ACCUM_REGS_PER_THREAD = 256
 
 #: 에필로그 smem 의 열 방향 패딩. CUTLASS DefaultEpilogueTensorOp 의
 #: Padding = MatrixShape<0, 64 / sizeof_bits<ElementAccumulator> * 4> 에서 유도.
 #: ElementAccumulator = float (32bit) 이므로 64/32*4 = 8.
 _EPILOGUE_PAD_COLS = 8
 _ACC_BYTES = 4
+
+
+def epilogue_thread_map_ok(
+    tile_n: int, warp_m_count: int, warp_n_count: int, warp_k_count: int,
+    align_c: int, elem_bits: int = 16,
+) -> bool:
+    """에필로그 출력 thread map 이 성립하는지 (컴파일 가능성 판정).
+
+    CUTLASS 2.x 에필로그는 다음 static_assert 들로 조합을 거부하는데, 이건
+    성능이 아니라 **컴파일 가능 여부** 다. 미리 걸러내지 않으면 빌드 시간을
+    버리게 된다.
+
+    출처:
+      epilogue/threadblock/default_thread_map_tensor_op.h
+        Shape = OutputTileShape<tile_n, 8, warps_m, 1, 1>
+        threads = warps_m * warps_n * warps_k * 32
+      epilogue/threadblock/output_tile_thread_map.h
+        kWarpsRemainingForRows = (threads/32) / warps_m = warps_n * warps_k
+        RowArrangement 분기 = (8 > kWarpsRemainingForRows)
+      epilogue/threadblock/predicated_tile_iterator.h
+        static_assert(Iterations::kColumn > 0)
+    """
+    warps_remaining = warp_n_count * warp_k_count
+    epa = align_c
+    shape_col = tile_n
+
+    if 8 > warps_remaining:
+        # RowArrangement<..., true>
+        shape_row = 8 // warps_remaining
+        shape_width = shape_col // epa
+        # kMemoryAccessSize = 256 비트
+        target_width = 256 // (epa * elem_bits // 8)
+        target_rows = 32 // target_width if target_width else 0
+        if target_rows > shape_row:
+            access_width = 32 // shape_row if shape_row else 0
+            access_rows = shape_row
+        else:
+            cap = min(32, target_width)
+            access_width = min(shape_width, cap)
+            access_rows = min(8, 32 // access_width) if access_width else 0
+        if access_width <= 0 or access_rows <= 0:
+            return False
+        iters_row = shape_row // access_rows
+        iters_col = shape_width // access_width
+        if access_width * epa > shape_col:
+            return False
+        return iters_row > 0 and iters_col > 0
+    # RowArrangement<..., false>
+    return (shape_col // epa // 32) > 0
+
+
+def mainloop_smem_thread_map_ok(
+    tile_m: int, tile_n: int, tile_k: int, threads: int, smem_epa: int = 8
+) -> bool:
+    """메인루프 smem RegularTileIterator 의 thread map 이 성립하는지.
+
+    출처: transform/pitch_linear_thread_map.h 의 PitchLinearWarpRakedThreadMap
+          static_assert(Iterations::kCount, "Number of iterations must be non-zero")
+
+    A(row-major MxK) 와 B(col-major KxN) 둘 다 smem 에서 crosswise 레이아웃이라
+    PitchLinearShape<contiguous = tile_k, strided = tile_m 또는 tile_n> 이고,
+    smem 접근 폭은 항상 128비트(= fp16 8개)로 고정이다 (전역 alignment 와 무관).
+
+        WarpThreadArrangement    = <tile_k/8, 256/tile_k>
+        WarpAccessIterations     = <1, strided * tile_k / 256>
+        kWarpsContiguous         = 1        (kWarpCount >= 4 이므로 항상)
+        kWarpsStrided            = threads / 32
+        Iterations.strided       = strided * tile_k / 256 / (threads/32)
+
+    따라서 strided * tile_k >= 8 * threads 여야 한다.
+    """
+    del smem_epa
+    return (tile_m * tile_k >= 8 * threads) and (tile_n * tile_k >= 8 * threads)
 
 
 def warp_k_options(tile_k: int) -> list[int]:
@@ -77,6 +156,14 @@ class Sm80Backend:
                                     ),
                                 ))
         return out
+
+    def ext_from_dict(self, d: dict) -> Sm80Ext:
+        """kernels.jsonl 의 ext 딕셔너리 -> ext 객체.
+
+        호출부가 Sm80Ext 를 직접 import 하지 않고 KernelConfig 를 복원할 수
+        있게 해준다.
+        """
+        return Sm80Ext(**d)
 
     def enumerate_runtime(self, p: Problem, cfg: KernelConfig) -> list[RuntimeConfig]:
         out = []
@@ -148,8 +235,8 @@ class Sm80Backend:
             return "tile_divisible_by_warp"
 
         n_warps = (cfg.tile_m // e.warp_m) * (cfg.tile_n // e.warp_n)
-        if n_warps not in (4, 8):
-            return "warp_count_4_or_8"
+        if n_warps not in WARP_COUNT_MN:
+            return "warp_count_mn"
 
         im, in_, _ = INSTRUCTION_SHAPE
         if e.warp_m % im or e.warp_n % in_:
@@ -157,6 +244,12 @@ class Sm80Backend:
 
         if cfg.tile_k % e.warp_k or e.warp_k % INSTRUCTION_SHAPE[2]:
             return "warp_k_divisible"
+
+        # warp_k 분할(PartitionsK)까지 곱한 실제 블록 스레드 수가 CUDA 의
+        # 블록당 스레드 한도를 넘으면 런치 자체가 불가능하다.
+        threads = n_warps * (cfg.tile_k // e.warp_k) * 32
+        if threads > min(1024, hw.max_threads_per_sm):
+            return "threads_per_block"
 
         if self.smem_bytes(cfg, dtype_bytes) > hw.smem_per_block:
             return "smem_capacity"
@@ -255,7 +348,10 @@ class Sm80Backend:
                 f"cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<{e.swizzle_n}>"
             )
         else:
-            swizzle = "cutlass::gemm::threadblock::GemmHorizontalThreadblockSwizzle"
+            # CUTLASS 의 GemmHorizontalThreadblockSwizzle 은 GemmUniversal 과
+            # 시그니처가 맞지 않아 컴파일되지 않는다. measure/kt_swizzle.h 의
+            # 동등 구현을 쓴다 (근거는 그 파일 주석 참조).
+            swizzle = "kt::HorizontalThreadblockSwizzle"
 
         im, in_, ik = INSTRUCTION_SHAPE
         return f"""// 자동 생성 — 수정하지 말 것. backends/sm80.py:emit_cpp()
@@ -266,6 +362,7 @@ class Sm80Backend:
 #include "cutlass/epilogue/thread/linear_combination.h"
 #include "cutlass/layout/matrix.h"
 #include "cutlass/numeric_types.h"
+#include "kt_swizzle.h"
 
 #define KT_KERNEL_ID "{kid}"
 

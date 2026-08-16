@@ -35,6 +35,14 @@ class Backend(Protocol):
         """
         ...
 
+    def ext_from_dict(self, d: dict):
+        """직렬화된 ext 딕셔너리로부터 ext 객체를 복원한다.
+
+        kernels.jsonl 을 읽어 KernelConfig 를 다시 만들 때 쓴다. 호출부가
+        구체 타입(Sm80Ext 등)을 import 하지 않게 하기 위한 것이다.
+        """
+        ...
+
     def enumerate_runtime(self, p: Problem, cfg: KernelConfig) -> list[RuntimeConfig]:
         """이 (형상, 커널)에 대해 유효한 런타임 config 전부.
 
