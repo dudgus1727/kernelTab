@@ -260,6 +260,19 @@ class Sm80Backend:
         if e.swizzle_type == "horizontal" and e.swizzle_n != 1:
             return "horizontal_swizzle_n"
 
+        # warp_n >= 128 은 컴파일도 되고 런치도 되지만 **계산 결과가 틀린다.**
+        # scripts/check_correctness.py 로 a888 런치 가능 커널 1,215개를 전수
+        # 확인한 결과 warp tile (64,128) 60개가 100% 오답이었고 (max_rel_error
+        # 0.77~1.13), 같은 누산기 수(256 regs/thread)를 쓰는 mirror 인
+        # (128,64) 는 60개 모두 정상이었다. 레지스터 수가 아니라 warp_n 이
+        # 원인이다. CUTLASS generator 가 만드는 712개 조합 중 warp_n >= 128 은
+        # 1건뿐이고 (64,128) 은 0건 — 검증되지 않은 영역이다.
+        #
+        # 이것은 성능 필터가 아니라 정확성 문제다. 오답을 내는 config 가
+        # 성능표에 섞이면 그 표를 쓰는 모든 분석이 오염된다.
+        if e.warp_n >= 128:
+            return "warp_n_incorrect_results"
+
         # 아래 둘은 CUTLASS 의 static_assert 로 컴파일이 아예 거부되는 조합이다.
         # 성능 필터가 아니라 컴파일 가능성 판정이며, 실측 1,263개 빌드와 대조해
         # 오탐 0 / 미탐 0 을 확인했다 (scripts/validate_constraints.py).

@@ -26,6 +26,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from backends import get_backend  # noqa: E402
 from build import paths  # noqa: E402
+from core.hardware import hardware_from_env  # noqa: E402
 from build.compile import BuildEnv, build_ctx_so, build_kernel, introspect  # noqa: E402
 from core.config import alignment_combos, dtype_bytes, enumerate_kernels  # noqa: E402
 from core.shapes import all_shapes  # noqa: E402
@@ -106,7 +107,7 @@ def main() -> int:
     env = load_env()
     # 어떤 CUDA 호출보다 먼저. Phase 0 이 고른 물리 GPU 에 고정한다.
     os.environ["CUDA_VISIBLE_DEVICES"] = str(env["device_index"])
-    hw = Hardware(**env["hardware"])
+    hw = hardware_from_env(env)
     backend = get_backend(hw.arch)
     nb = dtype_bytes("f16")
     be = BuildEnv.from_env_json(env)

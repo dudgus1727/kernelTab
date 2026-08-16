@@ -21,6 +21,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from backends import get_backend  # noqa: E402
 from build import paths  # noqa: E402
+from core.hardware import hardware_from_env  # noqa: E402
 from core.types import Hardware, Problem, RuntimeConfig  # noqa: E402
 
 SHAPES = [Problem(1024, 1024, 4096), Problem(1024, 4096, 512),
@@ -30,7 +31,7 @@ SHAPES = [Problem(1024, 1024, 4096), Problem(1024, 4096, 512),
 def main() -> int:
     env = json.loads(paths.ENV_JSON.read_text())
     os.environ["CUDA_VISIBLE_DEVICES"] = str(env["device_index"])
-    hw = Hardware(**env["hardware"])
+    hw = hardware_from_env(env)
     backend = get_backend(hw.arch)
 
     from measure.runner import Ctx, Kernel, KtProblemC  # noqa: E402

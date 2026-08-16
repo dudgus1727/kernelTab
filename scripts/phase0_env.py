@@ -142,6 +142,34 @@ def cutlass_info(explicit: str | None) -> dict:
     }
 
 
+def clock_state(index: int) -> dict:
+    """SM / 메모리 클럭을 둘 다 기록한다.
+
+    -lgc 는 SM 클럭만 고정하고 메모리 클럭은 건드리지 않는다. roofline 의
+    분모(대역폭)는 메모리 클럭에 달려 있으므로 두 값이 모두 있어야 나중에
+    "이 측정이 어떤 클럭 조건이었나" 를 재구성할 수 있다.
+    """
+    fields = ["clocks.current.sm", "clocks.current.memory",
+              "clocks.max.sm", "clocks.max.memory",
+              "clocks.default_applications.graphics",
+              "clocks.applications.graphics"]
+    rc, out = run(["nvidia-smi", "-i", str(index),
+                   f"--query-gpu={','.join(fields)}",
+                   "--format=csv,noheader,nounits"])
+    if rc != 0:
+        return {"error": out}
+    vals = [v.strip() for v in out.splitlines()[0].split(",")]
+    d = {}
+    for f, v in zip(fields, vals):
+        try:
+            d[f.replace("clocks.", "").replace(".", "_") + "_mhz"] = int(float(v))
+        except ValueError:
+            d[f.replace("clocks.", "").replace(".", "_") + "_mhz"] = None
+    d["sm_clock_mhz"] = d.get("current_sm_mhz")
+    d["mem_clock_mhz"] = d.get("current_memory_mhz")
+    return d
+
+
 def gpu_smi_info(index: int) -> dict:
     fields = [
         "name",
@@ -384,6 +412,12 @@ def main() -> int:
         print(f"  실효 {peak_eff} TFLOP/s @ {lock.mhz} MHz")
         print(f"  ridge point {hw.peak_tflops_f16 * 1e12 / (hw.bandwidth_gbps * 1e9):.1f}"
               f" -> {peak_eff * 1e12 / (hw.bandwidth_gbps * 1e9):.1f} FLOP/byte")
+    clk_state = clock_state(args.device)
+    print(f"\n--- 클럭 상태 ---")
+    print(f"  SM {clk_state.get('sm_clock_mhz')} MHz "
+          f"(최대 {clk_state.get('max_sm_mhz')})   "
+          f"메모리 {clk_state.get('mem_clock_mhz')} MHz "
+          f"(최대 {clk_state.get('max_memory_mhz')})")
     ck = paths.RESULTS_DIR / "clock_lock_check.json"
     clock_check = json.loads(ck.read_text()) if ck.exists() else None
 
@@ -411,6 +445,9 @@ def main() -> int:
         "peak_tflops_f16_at_mhz": peak_ref,
         "peak_tflops_f16_effective": peak_eff,
         "clock_lock_check": clock_check,
+        "clocks": clk_state,
+        "sm_clock_mhz": clk_state.get("sm_clock_mhz"),
+        "mem_clock_mhz": clk_state.get("mem_clock_mhz"),
         "launch_overhead": lo,
         "launch_overhead_ms": launch_overhead_ms,
         "below_launch_overhead_ms": 3 * launch_overhead_ms,

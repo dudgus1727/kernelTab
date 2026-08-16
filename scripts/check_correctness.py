@@ -23,6 +23,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from build import paths  # noqa: E402
+from core.hardware import hardware_from_env  # noqa: E402
 from core.config import alignments_for  # noqa: E402
 from core.types import Hardware, Problem  # noqa: E402
 
@@ -41,7 +42,7 @@ def main() -> int:
     env = json.loads(paths.ENV_JSON.read_text())
     dev = args.device if args.device is not None else env["device_index"]
     os.environ["CUDA_VISIBLE_DEVICES"] = str(dev)
-    hw = Hardware(**env["hardware"])
+    hw = hardware_from_env(env)
 
     from measure.runner import Ctx, Kernel, KtProblemC  # noqa: E402
 

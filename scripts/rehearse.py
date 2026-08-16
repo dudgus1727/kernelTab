@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""Phase 2-2: 리허설 측정.
+"""Phase 2-2 리허설 / Phase 3 전수 측정.
 
-전수가 아니라 6개 형상 x 층화 표집한 20개 커널 config x 유효 런타임 전부.
+    python3 scripts/rehearse.py                    # 리허설 (6형상 x 표본 20커널)
+    python3 scripts/rehearse.py --all              # Phase 3 전수
+    python3 scripts/rehearse.py --all --dry-run    # 규모만 세어본다
+
 측정 순서는 셔플한다 (온도 드리프트가 config 순서와 상관되는 것을 막는다).
 
-    python3 scripts/rehearse.py
-    python3 scripts/rehearse.py --dry-run     # 작업 목록만 세어본다
-
-results.jsonl 은 append-only. 이미 있는 (kernel_id, 형상, 런타임) 은 건너뛴다.
+results.jsonl 은 append-only 이고 resume 키는
+`(env_hash, kernel_id, M, N, K, split_k, split_k_mode)` 다.
+env_hash 를 키에 넣는 이유: 클럭 고정 전후처럼 측정 조건이 바뀌면 같은 조합도
+다시 재야 한다. 넣지 않으면 조건이 다른 예전 줄 때문에 건너뛰어 버린다.
 """
 
 from __future__ import annotations
@@ -28,7 +31,9 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from backends import get_backend  # noqa: E402
 from build import paths  # noqa: E402
+from core.hardware import hardware_from_env  # noqa: E402
 from core.config import alignments_for, enumerate_runtimes  # noqa: E402
+from core.shapes import all_shapes  # noqa: E402
 from core.types import Hardware, KernelConfig, Problem, RuntimeConfig  # noqa: E402
 
 RESULTS = paths.RESULTS_DIR / "results.jsonl"
@@ -192,7 +197,8 @@ def analyze_telemetry() -> dict:
 
 
 # ---------------------------------------------------------------------------
-def load_done() -> set[tuple]:
+def load_done(env_hash: str) -> set[tuple]:
+    """이미 측정된 조합. **같은 측정 조건(env_hash)의 줄만** 완료로 본다."""
     if not RESULTS.exists():
         return set()
     done = set()
@@ -201,6 +207,8 @@ def load_done() -> set[tuple]:
             continue
         try:
             d = json.loads(line)
+            if d.get("env_hash") != env_hash:
+                continue
             p, r = d["problem"], d["runtime"]
             done.add((d["kernel_id"], p["M"], p["N"], p["K"],
                       r["split_k"], r["split_k_mode"]))
@@ -212,13 +220,15 @@ def load_done() -> set[tuple]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--n-kernels", type=int, default=20)
+    ap.add_argument("--all", action="store_true",
+                    help="Phase 3: 전체 형상 그리드 x 빌드된 커널 전부")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--limit", type=int, default=0)
     args = ap.parse_args()
 
     env = json.loads(paths.ENV_JSON.read_text())
     os.environ["CUDA_VISIBLE_DEVICES"] = str(env["device_index"])
-    hw = Hardware(**env["hardware"])
+    hw = hardware_from_env(env)
     backend = get_backend(hw.arch)
     seed = env["shuffle_seed"]
     launch_overhead_ms = env["launch_overhead_ms"]
@@ -236,39 +246,62 @@ def main() -> int:
         a = r["align"]
         by_align[(a["a"], a["b"], a["c"])].append(r)
 
-    base = by_align.get((8, 8, 8), [])
-    picked = stratified_sample(base, args.n_kernels, seed, hw.regs_per_sm)
-    # a448 대응짝: 동일 구성의 alignment 변형. 이러면 (1024,4096,4100) 형상에서
-    # alignment 효과만 분리해서 볼 수 있다.
-    a448_by_key = {config_key(r): r for r in by_align.get((4, 4, 8), [])}
-    partners = []
-    for r in picked:
-        q = a448_by_key.get(config_key(r))
-        if q:
-            q = dict(q)
-            q["stratum"] = r["stratum"] + "/a448"
-            partners.append(q)
-    sample = picked + partners
+    if args.all:
+        # Phase 3: 층화 표집을 하지 않고 전부 쓴다. 단 두 가지는 뺀다.
+        #   1) 런치 불가 (regs * threads > regs_per_sm)
+        #   2) 현재 열거기 기준으로 더 이상 유효하지 않은 커널.
+        #      kernels.jsonl 은 append-only 라 과거 열거 공간에서 빌드된 것이
+        #      남아 있다 (예: 계산이 틀리는 warp tile (64,128)). 측정 대상은
+        #      항상 "지금의 is_valid_kernel 이 인정하는 집합" 이어야 한다.
+        from core.config import alignment_combos, enumerate_kernels  # noqa: E402
 
-    print(f"커널 표본: a888 {len(picked)}개 + a448 대응짝 {len(partners)}개")
-    for r in picked:
-        print(f"  [{r['stratum']:14s}] {r['kernel_id']}  "
-              f"thr={r['threads']} regs={r['regs_per_thread']} "
-              f"blk/sm={r['max_blocks_per_sm']}")
+        valid_ids = {backend.kernel_id(c) for c in
+                     enumerate_kernels(hw, backend,
+                                       alignment_combos(all_shapes(hw)))}
+        launch_ok = [r for r in ok_rows if launchable(r, hw.regs_per_sm)]
+        sample = [r for r in launch_ok if r["kernel_id"] in valid_ids]
+        picked = sample
+        partners = []
+        shapes = all_shapes(hw)
+        print(f"[Phase 3 전수] 빌드 {len(ok_rows)}개 -> 런치 가능 {len(launch_ok)}개 "
+              f"-> 현재 유효 {len(sample)}개, 형상 {len(shapes)}개")
+        dropped = len(launch_ok) - len(sample)
+        if dropped:
+            print(f"  (열거기에서 제외된 커널 {dropped}개는 측정하지 않는다)")
+    else:
+        shapes = REHEARSAL_SHAPES
+        base = by_align.get((8, 8, 8), [])
+        picked = stratified_sample(base, args.n_kernels, seed, hw.regs_per_sm)
+        # a448 대응짝: 동일 구성의 alignment 변형. 이러면 (1024,4096,4100)
+        # 형상에서 alignment 효과만 분리해서 볼 수 있다.
+        a448_by_key = {config_key(r): r for r in by_align.get((4, 4, 8), [])}
+        partners = []
+        for r in picked:
+            q = a448_by_key.get(config_key(r))
+            if q:
+                q = dict(q)
+                q["stratum"] = r["stratum"] + "/a448"
+                partners.append(q)
+        sample = picked + partners
+        print(f"커널 표본: a888 {len(picked)}개 + a448 대응짝 {len(partners)}개")
+        for r in picked:
+            print(f"  [{r['stratum']:14s}] {r['kernel_id']}  "
+                  f"thr={r['threads']} regs={r['regs_per_thread']} "
+                  f"blk/sm={r['max_blocks_per_sm']}")
 
     # --- 작업 목록 ---------------------------------------------------------
     jobs = []
     for r in sample:
         a = (r["align"]["a"], r["align"]["b"], r["align"]["c"])
-        for p in REHEARSAL_SHAPES:
+        for p in shapes:
             if alignments_for(p) != a:
                 continue
             cfg = cfg_from_row(r, backend)
             for rc in enumerate_runtimes(backend, p, cfg):
                 jobs.append((r, p, rc))
 
-    print(f"\n작업 수: {len(jobs)} "
-          f"(형상 {len(REHEARSAL_SHAPES)}개, 커널 {len(sample)}개)")
+    print(f"\n작업 수: {len(jobs):,} "
+          f"(형상 {len(shapes)}개, 커널 {len(sample)}개)")
     by_shape = Counter((p.M, p.N, p.K) for _, p, _ in jobs)
     for k, v in sorted(by_shape.items()):
         print(f"  {k}: {v}")
@@ -280,11 +313,14 @@ def main() -> int:
     if args.limit:
         jobs = jobs[: args.limit]
 
-    done = load_done()
+    done = load_done(env["env_hash"])
+    n_before = len(jobs)
     jobs = [j for j in jobs
             if (j[0]["kernel_id"], j[1].M, j[1].N, j[1].K,
                 j[2].split_k, j[2].split_k_mode) not in done]
-    print(f"남은 작업: {len(jobs)} (완료 {len(done)})")
+    # len(done) 에는 cuBLAS 참조 줄도 섞여 있으므로 실제로 건너뛴 수를 센다.
+    print(f"남은 작업: {len(jobs):,} "
+          f"(이미 측정 {n_before - len(jobs):,}, 기록된 줄 {len(done):,})")
     if not jobs:
         return 0
 
@@ -301,6 +337,8 @@ def main() -> int:
     # --- alignment 가드가 실제로 필요한지 확인 (측정 전에) ---------------
     print("\n[가드 검증] (1024,4096,4100) 에 a888 커널을 강제로 물려본다")
     try:
+        if args.all:
+            raise RuntimeError("전수 모드에서는 생략")
         guard = alignment_guard_probe(ctx, sample, kernels, hw)
         for g in guard:
             print(f"  {g['kernel_id'][:52]:52s} can_implement={g['can_implement']}"
@@ -345,8 +383,9 @@ def main() -> int:
 
             # --- 재현성 검증 ---------------------------------------------
             print("\n[재현성] 무작위 20개 조합 재측정")
-            repro = reproducibility(ctx, kernels, jobs, probe, env,
-                                    launch_overhead_ms, seed, hw.regs_per_sm)
+            repro = ([] if args.all else
+                     reproducibility(ctx, kernels, jobs, probe, env,
+                                     launch_overhead_ms, seed, hw.regs_per_sm))
     finally:
         tele_proc.terminate()
         try:

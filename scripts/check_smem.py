@@ -27,7 +27,9 @@ sys.path.insert(0, str(REPO_ROOT))
 from backends import get_backend  # noqa: E402
 from build import paths  # noqa: E402
 from core.config import alignment_combos, dtype_bytes, enumerate_kernels  # noqa: E402
-from core.hardware import detect_hardware, nvcc_arch_flag  # noqa: E402
+from core.hardware import (  # noqa: E402
+    detect_hardware, hardware_from_env, nvcc_arch_flag,
+)
 from core.shapes import all_shapes  # noqa: E402
 from core.types import Hardware  # noqa: E402
 
@@ -56,7 +58,7 @@ def main() -> int:
 
     if paths.ENV_JSON.exists():
         env = json.loads(paths.ENV_JSON.read_text())
-        hw = Hardware(**env["hardware"])
+        hw = hardware_from_env(env)
         cutlass = Path(env["cutlass"]["dir"])
     else:
         hw = detect_hardware(0)

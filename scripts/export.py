@@ -25,6 +25,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from backends import get_backend  # noqa: E402
 from build import paths  # noqa: E402
+from core.hardware import hardware_from_env  # noqa: E402
 from core import features as F  # noqa: E402
 from core.types import Hardware, KernelConfig, Problem, RuntimeConfig  # noqa: E402
 
@@ -62,8 +63,8 @@ def main() -> int:
     # 클럭을 고정하면 SM 클럭만 내려가고 메모리 클럭은 그대로다. roofline 을
     # 스펙 피크로 계산하면 ridge point 가 실제보다 높게 나와 "이 형상이 메모리
     # 바운드인가" 판정이 틀린다. 분석에는 실효 피크를 쓴다.
-    peak_eff = env.get("peak_tflops_f16_effective") or hw_spec.peak_tflops_f16
-    hw = replace(hw_spec, peak_tflops_f16=peak_eff)
+    hw = hardware_from_env(env)          # 유효 피크 적용본 (분석용)
+    peak_eff = hw.peak_tflops_f16
     backend = get_backend(hw.arch)
     if peak_eff != hw_spec.peak_tflops_f16:
         print(f"[roofline] 실효 피크 {peak_eff} TFLOP/s "

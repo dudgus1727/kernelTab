@@ -80,9 +80,22 @@ A6000 스펙 : 154.8 TFLOP/s @ 1800 MHz  -> ridge point 201.6 FLOP/byte
 1350 MHz 고정: 116.1 TFLOP/s           -> ridge point 151.2 FLOP/byte
 ```
 
-`env.json` 에 `peak_tflops_f16_effective` 로 기록하고 `scripts/export.py` 가
-분석에 이 값을 쓴다 (`ridge_point` / `frac_of_peak`). 스펙 기준값도
-`ridge_point_spec` 으로 함께 남긴다.
+`env.json` 에 `peak_tflops_f16_effective` 로 기록한다. **모든 호출부는
+`core.hardware.hardware_from_env(env)` 로만 `Hardware` 를 만든다** —
+`Hardware(**env["hardware"])` 를 직접 쓰면 스펙 피크가 들어와 roofline 이
+틀린다. 스펙 기준값도 `ridge_point_spec` 으로 함께 남긴다.
+
+`env.json` 은 `sm_clock_mhz` 와 `mem_clock_mhz` 를 **둘 다** 기록한다.
+`-lgc` 는 SM 클럭만 건드리므로, 나중에 "이 측정이 어떤 클럭 조건이었나" 를
+재구성하려면 두 값이 모두 필요하다.
+
+> **다른 GPU 로 확장할 때 이것이 결정적이다.** GPU 마다 다른 클럭으로
+> 고정하게 되는데, 유효 피크를 쓰지 않으면 "메모리 바운드" 의 의미가 GPU
+> 마다 달라져 전이 실험이 오염된다. A6000 을 1350 MHz 로 고정하면 ridge
+> point 가 201.6 → 151.2 로 25% 이동하고, 그 사이에 있는 형상들의 bound
+> 분류가 통째로 뒤집힌다. 새 GPU 를 추가할 때는 `known.json` 에
+> `peak_tflops_f16_at_mhz` 를 **반드시** 같이 넣어야 하며, 없으면 보정이
+>조용히 생략된다.
 
 ### 측정 조건이 다른 데이터는 섞지 말 것
 
@@ -395,7 +408,30 @@ if (threadblock_tile_offset.k()) {
 SASS 에서도 정확히 갈린다 (stages=2 는 LDGSTS 0 개, stages≥3 은 795/795 사용).
 `stages` 를 하나의 연속 축으로 보면 잘못된 결론이 나오므로 명시적으로 남긴다.
 
-### 9. Backend Protocol 에 메서드 추가
+### 9. warp tile (64,128) 제외 — 계산이 틀린다
+
+`is_valid_kernel` 은 원칙적으로 컴파일/실행 가능성만 본다. 하지만 warp tile
+`(64,128)` 은 컴파일도 되고 런치도 되는데 **결과가 틀린다.**
+
+`scripts/check_correctness.py` 로 a888 런치 가능 커널 1,215 개를 전수 검사한
+결과:
+
+```
+이상 60 / 정상 1,155
+이상 커널의 warp tile: {(64,128): 60}   <- 100%, 예외 없음
+같은 누산기 수(256 regs/thread)인 mirror (128,64): 60/60 정상
+max_rel_error 0.77 ~ 1.13  (완전한 오답)
+```
+
+레지스터 수가 원인이 아니라 `warp_n` 이 원인이다. CUTLASS generator 가 만드는
+712 개 조합 중 `warp_n >= 128` 은 1 건뿐이고 `(64,128)` 은 0 건 — 검증되지 않은
+영역이다. 근본 원인은 더 추적하지 않았다.
+
+성능 필터가 아니라 **정확성** 문제이므로 제외한다. 오답 config 가 성능표에
+섞이면 그 표를 쓰는 모든 분석이 오염된다. `(128,64)` 는 정상 동작하므로
+(스필로 느리긴 하지만) 남겨둔다 — 느린 것은 데이터로 남길 가치가 있다.
+
+### 10. Backend Protocol 에 메서드 추가
 
 명세된 목록 외에 `enumerate_runtime`, `explain_kernel`, `ext_from_dict`,
 `pipeline_kind`, `effective_split_k` / `workspace_bytes` 를 두었다. 각각

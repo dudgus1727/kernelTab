@@ -23,6 +23,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from backends import get_backend  # noqa: E402
 from build import paths  # noqa: E402
+from core.hardware import hardware_from_env  # noqa: E402
 from core.types import Hardware, Problem, RuntimeConfig  # noqa: E402
 
 RESULTS = paths.RESULTS_DIR / "results.jsonl"
@@ -53,7 +54,7 @@ def quart(xs: list[float]) -> str:
 
 def main() -> int:
     env = json.loads(paths.ENV_JSON.read_text())
-    hw = Hardware(**env["hardware"])
+    hw = hardware_from_env(env)
     backend = get_backend(hw.arch)
 
     res = load(RESULTS)

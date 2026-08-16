@@ -35,7 +35,9 @@ from core.features import (  # noqa: E402
     ridge_point,
     waves,
 )
-from core.hardware import detect_hardware  # noqa: E402
+from core.hardware import (  # noqa: E402
+    detect_hardware, hardware_from_env,
+)
 from core.shapes import all_layers, all_shapes  # noqa: E402
 from core.types import Hardware, Problem  # noqa: E402
 
@@ -44,7 +46,7 @@ def load_hw(device: int) -> Hardware:
     """env.json 이 있으면 그것을 쓰고, 없으면 직접 감지한다."""
     if paths.ENV_JSON.exists():
         env = json.loads(paths.ENV_JSON.read_text())
-        return Hardware(**env["hardware"])
+        return hardware_from_env(env)
     return detect_hardware(device)
 
 
@@ -108,6 +110,7 @@ def main() -> int:
         "horizontal_swizzle_n",
         "mainloop_smem_thread_map",
         "epilogue_thread_map",
+        "warp_n_incorrect_results",
     ]
     remaining = raw
     print(f"  {'축 곱집합(raw)':30s} {raw:7d}")
@@ -204,7 +207,11 @@ def main() -> int:
         ks = [k for k in kernels if (k.align_a, k.align_b, k.align_c) == al]
         total_meas += sum(len(enumerate_runtimes(backend, p, k)) for k in ks)
     print(f"  (형상 x 커널 x 런타임) 총 측정 수: {total_meas:,}")
-    print(f"  측정당 20ms + 오버헤드 ~= {total_meas * 0.03 / 3600:.1f} 시간 (거친 추정)")
+    print("  ※ 실제 소요 시간은 형상마다 크게 다르다. 프로토콜이 '총 20ms 또는")
+    print("     최소 30회' 이므로 커널이 0.67ms 보다 느리면 최소 반복 수가")
+    print("     지배한다 (8192^3 은 커널 1회가 ~20ms -> 작업당 1초 이상).")
+    print("     정확한 견적은 scripts/rehearse.py --all --dry-run 과")
+    print("     리허설 실측 효율을 함께 봐야 한다.")
     return 0
 
 

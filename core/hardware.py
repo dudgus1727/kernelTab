@@ -19,6 +19,7 @@ from __future__ import annotations
 import ctypes
 import json
 from dataclasses import asdict
+from dataclasses import replace as dc_replace
 from pathlib import Path
 
 from core.types import Hardware
@@ -32,6 +33,7 @@ __all__ = [
     "hardware_to_dict",
     "device_uuid",
     "peak_reference_mhz",
+    "hardware_from_env",
 ]
 
 # ---------------------------------------------------------------------------
@@ -231,6 +233,23 @@ def nvcc_arch_flag(arch: str) -> str:
 
 def hardware_to_dict(hw: Hardware) -> dict:
     return asdict(hw)
+
+
+def hardware_from_env(env: dict) -> Hardware:
+    """results/env.json -> Hardware.  **모든 호출부는 이것만 쓴다.**
+
+    `Hardware(**env["hardware"])` 를 직접 쓰면 peak_tflops_f16 이 스펙(부스트
+    클럭 기준) 값이 되어, 클럭을 고정한 측정에서 roofline ridge point 가
+    실제보다 높게 나오고 "이 형상이 메모리 바운드인가" 판정이 틀린다.
+
+    GPU 마다 다른 클럭으로 고정하게 되므로, 유효 피크를 쓰지 않으면
+    "메모리 바운드" 의 의미가 GPU 마다 달라져 전이 실험이 오염된다.
+    """
+    hw = Hardware(**env["hardware"])
+    eff = env.get("peak_tflops_f16_effective")
+    if eff and eff != hw.peak_tflops_f16:
+        hw = dc_replace(hw, peak_tflops_f16=float(eff))
+    return hw
 
 
 def extra_device_info(device_index: int = 0) -> dict:
