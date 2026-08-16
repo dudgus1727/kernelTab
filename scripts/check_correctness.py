@@ -64,6 +64,7 @@ def main() -> int:
 
     print(f"GPU {dev} 에서 {len(cand)}개 커널 정확성 검사  형상={shape.M}x{shape.N}x{shape.K}")
     ctx = Ctx(paths.ARTIFACT_DIR / "libkt_ctx.so", 0)
+    ctx.set_protocol(env)
     ctx.prepare_problem(shape.M, shape.N, shape.K)
     kp = KtProblemC(shape.M, shape.N, shape.K, 1, 0)
 

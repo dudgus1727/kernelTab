@@ -32,6 +32,7 @@ EPILOGUE_ASSERTS = (
     "Accessing too many elements per access",
 )
 MAINLOOP_ASSERTS = ("Number of iterations must be non-zero",)
+CPASYNC_ASSERTS = ("Size is not supported",)
 
 
 def predict_ok(r: dict) -> tuple[bool, bool]:
@@ -41,9 +42,11 @@ def predict_ok(r: dict) -> tuple[bool, bool]:
     wn = t["n"] // e["warp_n"]
     wk = t["k"] // e["warp_k"]
     threads = wm * wn * wk * 32
+    # cp.async 는 4/8/16 바이트만 지원한다 (fp16 x alignment 1 = 2바이트 불가)
+    cpasync_ok = not (e["stages"] > 2 and min(a["a"], a["b"]) * 2 < 4)
     return (
         epilogue_thread_map_ok(t["n"], wm, wn, wk, a["c"]),
-        mainloop_smem_thread_map_ok(t["m"], t["n"], t["k"], threads),
+        mainloop_smem_thread_map_ok(t["m"], t["n"], t["k"], threads) and cpasync_ok,
     )
 
 
@@ -72,7 +75,8 @@ def main() -> int:
         err = r.get("build_error", "")
         if st == "build_fail":
             known = (any(s in err for s in EPILOGUE_ASSERTS)
-                     or any(s in err for s in MAINLOOP_ASSERTS))
+                     or any(s in err for s in MAINLOOP_ASSERTS)
+                     or any(s in err for s in CPASYNC_ASSERTS))
             if not known:
                 other_fail[err] += 1
                 continue

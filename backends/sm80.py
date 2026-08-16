@@ -260,6 +260,14 @@ class Sm80Backend:
         if e.swizzle_type == "horizontal" and e.swizzle_n != 1:
             return "horizontal_swizzle_n"
 
+        # multistage(stages >= 3)는 cp.async(LDGSTS)로 전역->smem 복사를 한다.
+        # cp.async 는 4/8/16 바이트 접근만 지원하므로 접근 폭이 4바이트 미만이면
+        # `static_assert: Size is not supported` 로 컴파일이 거부된다.
+        # fp16 + alignment 1 = 2바이트가 정확히 여기 걸린다.
+        # 실측: a118 에서 stages=2 는 31/31 성공, stages>=3 은 0/140 성공.
+        if e.stages > 2 and min(cfg.align_a, cfg.align_b) * dtype_bytes < 4:
+            return "cpasync_min_access"
+
         # warp_n >= 128 은 컴파일도 되고 런치도 되지만 **계산 결과가 틀린다.**
         # scripts/check_correctness.py 로 a888 런치 가능 커널 1,215개를 전수
         # 확인한 결과 warp tile (64,128) 60개가 100% 오답이었고 (max_rel_error

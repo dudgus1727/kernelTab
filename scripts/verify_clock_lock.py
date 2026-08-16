@@ -112,6 +112,7 @@ def main() -> int:
     print(f"커널 {krow['kernel_id']}")
 
     ctx = Ctx(paths.ARTIFACT_DIR / "libkt_ctx.so", 0)
+    ctx.set_protocol(env)
     k = Kernel(krow["so_path"])
     ctx.prepare_problem(LOAD_SHAPE.M, LOAD_SHAPE.N, LOAD_SHAPE.K)
     kp = KtProblemC(LOAD_SHAPE.M, LOAD_SHAPE.N, LOAD_SHAPE.K, 1, 0)

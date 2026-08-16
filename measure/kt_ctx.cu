@@ -402,13 +402,21 @@ static int measure_impl(Ctx *c, KtLaunchFn fn, void *handle, int reduce_slices,
   }
   double per_ms = double(probe_ms) / double(probe);
 
-  // 2) 총 측정 시간이 target_ms 가 되도록 반복 수를 정한다.
-  int n_reps = proto->min_reps;
+  // 2) 총 시간 예산으로 반복 수를 정한다.
+  //    min_reps = clamp(ceil(min_total_ms / t), floor, cap)
+  //    n_reps   = clamp(target_ms / t,          min_reps, max_reps)
+  int min_reps = proto->min_reps_floor;
+  if (per_ms > 0) {
+    int by_budget = int(std::ceil(proto->min_total_ms / per_ms));
+    min_reps = std::max(proto->min_reps_floor,
+                        std::min(proto->min_reps_cap, by_budget));
+  }
+  int n_reps = min_reps;
   if (per_ms > 0) {
     double want = proto->target_ms / per_ms;
     n_reps = int(want < 1.0 ? 1.0 : want);
   }
-  n_reps = std::max(proto->min_reps, std::min(proto->max_reps, n_reps));
+  n_reps = std::max(min_reps, std::min(proto->max_reps, n_reps));
 
   // 3) 워밍업: 본 측정 반복 수의 warmup_frac 또는 최소 min_warmup
   int warm = std::max(proto->min_warmup, int(proto->warmup_frac * n_reps));

@@ -79,6 +79,7 @@ def main() -> int:
         libs[key] = Kernel(r["so_path"])
 
     ctx = Ctx(paths.ARTIFACT_DIR / "libkt_ctx.so", 0)
+    ctx.set_protocol(env)
     ok = True
     try:
         # --- 2) grid dim 실측 -------------------------------------------

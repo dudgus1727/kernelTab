@@ -62,6 +62,25 @@ python3 scripts/export.py                          # -> results/table.parquet
 > 고정된 채로 두면 그 GPU 를 쓰는 다른 사용자가 원인 모를 성능 저하를 겪는다.
 > 부팅해도 persistence mode 가 켜져 있으면 유지될 수 있다.
 
+### ⚠️ `-lgc` 는 메모리 클럭을 고정하지 않는다
+
+`nvidia-smi -lgc` 는 **SM/graphics 클럭만** 고정한다. 메모리 클럭은 그대로
+전력 상태를 따라가며, A6000 기준 **유휴 시 810 MHz(P5) ↔ 부하 시 7601 MHz**
+로 9.4 배 차이가 난다.
+
+실측한 결과, 3 분간 유휴 상태였다가 재개하면 첫 측정이 메모리 바운드 config
+에서 **최대 66% 느리게** 나온다 (23.9 ms vs 실제 14.4 ms). 램프업이 끝나면
+0.05% 수준으로 안정된다. 연속 측정 중에는 문제가 없지만 **시작 직후와 중단 후
+재개 직후가 위험**하다.
+
+대책:
+* `scripts/rehearse.py` 는 측정 루프 시작 전에 `WARMUP_SECONDS`(기본 20초)
+  동안 부하를 걸어 메모리 클럭을 램프업시킨다. 램프업 전후 값을 로그에 남긴다.
+* 측정 줄마다 `mem_clock_mhz` 를 기록한다. 나중에 이상치를 만나면 이 값으로
+  램프업 문제인지 판별할 수 있다.
+* 더 확실히 하려면 관리자가 메모리 클럭도 고정하면 된다:
+  `sudo nvidia-smi -i N -lmc 8001`
+
 `results/env.json` 은 Phase 0 이 한 번 쓰고 이후 단계는 읽기만 한다.
 모든 측정 줄이 `env_hash` 로 이 파일을 참조하므로 나중에 고치면 안 된다.
 조건이 바뀌면(예: 클럭 고정) 기존 파일을 `env.<조건>.json` 으로 보관하고
@@ -431,7 +450,43 @@ max_rel_error 0.77 ~ 1.13  (완전한 오답)
 섞이면 그 표를 쓰는 모든 분석이 오염된다. `(128,64)` 는 정상 동작하므로
 (스필로 느리긴 하지만) 남겨둔다 — 느린 것은 데이터로 남길 가치가 있다.
 
-### 10. Backend Protocol 에 메서드 추가
+### 10. 측정 반복 수를 고정 하한이 아니라 시간 예산으로 정한다
+
+원래 스펙은 "총 20ms 또는 **최소 30회**" 였다. 그 값은 노이즈가 큰 상황
+(스로틀 51%, 재현성 max 8.91%)을 가정한 것이다. 클럭 고정 후에는 2,155 회
+연속 측정 변동이 0.11% 라 전제가 달라졌다.
+
+고정 하한을 쓰면 느린 커널에서 최소 반복 수가 시간을 지배한다 —
+20ms 커널 × 30회 = 작업당 0.6초. 전수 측정 926,235 건에서 이것만으로
+20 시간 이상이 더 든다. 그래서 규칙으로 바꿨다.
+
+```
+min_reps = clamp(ceil(min_total_ms / t), min_reps_floor, min_reps_cap)
+n_reps   = clamp(target_ms / t,          min_reps,        max_reps)
+     target_ms=20, min_total_ms=3, min_reps_floor=5, min_reps_cap=30
+```
+
+빠른 커널(≤0.1ms)은 예전과 같은 30회 이상, 느린 커널은 최소 3ms 만 재고
+멈춘다. 하한 5 는 IQR 사분위 계산에 필요한 최소 표본이다.
+
+**프로토콜은 `env.json` 의 `protocol` 에 기록되어 `env_hash` 에 반영된다.**
+프로토콜이 바뀌면 측정 조건이 바뀐 것이므로 resume 이 예전 줄을 건너뛰면
+안 되기 때문이다.
+
+### 11. cp.async 최소 접근 폭 — alignment 1 은 2단만 가능
+
+multistage(stages ≥ 3)는 `cp.async`(LDGSTS)로 전역→smem 복사를 하는데,
+cp.async 는 **4/8/16 바이트 접근만** 지원한다. fp16 × alignment 1 = 2 바이트가
+정확히 여기 걸려 `static_assert: Size is not supported` 가 난다.
+
+실측: `a118`(K=4097) 에서 stages=2 는 31/31 성공, stages≥3 은 0/140 성공.
+`is_valid_kernel` 에 넣었고 실측 2,901 건과 대조해 오탐 0 / 미탐 0 이다.
+
+결과적으로 층 D 의 `K=4097` 형상은 유효 커널이 445 개뿐이다 (다른 alignment 는
+1,305~1,435). **alignment 1 은 2단 파이프라인만 쓸 수 있다** 는 것 자체가
+이 형상에 대한 결론이다.
+
+### 12. Backend Protocol 에 메서드 추가
 
 명세된 목록 외에 `enumerate_runtime`, `explain_kernel`, `ext_from_dict`,
 `pipeline_kind`, `effective_split_k` / `workspace_bytes` 를 두었다. 각각

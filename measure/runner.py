@@ -11,7 +11,8 @@ from pathlib import Path
 
 __all__ = [
     "KtProblemC", "KtBuffersC", "KtProtocolC", "KtMeasureC",
-    "Ctx", "Kernel", "DEFAULT_PROTOCOL",
+    "Ctx", "Kernel", "DEFAULT_PROTOCOL", "protocol_from_env",
+    "PROTOCOL_DEFAULTS",
 ]
 
 
@@ -33,7 +34,9 @@ class KtBuffersC(ctypes.Structure):
 class KtProtocolC(ctypes.Structure):
     _fields_ = [
         ("target_ms", ctypes.c_double),
-        ("min_reps", ctypes.c_int),
+        ("min_total_ms", ctypes.c_double),
+        ("min_reps_floor", ctypes.c_int),
+        ("min_reps_cap", ctypes.c_int),
         ("max_reps", ctypes.c_int),
         ("warmup_frac", ctypes.c_double),
         ("min_warmup", ctypes.c_int),
@@ -53,11 +56,30 @@ class KtMeasureC(ctypes.Structure):
     ]
 
 
-#: 스펙의 측정 프로토콜: 총 20ms, 최소 30회, 최대 1000회, 워밍업 20%/최소 10회
+#: 측정 프로토콜 기본값. 총 20ms 목표, 최소 3ms 보장, 반복 5~1000회.
+#: 실제 값은 env.json 의 `protocol` 에서 읽는다 (측정 조건의 일부이므로
+#: env_hash 에 포함되어야 한다). protocol_from_env() 를 쓸 것.
 DEFAULT_PROTOCOL = KtProtocolC(
-    target_ms=20.0, min_reps=30, max_reps=1000,
-    warmup_frac=0.2, min_warmup=10, iqr_k=1.5,
+    target_ms=20.0, min_total_ms=3.0, min_reps_floor=5, min_reps_cap=30,
+    max_reps=1000, warmup_frac=0.2, min_warmup=10, iqr_k=1.5,
 )
+
+PROTOCOL_DEFAULTS = {
+    "target_ms": 20.0, "min_total_ms": 3.0, "min_reps_floor": 5,
+    "min_reps_cap": 30, "max_reps": 1000, "warmup_frac": 0.2,
+    "min_warmup": 10, "iqr_k": 1.5,
+}
+
+
+def protocol_from_env(env: dict) -> KtProtocolC:
+    """env.json 의 protocol 로 KtProtocol 을 만든다.
+
+    프로토콜은 측정 조건이다. env.json 에 기록해 env_hash 에 반영해야
+    프로토콜이 바뀐 뒤의 측정이 예전 것을 건너뛰지 않는다.
+    """
+    d = dict(PROTOCOL_DEFAULTS)
+    d.update(env.get("protocol") or {})
+    return KtProtocolC(**{k: d[k] for k in PROTOCOL_DEFAULTS})
 
 
 class Ctx:
@@ -93,6 +115,11 @@ class Ctx:
         if not self.h:
             raise RuntimeError("kt_ctx_create 실패 (GPU 사용 가능한지 확인)")
         self._mnk: tuple[int, int, int] | None = None
+        self.proto = DEFAULT_PROTOCOL
+
+    def set_protocol(self, env: dict) -> None:
+        """env.json 의 protocol 을 이 컨텍스트의 기본값으로 삼는다."""
+        self.proto = protocol_from_env(env)
 
     # -- 문제 준비 --------------------------------------------------------
     def prepare_problem(self, M: int, N: int, K: int) -> None:
@@ -115,14 +142,16 @@ class Ctx:
 
     # -- 측정 -------------------------------------------------------------
     def measure(self, launch_addr: int, handle: int, reduce_slices: int,
-                proto: KtProtocolC = DEFAULT_PROTOCOL) -> tuple[int, KtMeasureC]:
+                proto: KtProtocolC | None = None) -> tuple[int, KtMeasureC]:
+        proto = proto or self.proto
         m = KtMeasureC()
         rc = self.lib.kt_ctx_measure(
             self.h, ctypes.c_void_p(launch_addr), ctypes.c_void_p(handle),
             reduce_slices, ctypes.byref(proto), ctypes.byref(m))
         return rc, m
 
-    def measure_cublas(self, proto: KtProtocolC = DEFAULT_PROTOCOL):
+    def measure_cublas(self, proto: KtProtocolC | None = None):
+        proto = proto or self.proto
         m = KtMeasureC()
         rc = self.lib.kt_ctx_measure_cublas(self.h, ctypes.byref(proto),
                                             ctypes.byref(m))

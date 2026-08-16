@@ -58,13 +58,22 @@ typedef int (*KtLaunchFn)(void *handle, void *stream);
 
 // ---- 측정 프로토콜 --------------------------------------------------------
 typedef struct KtProtocol {
-  double target_ms;    // 총 측정 시간 목표 (기본 20)
-  int min_reps;        // 30
-  int max_reps;        // 1000
-  double warmup_frac;  // 0.2
-  int min_warmup;      // 10
-  double iqr_k;        // 1.5
+  double target_ms;      // 총 측정 시간 목표 (기본 20)
+  double min_total_ms;   // 최소 총 측정 시간 (기본 3)
+  int min_reps_floor;    // 반복 수 하한 (기본 5). IQR 사분위 계산의 최소 표본
+  int min_reps_cap;      // 하한 규칙의 상한 (기본 30)
+  int max_reps;          // 1000
+  double warmup_frac;    // 0.2
+  int min_warmup;        // 10
+  double iqr_k;          // 1.5
 } KtProtocol;
+
+// 반복 수 결정 규칙 (kt_ctx.cu):
+//   min_reps = clamp(ceil(min_total_ms / t), min_reps_floor, min_reps_cap)
+//   n_reps   = clamp(target_ms / t,          min_reps,        max_reps)
+// 고정 하한(예전의 min_reps=30)을 쓰면 느린 커널에서 최소 반복 수가 시간을
+// 지배한다 (20ms 커널 x 30회 = 작업당 0.6초). 총 시간 예산으로 통일하면
+// 어떤 커널이든 최소 min_total_ms 는 측정하되 그 이상은 낭비하지 않는다.
 
 typedef struct KtMeasure {
   double time_ms;      // IQR 제거 후 중앙값

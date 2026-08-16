@@ -112,7 +112,7 @@ def main() -> int:
         for c in ("time_ms", "time_std_ms", "time_min_ms", "time_max_ms",
                   "n_reps", "outlier_frac", "max_rel_error", "workspace_bytes",
                   "actual_split_k", "workspace_dtype", "partials_dtype",
-                  "status", "sm_clock_mhz", "gpu_temp_c",
+                  "status", "sm_clock_mhz", "mem_clock_mhz", "gpu_temp_c",
                   "power_w", "clock_locked", "env_hash", "timestamp", "error"):
             row[c] = r.get(c)
         row["cublas_ms"] = cublas.get((p.M, p.N, p.K))

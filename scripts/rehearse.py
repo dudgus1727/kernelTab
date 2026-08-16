@@ -61,6 +61,29 @@ NUMERICAL_TOL = 5e-2
 #: outlier_frac 이 이 값을 넘으면 status 에 표시
 OUTLIER_TOL = 0.20
 
+# --- 장시간 실행 감시 임계 (요청 O) ---------------------------------------
+#: 드리프트가 기준 대비 이만큼 벗어나면 위반 1회
+DRIFT_TOL = 0.05
+#: 위반이 연속 이 횟수면 중단. 일시적 변동이 아니라 조건이 변한 것이다.
+DRIFT_STRIKES = 3
+#: 최근 구간에서 sw_power_cap 이 이 비율을 넘으면 즉시 경고
+#: (클럭 고정이 풀렸거나 다른 프로세스가 GPU 를 쓰고 있다)
+POWER_CAP_TOL = 0.05
+#: status 분포를 이 주기로 로그에 남긴다
+STATUS_LOG_SECONDS = 3600
+
+#: 측정 시작 전 GPU 를 달구는 시간(초).
+#: `nvidia-smi -lgc` 는 SM 클럭만 고정한다. **메모리 클럭은 고정되지 않으며**
+#: 유휴 시 810 MHz(P5)까지 떨어졌다가 부하가 걸려야 7601 MHz 로 올라간다
+#: (9.4배 차이). 램프업 전에 측정하면 메모리 바운드 config 가 최대 66% 느리게
+#: 측정된다 — 실측으로 확인했다. 연속 측정 중에는 문제가 없지만 시작 직후와
+#: 중단 후 재개 직후가 위험하다.
+#: 메모리 클럭까지 고정하려면 `sudo nvidia-smi -i N -lmc <mhz>` 가 필요하다.
+WARMUP_SECONDS = 20
+
+#: NVML 로 읽은 메모리 클럭이 최대치의 이 비율 미만이면 램프업 중으로 본다
+MEM_CLOCK_MIN_FRAC = 0.9
+
 
 def launchable(krow: dict, regs_per_sm: int) -> bool:
     """런치 가능한가.
@@ -326,6 +349,7 @@ def main() -> int:
 
     # --- 초기화 ------------------------------------------------------------
     ctx = Ctx(paths.ARTIFACT_DIR / "libkt_ctx.so", 0)
+    ctx.set_protocol(env)
     kernels: dict[str, Kernel] = {}
     for r in sample:
         kernels[r["kernel_id"]] = Kernel(r["so_path"])
@@ -333,6 +357,7 @@ def main() -> int:
 
     tele_proc, tele_file = start_telemetry(env["device_index"])
     print(f"[telemetry] {TELEMETRY} (1초 간격)")
+    warm_up(ctx, kernels, sample, probe)
 
     # --- alignment 가드가 실제로 필요한지 확인 (측정 전에) ---------------
     print("\n[가드 검증] (1024,4096,4100) 에 a888 커널을 강제로 물려본다")
@@ -352,6 +377,10 @@ def main() -> int:
     cublas_cache: dict[tuple, dict] = {}
     drift_kernel_id = picked[0]["kernel_id"]
     last_drift = 0.0
+    last_status_log = time.time()
+    drift_ref: float | None = None
+    drift_strikes = 0
+    aborted = None
     t_start = time.time()
 
     stats = Counter()
@@ -371,10 +400,40 @@ def main() -> int:
                 if key not in cublas_cache:
                     cublas_cache[key] = measure_cublas(ctx, p, probe, env, out)
 
+                # --- 요청 O: 장시간 실행 감시 ---------------------------
                 if time.time() - last_drift > drift_period:
                     last_drift = time.time()
-                    drift_check(ctx, kernels[drift_kernel_id], drift_kernel_id,
-                                probe, env)
+                    t_drift = drift_check(ctx, kernels[drift_kernel_id],
+                                          drift_kernel_id, probe, env)
+                    if t_drift:
+                        if drift_ref is None:
+                            drift_ref = t_drift
+                        dev = abs(t_drift - drift_ref) / drift_ref
+                        if dev > DRIFT_TOL:
+                            drift_strikes += 1
+                            print(f"  !! 드리프트 {100 * dev:.2f}% "
+                                  f"({t_drift:.4f} vs 기준 {drift_ref:.4f} ms) "
+                                  f"연속 {drift_strikes}회", flush=True)
+                        else:
+                            drift_strikes = 0
+                        if drift_strikes >= DRIFT_STRIKES:
+                            aborted = (f"드리프트 {DRIFT_TOL:.0%} 초과가 "
+                                       f"{DRIFT_STRIKES}회 연속 — 조건이 변했다")
+                            break
+                    tel = telemetry_tail_stats(int(drift_period) + 60)
+                    if tel and tel["sw_power_cap_frac"] > POWER_CAP_TOL:
+                        print(f"  !! sw_power_cap {100 * tel['sw_power_cap_frac']:.1f}% "
+                              f"(최근 {tel['n']}초, 클럭 {tel['clk_min']}~"
+                              f"{tel['clk_max']} MHz) — 클럭 고정이 풀렸거나 "
+                              f"다른 프로세스가 GPU 를 쓰고 있다", flush=True)
+
+                if time.time() - last_status_log > STATUS_LOG_SECONDS:
+                    last_status_log = time.time()
+                    el = (time.time() - t_start) / 3600
+                    print(f"  [{el:.1f}h] status {dict(stats)}  "
+                          f"진행 {n}/{len(jobs)} "
+                          f"({100 * n / len(jobs):.1f}%)  "
+                          f"telemetry {telemetry_tail_stats(3600)}", flush=True)
 
                 if n % 50 == 0 or n == len(jobs):
                     el = time.time() - t_start
@@ -397,6 +456,11 @@ def main() -> int:
         ctx.close()
 
     report(stats, repro, clock_locked)
+    if aborted:
+        print(f"\n!! 중단: {aborted}")
+        print("   results.jsonl 은 그대로 남아 있으므로 원인을 고친 뒤 "
+              "같은 명령으로 이어서 진행하면 된다.")
+        return 3
     return 0
 
 
@@ -484,6 +548,7 @@ def measure_one(ctx, kern, krow, p: Problem, rc: RuntimeConfig, probe, env,
 
     snap = probe.snapshot()
     row["sm_clock_mhz"] = snap["sm_clock_mhz"]
+    row["mem_clock_mhz"] = snap["mem_clock_mhz"]
     row["gpu_temp_c"] = snap["gpu_temp_c"]
     row["power_w"] = snap["power_w"]
 
@@ -557,7 +622,62 @@ def measure_cublas(ctx, p: Problem, probe, env, out) -> dict:
     return row
 
 
-def drift_check(ctx, kern, kernel_id, probe, env) -> None:
+def warm_up(ctx, kernels, sample, probe, seconds: int = WARMUP_SECONDS) -> None:
+    """측정 시작 전 메모리 클럭을 램프업시킨다 (WARMUP_SECONDS 주석 참조)."""
+    from measure.runner import KtProblemC
+
+    krow = sample[0]
+    k = kernels[krow["kernel_id"]]
+    a = (krow["align"]["a"], krow["align"]["b"], krow["align"]["c"])
+    p = Problem(4096, 4096, 4096) if a == (8, 8, 8) else Problem(1024, 4096, 4100)
+    ctx.prepare_problem(p.M, p.N, p.K)
+    kp = KtProblemC(p.M, p.N, p.K, 1, 0)
+    bufs = ctx.buffers(k.workspace_bytes(kp), False)
+    st, h = k.prepare(kp, bufs)
+    if st != 0 or not h:
+        return
+    t0 = time.time()
+    before = probe.snapshot()
+    try:
+        while time.time() - t0 < seconds:
+            ctx.run_once(k.launch_addr, h, 0)
+    finally:
+        k.release(h)
+    after = probe.snapshot()
+    print(f"[warmup] {seconds}초 부하  "
+          f"mem_clock {before['mem_clock_mhz']} -> {after['mem_clock_mhz']} MHz, "
+          f"sm_clock {after['sm_clock_mhz']} MHz, temp {after['gpu_temp_c']}°C")
+
+
+def telemetry_tail_stats(seconds: int) -> dict:
+    """최근 N초 구간의 텔레메트리 요약. 감시용이므로 파일 끝만 본다."""
+    if not TELEMETRY.exists():
+        return {}
+    lines = TELEMETRY.read_text().splitlines()[1:][-seconds:]
+    n = 0
+    thr = Counter()
+    clks = []
+    for line in lines:
+        parts = [x.strip() for x in line.split(",")]
+        if len(parts) < 6:
+            continue
+        try:
+            clks.append(int(parts[1].split()[0]))
+            bits = int(parts[5], 16)
+        except (ValueError, IndexError):
+            continue
+        n += 1
+        for mask, name in THROTTLE_BITS.items():
+            if bits & mask:
+                thr[name] += 1
+    if not n:
+        return {}
+    return {"n": n, "sw_power_cap_frac": thr.get("sw_power_cap", 0) / n,
+            "throttle": dict(thr),
+            "clk_min": min(clks), "clk_max": max(clks)}
+
+
+def drift_check(ctx, kern, kernel_id, probe, env) -> float | None:
     from measure.runner import KtProblemC
 
     p = DRIFT_SHAPE
@@ -583,6 +703,7 @@ def drift_check(ctx, kern, kernel_id, probe, env) -> None:
             "clock_locked": env["clock_locked"],
             "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         }) + "\n")
+    return m.time_ms
 
 
 def reproducibility(ctx, kernels, jobs, probe, env, launch_overhead_ms,

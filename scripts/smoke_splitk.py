@@ -50,6 +50,7 @@ def main() -> int:
         return None
 
     ctx = Ctx(paths.ARTIFACT_DIR / "libkt_ctx.so", 0)
+    ctx.set_protocol(env)
     bad = 0
     try:
         for p in SHAPES:

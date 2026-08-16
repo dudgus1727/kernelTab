@@ -26,7 +26,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from build import paths  # noqa: E402
 from core.hardware import hardware_from_env  # noqa: E402
-from core.types import Hardware, Problem  # noqa: E402
+from core.types import Hardware, KernelConfig, Problem  # noqa: E402
 
 RESULTS = paths.RESULTS_DIR / "results.jsonl"
 KERNELS = paths.RESULTS_DIR / "kernels.jsonl"
@@ -41,6 +41,10 @@ def main() -> int:
     ap.add_argument("--n", type=int, default=30, help="재측정할 조합 수")
     ap.add_argument("--passes", type=int, default=3)
     ap.add_argument("--minutes", type=float, default=10.0)
+    ap.add_argument("--verbose", action="store_true")
+    ap.add_argument("--shapes", default=None,
+                    help="느린 형상 검증용. 'MxNxK,MxNxK' 형식. 주면 "
+                         "results.jsonl 표본 대신 이 형상들에서 조합을 뽑는다.")
     args = ap.parse_args()
 
     env = json.loads(paths.ENV_JSON.read_text())
@@ -56,10 +60,53 @@ def main() -> int:
     okrows = [r for r in res if r.get("status") == "ok" and r["kernel_id"] != "cublas"]
 
     rng = random.Random(env["shuffle_seed"] ^ 0xC0FFEE)
-    pick = rng.sample(okrows, min(args.n, len(okrows)))
-    drift_kid = sorted({r["kernel_id"] for r in okrows})[0]
+    if args.shapes:
+        # min_reps 를 낮춘 뒤 느린 형상에서도 재현성이 유지되는지 확인한다.
+        from backends import get_backend  # noqa: E402
+        from core.config import (  # noqa: E402
+            alignment_combos, alignments_for, enumerate_kernels,
+            enumerate_runtimes,
+        )
+        from core.shapes import all_shapes  # noqa: E402
+        from core.types import RuntimeConfig  # noqa: F401,E402
+
+        backend = get_backend(hw.arch)
+        valid = {backend.kernel_id(c) for c in
+                 enumerate_kernels(hw, backend, alignment_combos(all_shapes(hw)))}
+        usable = [r for r in kern.values()
+                  if r.get("build_status") == "ok"
+                  and r["kernel_id"] in valid
+                  and r["regs_per_thread"] * r["threads"] <= hw.regs_per_sm]
+        shapes = []
+        for tok in args.shapes.split(","):
+            M, N, K = (int(x) for x in tok.strip().split("x"))
+            shapes.append(Problem(M, N, K))
+        cand = []
+        for sp in shapes:
+            a = alignments_for(sp)
+            ks = [r for r in usable
+                  if (r["align"]["a"], r["align"]["b"], r["align"]["c"]) == a]
+            for r in rng.sample(ks, min(40, len(ks))):
+                cfg = KernelConfig(
+                    tile_m=r["tile"]["m"], tile_n=r["tile"]["n"],
+                    tile_k=r["tile"]["k"], align_a=a[0], align_b=a[1],
+                    align_c=a[2], arch=r["arch"],
+                    ext=backend.ext_from_dict(r["ext"]))
+                for rc2 in enumerate_runtimes(backend, sp, cfg):
+                    cand.append({"kernel_id": r["kernel_id"],
+                                 "problem": {"M": sp.M, "N": sp.N, "K": sp.K},
+                                 "runtime": {"split_k": rc2.split_k,
+                                             "split_k_mode": rc2.split_k_mode}})
+        pick = rng.sample(cand, min(args.n, len(cand)))
+        drift_kid = pick[0]["kernel_id"]
+        print(f"느린 형상 모드: {[f'{s.M}x{s.N}x{s.K}' for s in shapes]} "
+              f"후보 {len(cand)} 중 {len(pick)}개")
+    else:
+        pick = rng.sample(okrows, min(args.n, len(okrows)))
+        drift_kid = sorted({r["kernel_id"] for r in okrows})[0]
 
     ctx = Ctx(paths.ARTIFACT_DIR / "libkt_ctx.so", 0)
+    ctx.set_protocol(env)
     probe = NvmlProbe(uuid=env["hardware_extra"]["uuid"], index=0)
     libs: dict[str, Kernel] = {}
 
@@ -79,6 +126,10 @@ def main() -> int:
         if st != 0 or not h:
             return None
         try:
+            # 실제 측정 경로(measure_one)와 동일하게 정확도 검사용 1회 실행을
+            # 먼저 한다. 이게 빠지면 첫 측정만 cold 상태가 되어 재현성 통계가
+            # 실제 경로보다 나쁘게 나온다.
+            ctx.run_once(k.launch_addr, h, gz if par else 0)
             _, m = ctx.measure(k.launch_addr, h, gz if par else 0)
         finally:
             k.release(h)
@@ -99,6 +150,13 @@ def main() -> int:
                 t = measure(*key)
                 if t:
                     samples[key].append(t)
+                    if args.verbose:
+                        prev = samples[key][0]
+                        d = 100 * (t - prev) / prev if prev else 0
+                        mark = "  <-- 이상" if abs(d) > 5 else ""
+                        print(f"    p{p+1} {t:10.4f} ms ({d:+6.2f}%) "
+                              f"({key[1]},{key[2]},{key[3]}) sk{key[4]}"
+                              f"{key[5][:4]} {key[0][:44]}{mark}", flush=True)
             # 드리프트 기준: 매 pass 마다
             t = measure(drift_kid, DRIFT_SHAPE.M, DRIFT_SHAPE.N, DRIFT_SHAPE.K,
                         1, "serial")
@@ -135,6 +193,18 @@ def main() -> int:
         spread = (max(v) - min(v)) / med if med else 0
         spreads.append((spread, key, v))
     spreads.sort(reverse=True)
+
+    # pass 별 편차 — 첫 회만 튀는지(cold) 전반적으로 흔들리는지 구분
+    per_pass = {}
+    for key, v in samples.items():
+        for i, x in enumerate(v):
+            per_pass.setdefault(i, []).append(
+                x / statistics.median(v) if statistics.median(v) else 1.0)
+    print("\n  pass 별 상대값 중앙값 (1.0 = 그 조합의 중앙값):")
+    for i in sorted(per_pass):
+        v = sorted(per_pass[i])
+        print(f"    pass {i + 1}: median={v[len(v) // 2]:.4f}  "
+              f"max={v[-1]:.4f}")
 
     print("\n" + "=" * 74)
     print(f"재현성: {len(spreads)}개 조합, {args.passes}회 측정")
