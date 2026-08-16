@@ -11,7 +11,7 @@
 #      특히 so_path 절대경로 / GPU 인덱스 / env_hash 불안정 / 버전 미고정.
 #      고치지 않으면 "실행은 되는데 데이터가 이상한" 상태가 된다.
 #   2) 아래 BASE 다이제스트를 실제 값으로 채울 것 (지금은 자리표시자다).
-#   3) requirements.lock 을 만들 것 (지금은 없다).
+#   3) (완료) docker/requirements.lock — 해시 고정, Python 3.10 으로 해석함.
 #
 # ---------------------------------------------------------------------------
 # 이 이미지가 담지 않는 것과 그 이유
@@ -60,8 +60,10 @@ FROM ${BASE_IMAGE} AS base
 ARG DEBIAN_FRONTEND=noninteractive
 
 # git       : CUTLASS/kerneltab 커밋 기록에 필요. 없으면 재현성 추적이 끊긴다.
-# python3   : ubuntu22.04 는 3.10. 개발은 3.13 에서 했으므로 3.10 실검증 필요
-#             (docs/portability_audit.md 참조).
+# python3   : ubuntu22.04 는 3.10. 개발은 3.13 이지만 vermin --eval-annotations
+#             로 3.10 호환을 정적 확인했다 (docs/portability_audit.md).
+#             단 3.10 에서 실행해 본 적은 없으므로 첫 빌드 후
+#             `verify smem` / `verify splitk` 는 반드시 돌려볼 것.
 # ca-certificates : git clone https
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git ca-certificates python3 python3-pip \
@@ -87,12 +89,11 @@ ENV KERNELTAB_CUTLASS_DIR=/opt/cutlass
 # pyproject.toml 의 `>=` 는 재현성이 없다. 6 개월 뒤 같은 Dockerfile 을
 # 빌드하면 다른 버전이 들어온다. lock 으로 못 박는다.
 #
-# TODO: requirements.lock 을 만들 것. 현재 실측 버전:
-#   nvidia-ml-py==13.610.43
-#   pyarrow==25.0.1
-# (pandas 는 선언되어 있지만 어디서도 쓰지 않는다 — 제거 대상)
-COPY requirements.lock /tmp/requirements.lock
-RUN python3 -m pip install --no-cache-dir -r /tmp/requirements.lock
+# docker/requirements.lock 은 `uv pip compile --python-version 3.10
+# --generate-hashes` 로 만들었다. --require-hashes 로 설치해 공급망 변조까지
+# 막는다. (pandas 는 pyproject 에 선언되어 있으나 코드가 쓰지 않아 제외했다.)
+COPY docker/requirements.lock /tmp/requirements.lock
+RUN python3 -m pip install --no-cache-dir --require-hashes -r /tmp/requirements.lock
 
 # ---------------------------------------------------------------------------
 # kerneltab 소스

@@ -1,5 +1,16 @@
 # 컨테이너 이식성 감사
 
+> # ⛔ 측정 중 금지 — `scripts/phase0_env.py` 를 실행하지 마라
+>
+> `env_hash` 는 resume 키의 일부인데 `created_utc` / `host.ram_available_gb` /
+> `hostname` / 경로가 해시에 들어간다 (아래 **P-3**). 따라서 조건이 완전히
+> 동일해도 `phase0_env.py` 를 다시 돌리면 **`env_hash` 가 반드시 바뀌고,
+> 지금까지의 측정 전체가 "다른 조건" 으로 취급되어 98 만 건을 처음부터 다시
+> 잰다.**
+>
+> 전수 측정이 끝날 때까지 실행 금지. 이 문서의 수정 목록은 전부 **측정 완료
+> 후** 일괄 적용한다.
+
 **상태: 조사만 함. 아무것도 고치지 않았다.** 전수 측정이 진행 중이라
 코드 변경이 위험하기 때문이다. 여기 목록화한 것은 측정 완료 후 일괄 수정한다.
 
@@ -152,10 +163,29 @@ export = ["pyarrow>=15", "pandas>=2"]
 `pip install nvidia-ml-py` 로 넣으면 되므로 어렵지 않으나, 현재 개발 환경이
 conda 라는 사실이 `pyproject.toml` 만 봐서는 드러나지 않는다.
 
-Python 3.13 을 쓰고 있는데 `requires-python = ">=3.10"` 이다. 컨테이너 base
-(ubuntu22.04) 의 시스템 Python 은 3.10 이다. `X | None` 문법과
-`dataclass(slots=True)` 를 쓰므로 3.10 에서 동작은 하지만, **3.10 에서 실제로
-돌려본 적이 없다.**
+### Python 3.10 호환성 — **정적으로 확인함**
+
+개발은 3.13, 컨테이너 base(ubuntu22.04) 시스템 Python 은 3.10 이다. 정적
+검사 결과 **3.10 을 타겟해도 된다.**
+
+```
+$ vermin -t=3.10 --eval-annotations --backport argparse --backport dataclasses          --backport statistics --backport typing  core backends build measure scripts
+Minimum required versions: 3.10
+```
+
+`--eval-annotations`(어노테이션까지 런타임 평가된다고 가정하는 엄격 모드)
+에서도 3.10 이다. `ruff check --target-version py310` 도 버전 관련 위반을
+보고하지 않았다 (스타일 지적 171 건은 전부 버전과 무관하다).
+
+`X | None` 을 쓰는 파일은 **전부 `from __future__ import annotations` 가 있어**
+어노테이션이 문자열로 남는다. 없는 파일은 빈 `__init__.py` 3 개뿐이다.
+
+> 한계: 정적 분석이다. **3.10 에서 실제로 실행해 본 적은 없다.** 런타임
+> 동작 차이(stdlib 세부, ctypes 구조체 정렬 등)는 잡지 못한다. 이미지를 처음
+> 빌드할 때 `verify smem` / `verify splitk` 정도는 반드시 돌려봐야 한다.
+
+따라서 base 이미지에 별도 Python 을 설치할 필요가 없다. `docker/requirements.lock`
+도 `--python-version 3.10` 으로 해석해 생성했다.
 
 ---
 
@@ -286,13 +316,85 @@ cuda.nvcc_path   /usr/local/cuda/bin/nvcc      <- 경로 의존
 
 ---
 
+## T. 고치면 안 되는 것 — **의도적으로 그렇게 둔 것들**
+
+위 수정 목록과 헷갈리지 않도록 분리한다. 아래는 **문제처럼 보이지만 문제가
+아니다.** 나중에 누군가(또는 미래의 내가) "이것도 이식성 문제네" 하고 고치면
+설계 의도가 깨진다.
+
+### 드라이버 버전을 컨테이너로 통일하지 않는다
+
+`libcuda.so.1` / `libnvidia-ml.so` 는 호스트 드라이버에서 오고 컨테이너
+툴킷이 주입한다. **구조적으로 통제 불가능**하다. 이미지에 드라이버를 넣는
+것은 지원되지 않는 방식이고, 넣어도 커널 모듈과 어긋난다.
+
+→ 통일하려 하지 말고 `env.json` 의 `cuda.driver_version` 으로 **기록**한다.
+GPU 간 비교에서 남는 축이라는 것을 인정하고 분석에서 다룬다.
+
+### 커널 `.so` 를 이미지에 넣지 않는다
+
+* 커널에는 `-arch=sm_86` 이 박힌다. 이미지에 넣으면 **그 GPU 전용 이미지**가
+  되어 "동일 이미지를 여러 GPU 에" 라는 전제가 무너진다.
+* sm_86 기준 7,330 개 × ~1 MB = **7.4 GB**. 아키텍처마다 늘어난다.
+
+→ 런타임 빌드(30~40 분)가 정답이다. 느리다고 이미지에 굽지 말 것.
+
+### 클럭 고정을 코드가 시도하지 않는(못하는) 것
+
+`measure/gpu_state.try_lock_clocks` 가 `nvidia-smi -lgc` 를 시도는 하지만,
+**컨테이너 안에서는 원칙적으로 불가능**하다 (`CAP_SYS_ADMIN` + 드라이버 쓰기
+접근이 필요하고 컨테이너 툴킷은 주지 않는다).
+
+→ `--privileged` 로 뚫으려 하지 말 것. 호스트에서 고정하고
+`--externally-locked-mhz/-mem-mhz` 로 인정받는 지금 구조가 맞다.
+코드가 실패를 흡수하고 `clock_locked=false` 로 계속 진행하는 것도 의도된
+동작이다 (클럭을 못 잡는 환경에서도 데이터는 남아야 하고, 대신 드리프트
+점검 주기가 짧아진다).
+
+### 워밍업 20 초를 클럭 고정 후에도 유지한다
+
+메모리 클럭을 고정하면 램프업 문제는 사라진다. 그래도 `WARMUP_SECONDS` 를
+0 으로 만들지 말 것 — 클럭 외에 L2/TLB/드라이버 상태 워밍업 효과가 남고,
+**클럭 고정이 풀린 환경에서 실행될 가능성**이 항상 있다 (권한이 없는 서버,
+`-lmc` 를 지원하지 않는 GPU). 20 초는 40 시간 대비 무시할 수 있는 비용의
+이중 안전장치다.
+
+### `results/*.jsonl` 이 append-only 인 것
+
+수정이 불가능해서 불편해 보이지만 의도다. 측정 중 프로세스가 죽어도 데이터가
+남고, resume 이 그 위에서 동작하며, "원본은 절대 고치지 않는다" 는 규약이
+파생 지표 재계산의 전제다.
+
+→ 스키마가 바뀌면 파일을 고치지 말고 **읽는 쪽에서 재계산**한다
+(`smem_computed` 를 `export.py` 가 다시 계산하는 것이 그 예다).
+
+### 파생 지표를 JSONL 에 저장하지 않는 것
+
+`waves` / `tail_waste` / `arith_intensity` 등이 결과 파일에 없어서 조인이
+번거로워 보이지만, 계산식에 버그가 발견됐을 때 40 시간짜리 측정을 다시 하지
+않기 위한 것이다. 예외 두 개(`smem_computed`, `expected_hmma`)는 커널 생성
+검증용이며 커널당 1 줄이라 중복이 없다.
+
+### `/proc/meminfo` 가 컨테이너에서 호스트 메모리를 보여주는 것
+
+cgroup 한도가 아니라 호스트 값이 보인다. **기록용일 뿐** 어떤 판단에도 쓰지
+않으므로 고칠 필요가 없다. 단, `env_hash` 에서는 빼야 한다 (P-3).
+
+### `ArchTag = arch::Sm80` 을 sm_86 에서 쓰는 것
+
+`Sm86` 태그로 "고치면" 컴파일이 깨진다. ArchTag 는 "이 기능을 지원하는 최소
+SM" 이고 2.x GEMM 경로에 `Sm86` 은 존재하지 않는다. 실제 타겟은 `nvcc -arch`
+가 결정한다.
+
+---
+
 ## 수정 목록 (측정 완료 후 일괄 적용)
 
 | # | 항목 | 위험도 | 손대는 파일 |
 |---|---|---|---|
 | 1 | `so_path` 절대 경로 → `kernel_id` 로 조립 | 높음 | `build/compile.py`, `rehearse.py`, `smoke_splitk.py`, `check_correctness.py` |
 | 2 | `CUDA_VISIBLE_DEVICES` 가 이미 있으면 존중, UUID 우선 선택 | 높음 | `phase0_env.py`, 스크립트 7 곳, `gpu_state.py` |
-| 3 | `env_hash` 를 측정 조건 필드만으로 계산 | 높음 | `phase0_env.py` |
+| 3 | `env_hash` 를 측정 조건 필드만으로 계산 (+ 마이그레이션, 아래 참조) | 높음 | `phase0_env.py`, `rehearse.py` |
 | 4 | `requirements.lock` 생성, 버전 고정 | 높음 | 신규 + `pyproject.toml` |
 | 5 | `nvidia-smi -i` 를 UUID 로 | 중간 | `gpu_state.py`, `rehearse.py`, `verify_clock_lock.py` |
 | 6 | `KERNELTAB_RESULTS_DIR` / `_ARTIFACT_DIR` 환경변수 | 중간 | `build/paths.py` |
@@ -303,3 +405,39 @@ cuda.nvcc_path   /usr/local/cuda/bin/nvcc      <- 경로 의존
 | 11 | CUTLASS 에 `.git` 없을 때 커밋을 인자로 받는 경로 | 낮음 | `phase0_env.py` |
 
 1~4 를 먼저 하면 컨테이너에서 "실행은 되는데 데이터가 이상한" 상황은 사라진다.
+
+### P-3 마이그레이션: 기존 Phase 3 데이터를 어떻게 살릴 것인가
+
+`env_hash` 정의를 바꾸면 이미 기록된 98 만 줄의 `env_hash` 가 신 정의와
+달라진다. 무효화하면 안 된다. 두 안을 검토했다.
+
+**안 B — `env_hash_v2` 필드 병기: 불가능하다.**
+`results.jsonl` 은 append-only 라 기존 줄에 필드를 **추가할 수 없다.**
+추가하려면 파일을 다시 쓰는 수밖에 없는데, 그것 자체가 "원본은 고치지
+않는다" 규약을 깬다.
+
+**안 A — env 레지스트리 (권장).**
+
+`phase0_env.py` 가 `env.json` 을 덮어쓸 때 전체 env 딕셔너리를
+`results/env_registry.jsonl` 에 **append** 한다 (append-only, 구 해시를 키로).
+
+```json
+{"env_hash": "368a84f1...", "env_hash_v2": "...", "env": { ...전체... }}
+```
+
+읽는 쪽(`rehearse.load_done`, `export.py`)은 레지스트리로 구 해시 → 신 해시
+매핑을 만든다. **기존 줄을 한 글자도 건드리지 않고** 신 정의로 조인·resume 이
+가능해진다.
+
+안 A 를 택하는 이유:
+1. append-only 규약을 지킨다. 안 B 는 규약을 깨야만 성립한다.
+2. `env_hash_v2` 는 저장된 env 딕셔너리에서 **계산**되므로 손으로 관리할
+   매핑 테이블이 없다 — 어긋날 여지가 없다.
+3. 지금 수동으로 하고 있는 일(`cp env.json env.pre-clocklock.json`)을 대체한다.
+   `env.json` 은 덮어써도 모든 과거 조건이 레지스트리에 남는다.
+4. 나중에 정의를 또 바꾸면(v3) 같은 방식으로 재계산하면 된다. 안 B 는
+   버전마다 필드가 늘어난다.
+
+주의: 레지스트리를 만들기 전에 존재했던 env 는 아카이브 파일
+(`env.pre-clocklock.json`, `env.minreps30.json`, `env.smlock-only.json`) 에서
+한 번 백필해야 한다. 지금 남아 있으므로 가능하다.

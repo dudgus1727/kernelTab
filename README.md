@@ -34,6 +34,13 @@ scripts/         진입점
 results/         측정 산출물 (.gitignore 대상)
 ```
 
+> # ⛔ 전수 측정 중에는 `scripts/phase0_env.py` 를 실행하지 마라
+>
+> `env_hash` 에 실행 시각·호스트명·가용 RAM·경로가 섞여 있어 **같은 조건에서
+> 재실행해도 해시가 달라진다.** `env_hash` 는 resume 키의 일부이므로, 측정
+> 도중에 실행하면 지금까지 잰 것이 전부 무효가 되어 처음부터 다시 잰다.
+> 자세한 내용과 수정안은 `docs/portability_audit.md` 의 **P-3** 참조.
+
 ## 실행 순서
 
 ```bash
