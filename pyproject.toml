@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kerneltab"
+version = "0.1.0"
+description = "CUTLASS GEMM (형상 x config) -> 성능 표 측정 하네스"
+requires-python = ">=3.10"
+
+# 의존성은 최소로 유지한다. 오케스트레이션은 표준 라이브러리 + ctypes 로
+# 충분하고, 무거운 프레임워크(torch/cupy)는 컨테이너 이미지를 몇 GB 불린다.
+dependencies = [
+    "nvidia-ml-py>=12",   # NVML. 측정 루프 안 클럭/온도 스냅샷용
+]
+
+[project.optional-dependencies]
+# parquet 내보내기 전용. 측정 경로에는 들어가지 않는다.
+export = ["pyarrow>=15", "pandas>=2"]
+
+[tool.setuptools]
+packages = ["core", "backends", "build", "measure"]
+# hwspec/ 은 데이터 디렉토리이며 Python 패키지가 아니다 (__init__.py 없음).
+
+[tool.setuptools.package-data]
+"*" = ["*.cu", "*.h"]
