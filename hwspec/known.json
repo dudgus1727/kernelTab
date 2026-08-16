@@ -3,16 +3,19 @@
     "description": "API로 얻을 수 없는 GPU 스펙. GPU 이름(cuDeviceGetName / NVML) -> 스펙.",
     "peak_tflops_f16": "dense(비희소) FP16 입력 + FP32 누산 기준 Tensor Core 최대 처리량. 이 하네스는 ElementAccumulator=float 를 쓰므로 FP16 누산(2배) 수치를 쓰면 안 된다.",
     "bandwidth_gbps": "이론 최대 메모리 대역폭 (GB/s, 10^9 bytes/s).",
-    "policy": "여기에 없는 GPU는 추정하지 말고 UnknownGpuError 로 중단한다. roofline / ridge point 계산이 이 값에 직접 의존하므로 틀린 값은 결과 전체를 오염시킨다."
+    "policy": "여기에 없는 GPU는 추정하지 말고 UnknownGpuError 로 중단한다. roofline / ridge point 계산이 이 값에 직접 의존하므로 틀린 값은 결과 전체를 오염시킨다.",
+    "peak_tflops_f16_at_mhz": "peak_tflops_f16 이 성립하는 SM 클럭(MHz). 클럭을 고정해 측정할 때 실효 피크 = peak_tflops_f16 * locked_mhz / 이 값. 고정 클럭에서 이 보정을 하지 않으면 roofline ridge point 가 틀린다 (메모리 클럭은 SM 클럭 고정과 무관하게 그대로다)."
   },
   "NVIDIA RTX A6000": {
     "peak_tflops_f16": 154.8,
     "bandwidth_gbps": 768.0,
-    "source": "84 SM x 512 FP16 FMA/clk/SM x 2 flop x 1.80 GHz boost = 154.8 TFLOP/s (dense). 데이터시트 헤드라인 309.7 은 2:4 희소 기준이므로 쓰면 안 된다. GA102 프로 SKU 는 FP32 누산이 반감되지 않는다 (실측 cuBLAS 8192^3: FP16 누산 128.8, FP32 누산 118.0 TFLOP/s -> 두 모드 동일 피크). 384-bit GDDR6 @ 16 Gbps = 768 GB/s"
+    "source": "84 SM x 512 FP16 FMA/clk/SM x 2 flop x 1.80 GHz boost = 154.8 TFLOP/s (dense). 데이터시트 헤드라인 309.7 은 2:4 희소 기준이므로 쓰면 안 된다. GA102 프로 SKU 는 FP32 누산이 반감되지 않는다 (실측 cuBLAS 8192^3: FP16 누산 128.8, FP32 누산 118.0 TFLOP/s -> 두 모드 동일 피크). 384-bit GDDR6 @ 16 Gbps = 768 GB/s / 154.8 은 boost 1800 MHz 기준",
+    "peak_tflops_f16_at_mhz": 1800
   },
   "NVIDIA GeForce RTX 4090": {
     "peak_tflops_f16": 165.2,
     "bandwidth_gbps": 1008.0,
-    "source": "NVIDIA Ada GPU Architecture whitepaper: FP16 Tensor TFLOPS with FP32 Accumulate 165.2 (330.3 with sparsity); 384-bit GDDR6X @ 21 Gbps = 1008 GB/s"
+    "source": "NVIDIA Ada GPU Architecture whitepaper: FP16 Tensor TFLOPS with FP32 Accumulate 165.2 (330.3 with sparsity); 384-bit GDDR6X @ 21 Gbps = 1008 GB/s / 165.2 는 boost 2520 MHz 기준 (128 SM x 512 x 2 x 2.52 GHz)",
+    "peak_tflops_f16_at_mhz": 2520
   }
 }

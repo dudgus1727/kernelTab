@@ -37,13 +37,67 @@ results/         측정 산출물 (.gitignore 대상)
 ## 실행 순서
 
 ```bash
-python3 scripts/phase0_env.py --device 3      # 환경 점검 -> results/env.json
-python3 scripts/count_space.py                # 탐색 공간 크기 / 제약 funnel
-python3 scripts/check_smem.py                 # smem 공식 vs 실제 CUTLASS 타입
+# 0) 관리자가 클럭 고정 (권한 필요). 이 하네스는 권한이 없어도 동작한다.
+sudo nvidia-smi -i 3 -pm 1
+sudo nvidia-smi -i 3 -lgc 1350,1350
+
+python3 scripts/phase0_env.py --device 3 --externally-locked-mhz 1350
+python3 scripts/verify_clock_lock.py --minutes 5   # 부하 상태에서 정말 유지되는가
+python3 scripts/count_space.py                     # 탐색 공간 / 제약 funnel
+python3 scripts/check_smem.py                      # smem 공식 vs 실제 CUTLASS 타입
+python3 scripts/build_kernels.py --align a888,a448 --jobs 40
+python3 scripts/validate_constraints.py            # 예측 모델 vs 실측 대조
+python3 scripts/check_correctness.py --device 0    # 계산이 틀린 커널 전수 검출
+python3 scripts/smoke_splitk.py                    # split-K 경로 스모크
+python3 scripts/rehearse.py                        # 리허설 측정
+python3 scripts/recheck_stability.py               # 재현성 / 드리프트
+python3 scripts/report_rehearsal.py
+python3 scripts/export.py                          # -> results/table.parquet
 ```
+
+> ### ⚠️ 측정이 끝나면 클럭 고정을 반드시 해제할 것
+> ```bash
+> sudo nvidia-smi -i 3 -rgc
+> ```
+> 고정된 채로 두면 그 GPU 를 쓰는 다른 사용자가 원인 모를 성능 저하를 겪는다.
+> 부팅해도 persistence mode 가 켜져 있으면 유지될 수 있다.
 
 `results/env.json` 은 Phase 0 이 한 번 쓰고 이후 단계는 읽기만 한다.
 모든 측정 줄이 `env_hash` 로 이 파일을 참조하므로 나중에 고치면 안 된다.
+조건이 바뀌면(예: 클럭 고정) 기존 파일을 `env.<조건>.json` 으로 보관하고
+새로 생성한다.
+
+### 클럭 고정과 roofline 보정
+
+`nvidia-smi -lgc` 는 **SM 클럭만** 내린다. 메모리 클럭은 그대로이므로
+스펙 피크(부스트 클럭 기준)를 그대로 쓰면 ridge point 가 실제보다 높게 나오고,
+"이 형상이 메모리 바운드인가" 판정이 틀린다.
+
+`hwspec/known.json` 의 `peak_tflops_f16_at_mhz` 로 보정한다.
+
+```
+A6000 스펙 : 154.8 TFLOP/s @ 1800 MHz  -> ridge point 201.6 FLOP/byte
+1350 MHz 고정: 116.1 TFLOP/s           -> ridge point 151.2 FLOP/byte
+```
+
+`env.json` 에 `peak_tflops_f16_effective` 로 기록하고 `scripts/export.py` 가
+분석에 이 값을 쓴다 (`ridge_point` / `frac_of_peak`). 스펙 기준값도
+`ridge_point_spec` 으로 함께 남긴다.
+
+### 측정 조건이 다른 데이터는 섞지 말 것
+
+리허설 데이터(`results.jsonl` 의 `env_hash = b42df475...`)는 **클럭 고정 전**
+조건이다. `sw_power_cap` 스로틀이 측정 시간의 51% 동안 걸렸고 SM 클럭이
+1485~1935 MHz 를 오갔다. 클럭 고정 후(`env_hash = 1f0b6924...`)의 전수 데이터와
+**절대 시간을 직접 비교할 수 없다.** 조인/필터할 때 반드시 `env_hash` 로 나눠라.
+
+| | 미고정 | 1350 MHz 고정 |
+|---|---|---|
+| 재현성 변동폭 중앙값 | 0.28% | 0.04% |
+| p90 | 3.42% | 0.86% |
+| max | 8.91% | 4.91% |
+| 드리프트 (9분) | 2.59% | 0.05% |
+| `sw_power_cap` | 51% | 0% |
 
 ---
 

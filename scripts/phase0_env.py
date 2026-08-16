@@ -29,12 +29,25 @@ sys.path.insert(0, str(REPO_ROOT))
 from build import paths  # noqa: E402
 from core.hardware import (  # noqa: E402
     detect_hardware,
+    peak_reference_mhz,
     device_uuid,
     extra_device_info,
     hardware_to_dict,
     nvcc_arch_flag,
 )
-from measure.gpu_state import drift_check_seconds, try_lock_clocks  # noqa: E402
+from measure.gpu_state import (  # noqa: E402
+    ClockLockResult, drift_check_seconds, try_lock_clocks,
+)
+
+
+def _query_sm_clock(index: int) -> int | None:
+    rc, out = run(["nvidia-smi", "-i", str(index),
+                   "--query-gpu=clocks.current.sm",
+                   "--format=csv,noheader,nounits"])
+    try:
+        return int(float(out.splitlines()[0].strip()))
+    except Exception:
+        return None
 
 
 def run(cmd: list[str], **kw) -> tuple[int, str]:
@@ -261,6 +274,10 @@ def main() -> int:
     ap.add_argument("--device", type=int, default=0, help="사용할 GPU 인덱스")
     ap.add_argument("--cutlass", default=None, help="CUTLASS 저장소 경로")
     ap.add_argument("--lock-mhz", type=int, default=None, help="고정할 SM 클럭")
+    ap.add_argument("--externally-locked-mhz", type=int, default=None,
+                    help="관리자가 이미 nvidia-smi -lgc 로 고정해 둔 경우 그 값. "
+                         "부하 테스트(scripts/verify_clock_lock.py)로 유지되는 것을 "
+                         "확인한 뒤에만 쓸 것.")
     ap.add_argument("--seed", type=int, default=None, help="측정 순서 셔플 시드")
     ap.add_argument("--skip-example", action="store_true")
     args = ap.parse_args()
@@ -325,8 +342,17 @@ def main() -> int:
               f"{ex['checks_failed']} failed, best {ex['best_tflops']} TFLOP/s")
 
     # --- 클럭 고정 ---------------------------------------------------------
-    print("\n--- 클럭 고정 시도 ---")
-    lock = try_lock_clocks(args.device, args.lock_mhz)
+    print("\n--- 클럭 고정 ---")
+    if args.externally_locked_mhz:
+        # 이 프로세스에 권한이 없어도 관리자가 이미 고정해 둔 경우가 있다.
+        # 아이들 클럭만 보고 판단하면 안 되므로 부하 검증 결과를 함께 기록한다.
+        cur = _query_sm_clock(args.device)
+        lock = ClockLockResult(True, args.externally_locked_mhz,
+                               args.externally_locked_mhz, None)
+        print(f"  외부에서 고정됨: {args.externally_locked_mhz} MHz "
+              f"(현재 판독 {cur} MHz)")
+    else:
+        lock = try_lock_clocks(args.device, args.lock_mhz)
     drift_s = drift_check_seconds(lock.locked)
     if lock.locked:
         print(f"  OK: {lock.mhz} MHz 로 고정. 드리프트 점검 주기 {drift_s}s")
@@ -346,6 +372,21 @@ def main() -> int:
           f"time_ms < {3 * launch_overhead_ms * 1000:.3f} us 면 below_launch_overhead")
 
     # --- env.json ----------------------------------------------------------
+    # 클럭을 고정하면 SM 클럭만 내려가고 메모리 클럭은 그대로다. 스펙 피크를
+    # 그대로 쓰면 roofline ridge point 가 실제보다 높게 나와 어떤 형상이
+    # 메모리 바운드인지 판정이 틀린다. 실효 피크를 함께 기록한다.
+    peak_ref = peak_reference_mhz(hw.name)
+    peak_eff = hw.peak_tflops_f16
+    if lock.locked and lock.mhz and peak_ref:
+        peak_eff = round(hw.peak_tflops_f16 * lock.mhz / peak_ref, 3)
+        print(f"\n--- 실효 피크 (클럭 고정 보정) ---")
+        print(f"  스펙 {hw.peak_tflops_f16} TFLOP/s @ {peak_ref} MHz")
+        print(f"  실효 {peak_eff} TFLOP/s @ {lock.mhz} MHz")
+        print(f"  ridge point {hw.peak_tflops_f16 * 1e12 / (hw.bandwidth_gbps * 1e9):.1f}"
+              f" -> {peak_eff * 1e12 / (hw.bandwidth_gbps * 1e9):.1f} FLOP/byte")
+    ck = paths.RESULTS_DIR / "clock_lock_check.json"
+    clock_check = json.loads(ck.read_text()) if ck.exists() else None
+
     seed = args.seed if args.seed is not None else int.from_bytes(os.urandom(4), "big")
     env = {
         "schema_version": 1,
@@ -366,6 +407,10 @@ def main() -> int:
         "clock_lock_target_mhz": lock.target_mhz,
         "clock_lock_error": lock.error,
         "drift_check_seconds": drift_s,
+        "peak_tflops_f16_spec": hw.peak_tflops_f16,
+        "peak_tflops_f16_at_mhz": peak_ref,
+        "peak_tflops_f16_effective": peak_eff,
+        "clock_lock_check": clock_check,
         "launch_overhead": lo,
         "launch_overhead_ms": launch_overhead_ms,
         "below_launch_overhead_ms": 3 * launch_overhead_ms,

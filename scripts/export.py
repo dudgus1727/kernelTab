@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -57,8 +58,17 @@ def main() -> int:
     import pyarrow.parquet as pq
 
     env = json.loads(paths.ENV_JSON.read_text())
-    hw = Hardware(**env["hardware"])
+    hw_spec = Hardware(**env["hardware"])
+    # 클럭을 고정하면 SM 클럭만 내려가고 메모리 클럭은 그대로다. roofline 을
+    # 스펙 피크로 계산하면 ridge point 가 실제보다 높게 나와 "이 형상이 메모리
+    # 바운드인가" 판정이 틀린다. 분석에는 실효 피크를 쓴다.
+    peak_eff = env.get("peak_tflops_f16_effective") or hw_spec.peak_tflops_f16
+    hw = replace(hw_spec, peak_tflops_f16=peak_eff)
     backend = get_backend(hw.arch)
+    if peak_eff != hw_spec.peak_tflops_f16:
+        print(f"[roofline] 실효 피크 {peak_eff} TFLOP/s "
+              f"(스펙 {hw_spec.peak_tflops_f16} @ {env.get('peak_tflops_f16_at_mhz')} MHz, "
+              f"고정 {env.get('locked_mhz')} MHz)")
 
     kern = {r["kernel_id"]: r for r in load(KERNELS)}
     res = load(RESULTS)
@@ -118,6 +128,9 @@ def main() -> int:
         row["tail_n_frac"] = F.tail_n_frac(p, cfg)
         row["arith_intensity"] = F.arith_intensity(p)
         row["ridge_point"] = F.ridge_point(hw)
+        row["ridge_point_spec"] = F.ridge_point(hw_spec)
+        row["peak_tflops_used"] = peak_eff
+        row["locked_mhz"] = env.get("locked_mhz")
         row["is_memory_bound"] = F.is_memory_bound(p, hw)
         row["flops"] = F.flops(p)
         row["bytes_moved"] = F.bytes_moved(p)

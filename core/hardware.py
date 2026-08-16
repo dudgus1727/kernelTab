@@ -31,6 +31,7 @@ __all__ = [
     "nvcc_arch_flag",
     "hardware_to_dict",
     "device_uuid",
+    "peak_reference_mhz",
 ]
 
 # ---------------------------------------------------------------------------
@@ -162,6 +163,15 @@ def _load_known() -> dict:
     with HWSPEC_PATH.open() as f:
         raw = json.load(f)
     return {k: v for k, v in raw.items() if not k.startswith("_")}
+
+
+def peak_reference_mhz(name: str) -> int | None:
+    """peak_tflops_f16 이 성립하는 SM 클럭. 클럭 고정 측정 시 보정에 쓴다."""
+    entry = _load_known().get(name)
+    if entry is None:
+        return None
+    v = entry.get("peak_tflops_f16_at_mhz")
+    return int(v) if v else None
 
 
 def _lookup_perf(name: str) -> tuple[float, float]:
