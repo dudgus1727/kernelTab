@@ -525,6 +525,119 @@ split-K 축 값 집합의 아키텍처 종속성, 제약 funnel 집계, JSONL �
 
 ---
 
+---
+
+## `results/table.parquet` — 스키마와 소비 규약
+
+이 표가 이 저장소의 최종 산출물이다. 별도 프로젝트(`kernelrule`)가 소비한다.
+`scripts/export.py` 가 `results.jsonl` ⨝ `kernels.jsonl` 을 `kernel_id` 로 조인하고
+파생 지표를 계산해 만든다. **원본 JSONL 에서 언제든 재생성 가능하다.**
+
+### 컬럼 — 출처별
+
+`(P)` = 형상, `(R)` = 런타임 config, `(K)` = 커널 config, `(S)` = 정적 분석,
+`(M)` = 측정값, `(C)` = 측정 조건, `(D)` = 파생(export 시 계산), `(V)` = 검증 플래그
+
+| 컬럼 | 타입 | 출처 | 의미 |
+|---|---|---|---|
+| `M`, `N`, `K` | int64 | P | GEMM 형상 |
+| `dtype`, `acc_dtype` | string | P | `f16` / `f32` |
+| `layout_a/b/c` | string | P | `row` / `col` |
+| `split_k` | int64 | R | 요청한 split-K 슬라이스 수 |
+| `split_k_mode` | string | R | `serial` \| `parallel` |
+| `actual_split_k` | int64 | M | CUTLASS 가 **실제로** 만든 슬라이스 수 (`grid.z`) |
+| `kernel_id` | string | K | 커널 식별자. `kernels.jsonl` 조인 키 |
+| `arch` | string | K | `sm_86` |
+| `tile_m/n/k` | int64 | K | threadblock tile. **아키텍처 공통 필드** |
+| `align_a/b/c` | int64 | K | 형상에서 유도된 alignment (탐색 축이 아니다) |
+| `ext_warp_m/n/k` | int64 | K | SM80 전용 — warp tile |
+| `ext_stages` | int64 | K | SM80 전용 — 파이프라인 단수 |
+| `ext_swizzle_type`, `ext_swizzle_n` | string,int | K | SM80 전용 — 래스터 스위즐 |
+| `pipeline_kind` | string | K | `pipelined`(stages=2) \| `multistage`(≥3). **구현이 다른 별개 커널이다** |
+| `regs_per_thread`, `threads` | int64 | S | ptxas 실측 / `GemmKernel::kThreadCount` |
+| `smem_dynamic`, `smem_static_bytes` | int64 | S | CUTLASS 는 dynamic 을 쓰므로 static 은 보통 0 |
+| `spill_stores`, `spill_loads`, `local_bytes` | int64 | S | 레지스터 스필 |
+| `hmma_count`, `lds_count`, `sts_count`, `ldsm_count`, `ldg_count`, `cpasync_count`, `inst_total` | int64 | S | `nvdisasm -c` SASS 정적 카운트 |
+| `max_blocks_per_sm`, `cutlass_max_blocks` | int64 | S | occupancy (CUDA API / CUTLASS 계산) |
+| `res_regs`, `res_local` | int64 | S | `cuobjdump -res-usage` 교차검증값 |
+| `build_seconds`, `cutlass_commit`, `nvcc_arch` | – | S | 빌드 정보 |
+| **`time_ms`** | double | M | **정답.** IQR 제거 후 중앙값 |
+| `time_std_ms`, `time_min_ms`, `time_max_ms` | double | M | 측정 분포 |
+| `n_reps`, `outlier_frac` | int64,double | M | 실제 반복 수, IQR 제외 비율 |
+| **`cublas_ms`** | double | M | **정답.** 같은 형상의 cuBLAS 참조 시간 |
+| `max_rel_error` | double | M | `max|D−D_ref| / max|D_ref|` |
+| `workspace_bytes`, `workspace_dtype`, `partials_dtype` | – | M | split-K 작업 공간. 부분합은 serial/parallel 모두 fp16 |
+| `status` | string | M | `ok` \| `runtime_fail` \| `oom` \| `numerical_fail` \| `below_launch_overhead` \| `high_outlier_frac` \| `launch_infeasible` |
+| `error` | string | M | 실패 사유 (성공 줄은 null) |
+| `sm_clock_mhz`, `mem_clock_mhz`, `gpu_temp_c`, `power_w` | – | C | 측정 시점 NVML 스냅샷 |
+| `clock_locked`, `locked_mhz` | – | C | 클럭 고정 여부/값 |
+| `env_hash` | string | C | **측정 조건 식별자. 조인/필터 시 반드시 나눌 것** |
+| `timestamp` | string | C | 측정 시각(UTC) |
+| `waves`, `waves_occ` | double | D | `features.waves()` — occ 는 `max_blocks_per_sm` 반영 |
+| `tail_waste`, `tail_waste_occ` | double | D | `features.tail_waste()` |
+| `grid_tiles` | int64 | D | `features.grid_tiles()` |
+| `mainloop_iters` | int64 | D | `features.mainloop_iters()` |
+| `tail_m_frac`, `tail_n_frac` | double | D | `features.tail_m_frac()` / `tail_n_frac()` |
+| `arith_intensity` | double | D | `features.arith_intensity()` |
+| `ridge_point`, `ridge_point_spec` | double | D | `features.ridge_point()` — **실효/스펙 두 가지** |
+| `is_memory_bound` | bool | D | `features.is_memory_bound()` (실효 기준) |
+| `flops`, `bytes_moved` | double | D | `features.flops()` / `bytes_moved()` |
+| `theoretical_occupancy`, `regs_total_per_block`, `launchable` | – | D | 자원 파생 |
+| **`tflops`, `frac_of_peak`, `vs_cublas`** | double | D | **정답에서 유도된 값** |
+| `has_spill`, `smem_matches`, `hmma_matches` | bool | V | 검증 플래그 |
+| `smem_computed`, `expected_hmma` | int64 | V | 계산값. 실측(`smem_dynamic`/`hmma_count`)과 대조용 |
+
+### `ext_` 접두어 규칙
+
+아키텍처 전용 필드는 `KernelConfig.ext` 에 있고 export 시 `ext_` 접두어로
+평탄화된다. SM90 백엔드를 추가하면 `ext_cluster_m`, `ext_tile_scheduler` 등이
+생기고, **SM80 데이터에서는 그 컬럼이 null 이 된다** (반대도 마찬가지).
+Parquet 은 null 컬럼을 효율적으로 저장하므로 여러 아키텍처를 한 테이블로
+합쳐도 문제없다.
+
+공통 필드(`tile_m/n/k`)만으로 물리 피처가 계산되도록 설계했으므로,
+`ext_*` 를 쓰지 않는 규칙은 아키텍처 간 전이가 가능하다.
+
+### ⛔ 소비 규약 — 정답 컬럼을 규칙에 노출하지 말 것
+
+다음은 **측정 결과(정답)** 이며, config 를 선택하는 규칙 함수의 입력이 되면
+안 된다.
+
+```
+time_ms  time_std_ms  time_min_ms  time_max_ms  n_reps  outlier_frac
+cublas_ms  tflops  frac_of_peak  vs_cublas
+```
+
+이 저장소는 `Problem` / `KernelConfig` / `Hardware` / `RuntimeConfig` 어디에도
+측정 시간을 넣지 않아 **자료구조 수준에서** 누출을 막는다. parquet 은 평면
+테이블이라 그 보호가 없으므로, **소비하는 쪽이 구조적으로 보장해야 한다.**
+
+권장 형태 — 규칙 함수에 넘기기 전에 정답 컬럼을 물리적으로 분리한다:
+
+```python
+ANSWER_COLS = {"time_ms", "time_std_ms", "time_min_ms", "time_max_ms",
+               "n_reps", "outlier_frac", "cublas_ms", "tflops",
+               "frac_of_peak", "vs_cublas"}
+
+X = df.drop(columns=ANSWER_COLS)       # 규칙이 보는 것
+y = df[["time_ms"]]                    # 채점만 하는 쪽이 보는 것
+```
+
+`status` 와 `max_rel_error` 는 정답은 아니지만 **측정을 해봐야 아는 값**이다.
+규칙이 이것을 입력으로 쓰면 "돌려보고 고른다" 가 되므로 같이 제외하는 편이
+안전하다. `launchable` / `smem_matches` / `hmma_matches` 는 빌드 시점에
+알 수 있으므로 써도 된다.
+
+### 필터링 규약
+
+```python
+df = df[df.env_hash == "<하나의 해시>"]   # 조건이 다른 데이터를 섞지 말 것
+df = df[df.status == "ok"]                # 실패는 결측이 아니라 명시 기록이다
+```
+
+`env_hash` 로 나누지 않으면 클럭 고정 전후 데이터가 섞인다. 절대 시간이
+비교 불가능해진다.
+
 ## 컨테이너 태그 규칙
 
 이미지 태그에 CUDA 버전과 CUTLASS 커밋을 포함한다.
