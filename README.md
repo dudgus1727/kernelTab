@@ -278,18 +278,52 @@ CUTLASS 의 `GemmHorizontalThreadblockSwizzle` 은 `get_tile_offset(GemmCoord)`
 * 성능이 **대칭적으로 역전**된다 — 스위즐이 실제로 적용된다는 증거. 단순히
   "값이 다르다" 가 아니라 물리적으로 기대되는 방향으로 다르다.
 
-### 6. split-K parallel 은 fp16 부분합을 쓴다
+### 6. split-K 부분합 정밀도 — serial 과 parallel 모두 fp16 (비대칭 아님)
 
-CUTLASS 라이브러리는 parallel split-K 에서
-`find_gemm_operation_for_parallel_reduction()` 으로 **ElementC = float 인 별도
-커널 인스턴스**로 갈아탄다. 우리는 그러지 않는다. 그러면 split_k_mode 가
-런타임 인자가 아니라 빌드 축이 되어 커널 수가 2 배가 되고, KernelConfig /
-RuntimeConfig 분리의 전제가 깨지기 때문이다.
+**결론부터: 두 모드의 저장 정밀도는 같다. 비교 조건은 공정하다.**
 
-같은 fp16-C 커널에 `kGemmSplitKParallel` 모드를 주면 정상 동작하되 부분합이
-fp16 으로 저장된다. 리덕션은 fp32 로 누산하므로 오차는 슬라이스 수에 비례해
-작게 커지며, `max_rel_error` 로 그대로 관측된다. 측정 시간에는 리덕션 커널을
-포함한다 (빼면 serial 과 비교 자체가 불가능하다).
+CUTLASS 2.x `kernel::GemmUniversal` 에서 부분합이 어디에 어떤 타입으로
+놓이는지는 이렇다.
+
+| 모드 | 부분합 위치 | 부분합 타입 | 누산 |
+|---|---|---|---|
+| serial (`kGemm`, k>1) | `D` 자체 | **`ElementC` = fp16** | 파티션마다 fp32 로 더하고 fp16 으로 되씀 |
+| parallel (`kGemmSplitKParallel`) | workspace | **`ElementC` = fp16** | 리덕션 커널이 fp32 로 합산 후 1 회 반올림 |
+
+serial 이 fp32 누산기를 이어받는 것이 아니다. `kernel/gemm_universal.h` 에서
+
+```cpp
+// For subsequent threadblocks, the source matrix is held in the 'D' tensor.
+if (threadblock_tile_offset.k()) {
+  iterator_C = iterator_D;      // <- 이전 부분합을 D(=fp16)에서 다시 읽는다
+}
+```
+
+즉 파티션 사이의 중간값이 **매번 fp16 으로 전역 메모리를 왕복**한다. 반올림
+횟수도 두 모드가 비슷하며(각 슬라이스 1 회), 오히려 parallel 쪽이 마지막
+합산을 fp32 로 한 번에 하므로 미세하게 유리하다.
+
+**fp32 부분합은 왜 안 쓰는가.** 부분합 타입은 곧 커널의 `ElementC` 다
+(`get_workspace_size()` 가 `sizeof(ElementC) * ...` 로 정의되고 epilogue 가
+`iterator_D` 로 쓴다). fp32 부분합을 얻으려면 `ElementC = float` 인 커널을
+따로 인스턴스화해야 하는데 — CUTLASS 라이브러리가
+`find_gemm_operation_for_parallel_reduction()` 으로 하는 일이 정확히 그것이다 —
+그러면
+
+* `split_k_mode` 가 런타임 인자가 아니라 **빌드 축**이 되어 커널 수가 2 배가
+  되고 KernelConfig / RuntimeConfig 분리의 전제가 깨진다,
+* serial 쪽은 부분합이 곧 최종 출력이라 **출력 dtype 자체가 fp32 로 바뀐다.**
+  그러면 epilogue 쓰기 트래픽이 2 배가 되어 split-K 를 안 쓰는 측정까지
+  전부 오염된다.
+
+그래서 fp16 으로 둔다. 대신 해석에 필요한 정보를 결과에 남긴다:
+`results.jsonl` 의 `partials_dtype` (실효 split_k > 1 이면 `"f16"`) 과
+`workspace_dtype` (parallel 이면 `"f16"` 부분합 버퍼, serial 이면 `"i32"`
+세마포어). 이 두 필드가 없으면 나중에 정확도 분석에서 "방식의 차이" 와
+"저장 정밀도의 차이" 를 구분할 수 없다.
+
+측정 시간에는 parallel 의 리덕션 커널을 포함한다 (빼면 serial 과 비교 자체가
+성립하지 않는다).
 
 ### 7. `launch_infeasible` status 추가
 

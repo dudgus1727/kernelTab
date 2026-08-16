@@ -300,13 +300,16 @@ def main() -> int:
 
     # --- alignment 가드가 실제로 필요한지 확인 (측정 전에) ---------------
     print("\n[가드 검증] (1024,4096,4100) 에 a888 커널을 강제로 물려본다")
-    guard = alignment_guard_probe(ctx, sample, kernels, hw)
-    for g in guard:
-        print(f"  {g['kernel_id'][:52]:52s} can_implement={g['can_implement']}"
-              + (f"  max_rel_error={g['max_rel_error']:.3e}"
-                 if g.get("max_rel_error") is not None else ""))
-    (paths.RESULTS_DIR / "guard_probe.json").write_text(
-        json.dumps(guard, indent=2, ensure_ascii=False))
+    try:
+        guard = alignment_guard_probe(ctx, sample, kernels, hw)
+        for g in guard:
+            print(f"  {g['kernel_id'][:52]:52s} can_implement={g['can_implement']}"
+                  + (f"  max_rel_error={g['max_rel_error']:.3e}"
+                     if g.get("max_rel_error") is not None else ""))
+        (paths.RESULTS_DIR / "guard_probe.json").write_text(
+            json.dumps(guard, indent=2, ensure_ascii=False))
+    except Exception as e:
+        print(f"  가드 검증 중 예외: {e!r}")
 
     cublas_cache: dict[tuple, dict] = {}
     drift_kernel_id = picked[0]["kernel_id"]
@@ -392,6 +395,14 @@ def measure_one(ctx, kern, krow, p: Problem, rc: RuntimeConfig, probe, env,
     row["workspace_bytes"] = ws
     row["actual_split_k"] = actual_k          # ★ effective_split_k() 실측 대조용
     row["predicted_split_k"] = rc.split_k
+    # 부분합 저장 정밀도. serial 과 parallel 이 같은 조건인지 나중에 판별하려면
+    # 이 정보가 있어야 한다 (README "split-K 부분합 정밀도" 참조).
+    #   parallel : 부분합을 workspace(ElementC=fp16)에 슬라이스별로 저장
+    #   serial   : 부분합을 D(ElementC=fp16)에 두고 다음 파티션이 읽어 누적
+    # 둘 다 fp16 이라 비교 조건은 동일하다.
+    row["workspace_dtype"] = ("f16" if parallel
+                              else ("i32" if actual_k > 1 else None))
+    row["partials_dtype"] = "f16" if actual_k > 1 else None
 
     if can != 0:
         row.update(status="runtime_fail",
@@ -551,15 +562,18 @@ def reproducibility(ctx, kernels, jobs, probe, env, launch_overhead_ms,
                r["split_k"], r["split_k_mode"])] = d.get("time_ms")
 
     out = []
-    for (krow, p, rc) in pick:
-        row = measure_one(ctx, kernels[krow["kernel_id"]], krow, p, rc, probe,
-                          env, launch_overhead_ms, regs_per_sm)
-        key = (krow["kernel_id"], p.M, p.N, p.K, rc.split_k, rc.split_k_mode)
-        t0 = first.get(key)
-        t1 = row.get("time_ms")
-        if t0 and t1:
-            out.append({"key": key, "first_ms": t0, "second_ms": t1,
-                        "rel_diff": abs(t1 - t0) / t0})
+    with (paths.RESULTS_DIR / "repro.jsonl").open("a") as f:
+        for (krow, p, rc) in pick:
+            row = measure_one(ctx, kernels[krow["kernel_id"]], krow, p, rc, probe,
+                              env, launch_overhead_ms, regs_per_sm)
+            row["repro_pass"] = 2
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+            key = (krow["kernel_id"], p.M, p.N, p.K, rc.split_k, rc.split_k_mode)
+            t0 = first.get(key)
+            t1 = row.get("time_ms")
+            if t0 and t1:
+                out.append({"key": key, "first_ms": t0, "second_ms": t1,
+                            "rel_diff": abs(t1 - t0) / t0})
     return out
 
 
