@@ -6,6 +6,30 @@ sm_86 에서 동작하지 않는다. CUTLASS 최신 릴리스를 쓰되 API 계�
 ArchTag 는 sm_86 에서도 `arch::Sm80` 이 정상이다. ArchTag 는 "이 기능을
 지원하는 최소 SM"을 뜻하고 Sm86 태그는 2.x GEMM 경로에 존재하지 않는다.
 실제 타겟 SM 은 nvcc -arch 플래그가 결정한다.
+
+⚠️  이 파일을 수정하면 `env_hash` 를 **수동으로 갱신해야 한다**
+--------------------------------------------------------------------------
+`env_hash` 는 측정 조건 식별자이자 resume 키인데, 그 해시 키에
+`manifest_hash`(= 소스 tree_hash) 를 **일부러 넣지 않았다.** 코드 한 글자
+수정에도 해시가 바뀌면 측정 도중 오타 수정조차 불가능해지기 때문이다
+(근거: docs/migration_plan.md "manifest_hash 를 해시 키에서 제외").
+
+그 대가가 여기다. **이 파일은 커널을 생성하는 곳이므로, 여기를 고치면
+같은 `env_hash` 아래에 서로 다른 커널로 잰 데이터가 섞일 수 있다.**
+`cutlass_commit` 도 `protocol` 도 그 변화를 잡아주지 못한다.
+
+따라서 아래를 바꿀 때는 **조건이 달라졌는지 직접 판단하고, 달라졌다면
+`phase0_env.py` 를 다시 돌려 `env_hash` 를 갱신한 뒤 재측정**해야 한다.
+
+  * `emit_cpp()` — 생성되는 CUTLASS 인스턴스화 자체
+  * `TB_TILES` / `TB_K` / `WARP_TILES` / `STAGES` / `SWIZZLE` / `SPLIT_K`
+  * `INSTRUCTION_SHAPE`, `warp_k_options()`
+  * `is_valid_kernel` / `is_valid_runtime` 계열 제약
+  * `effective_split_k` / `gemm_k_size` / `workspace_bytes`
+
+반대로 주석·docstring·타입 힌트·로그 문구만 고치는 것은 조건을 바꾸지
+않으므로 갱신이 필요 없다. 판단이 애매하면 갱신하는 쪽을 택할 것 —
+재측정 비용이 오염된 표보다 싸다.
 """
 
 from __future__ import annotations
