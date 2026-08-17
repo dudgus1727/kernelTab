@@ -59,7 +59,21 @@ REHEARSAL_SHAPES = [
     Problem(8192, 4096, 4096),   # 대형
 ]
 
-DRIFT_SHAPE = Problem(4096, 4096, 4096)
+#: 드리프트 감시 프로브.
+#:
+#: ⚠️ **큰 형상 하나로 감시하면 안 된다.** Phase 3 은 4096³ 하나(2.85 ms)로만
+#: 감시해서 드리프트를 +5.06 % 로 봤다. 같은 조건에서 512³ 측정은 **+1380 %**
+#: 오염되어 있었고 감시에는 전혀 잡히지 않았다.
+#:
+#: 원인은 누적 모듈에 비례해 커지는 **런치당 상수 오버헤드**다 (모듈 1,000 개당
+#: 약 42 us). 상수이므로 긴 커널에서는 안 보이고 짧은 커널을 통째로 삼킨다.
+#: 그래서 감시 프로브에 **반드시 작은 형상**이 있어야 한다.
+#: docs/measurement_drift.md
+DRIFT_SHAPES = [
+    Problem(512, 512, 512),      # ~15 us. 런치 오버헤드에 가장 민감
+    Problem(4096, 4096, 4096),   # ~2.8 ms. 계산 처리율 쪽
+]
+DRIFT_SHAPE = DRIFT_SHAPES[-1]   # 하위 호환
 
 #: max_rel_error 가 이 값을 넘으면 numerical_fail.
 #: 입력이 1/4 배수라 fp32 누산이 정확하므로 split-K 가 없는 경우 0 에 가깝다.
@@ -119,6 +133,22 @@ STATUS_LOG_SECONDS = 3600
 # 있기 때문**이다 — 클라우드 인스턴스는 냉각도 전력 한계도 다르다. 새 GPU
 # 에서는 docs/post_measurement.md 10 절의 드리프트 프로파일을 먼저 돌리고,
 # 열이 실제 원인으로 나오면 `--soak` 로 켠다.
+#: ── 드리프트 대책: 시간 분할 세그먼트 ──────────────────────────────────
+#: 드리프트의 원인은 **그 프로세스가 지금까지 실행한 서로 다른 커널의 수**다.
+#: 프로세스를 다시 띄우면 완전히 리셋된다. 그래서 커널을 세그먼트로 나누고
+#: 세그먼트마다 새 프로세스로 돈다.
+#:
+#: 순차로 돌면 안 된다 — 세그먼트 0 의 커널은 전부 초반에, 마지막 세그먼트는
+#: 전부 후반에 측정되어 **세그먼트 인덱스가 시각과 완전히 상관**된다. 그건
+#: 전역 셔플이 막으려던 바로 그 편향이다. 그래서 라운드 로빈으로 돈다:
+#: 세그먼트마다 SEGMENT_SECONDS 만큼만 돌고 다음 세그먼트로 넘어간다.
+#:
+#: scripts/sweep.py 가 이 순회를 관리한다.
+SEGMENT_KERNELS = 500          # 프로세스당 로드할 서로 다른 커널 수 상한
+SEGMENT_SECONDS = 1800         # 한 번에 도는 시간 (초)
+ANCHOR_KERNELS = 6             # 모든 세그먼트에서 재는 고정 커널
+ANCHOR_SHAPES = 2
+
 SOAK_ENABLED = False           # --soak / --no-soak, env.json 의 soak.enabled
 SOAK_PROBE_INTERVAL = 300      # 5분마다 기준 config 재측정
 SOAK_STABLE_SPAN = 0.003       # 최근 3회(10분 구간)의 (max-min)/median
@@ -274,6 +304,81 @@ def analyze_telemetry() -> dict:
 
 
 # ---------------------------------------------------------------------------
+def split_segments(kernel_ids, seg_size: int, seed: int):
+    """커널을 세그먼트로 나눈다. -> {kernel_id: 세그먼트 번호}, 세그먼트 수
+
+    **무작위 분할**이다. 커널 id 순으로 자르면 세그먼트가 tile 크기 같은
+    config 축과 상관되고, 세그먼트 간 오차가 그대로 config 편향이 된다.
+    씨앗을 고정하므로 재개해도 같은 분할이 나온다 — 이게 깨지면 이미 측정한
+    커널이 다른 세그먼트로 가서 재개가 어긋난다.
+    """
+    ids = sorted(kernel_ids)                    # 입력 순서에 의존하지 않도록
+    random.Random(seed ^ 0x53454704).shuffle(ids)   # "SEG"
+    seg = {kid: i // seg_size for i, kid in enumerate(ids)}
+    n_seg = (len(ids) + seg_size - 1) // seg_size
+    return seg, n_seg
+
+
+def pick_anchors(rows, n: int, seed: int):
+    """모든 세그먼트에서 재는 고정 커널.
+
+    세그먼트마다 프로세스가 다르므로 세그먼트 사이에 계통 오차가 있을 수
+    있다. 앵커를 매 세그먼트에서 재면 그 오차를 사후에 잴 수 있다.
+
+    ⚠️ **반드시 짧은 커널을 넣어야 한다.** 런치 오버헤드 드리프트는 상수라
+    긴 커널에서는 안 보인다. 큰 커널만 앵커로 쓰면 이번에 감시가 놓친 것과
+    같은 실수를 반복한다.
+    """
+    by_time_proxy = sorted(rows, key=lambda r: (r["tile"]["m"] * r["tile"]["n"]))
+    if not by_time_proxy:
+        return []
+    picks = []
+    # 작은 타일 / 중간 / 큰 타일에서 골고루
+    k = len(by_time_proxy)
+    rng = random.Random(seed ^ 0x414E4348)
+    for lo, hi in ((0, k // 3), (k // 3, 2 * k // 3), (2 * k // 3, k)):
+        band = by_time_proxy[lo:hi]
+        if band:
+            picks += rng.sample(band, min(max(n // 3, 1), len(band)))
+    return picks[:n]
+
+
+ANCHORS = paths.RESULTS_DIR / "anchors.jsonl"
+
+
+def measure_anchors(ctx, kernels, anchor_rows, probe, env, segment, when):
+    """세그먼트마다 같은 커널을 재서 세그먼트 간 오차를 사후에 잴 수 있게 한다.
+
+    `results.jsonl` 이 아니라 별도 파일에 쓴다 — 같은 (커널, 형상) 을 여러 번
+    재므로 무결성 검사의 중복 판정에 걸린다. 앵커는 측정 표의 일부가 아니라
+    **측정 조건의 기록**이다.
+    """
+    if not anchor_rows:
+        return
+    snap = probe.snapshot()
+    with ANCHORS.open("a") as f:
+        for r in anchor_rows:
+            kern = kernels.get(r["kernel_id"])
+            if kern is None:
+                continue
+            for p in DRIFT_SHAPES:
+                m = _probe_shape(ctx, kern, p)
+                if m is None:
+                    continue
+                f.write(json.dumps({
+                    "kernel_id": r["kernel_id"],
+                    "problem": {"M": p.M, "N": p.N, "K": p.K},
+                    "time_ms": m.time_ms, "time_std_ms": m.time_std_ms,
+                    "n_reps": m.n_reps,
+                    "segment": segment, "when": when,
+                    "sm_clock_mhz": snap["sm_clock_mhz"],
+                    "gpu_temp_c": snap["gpu_temp_c"],
+                    "env_hash": env["env_hash"],
+                    "timestamp": datetime.now(timezone.utc)
+                    .isoformat().replace("+00:00", "Z"),
+                }, ensure_ascii=False) + "\n")
+
+
 def load_done(env_hash: str) -> set[tuple]:
     """이미 측정된 조합. **같은 측정 조건(env_hash)의 줄만** 완료로 본다."""
     if not RESULTS.exists():
@@ -308,6 +413,21 @@ def main() -> int:
                          "(-0.07%%) — 새 GPU 에서 열이 원인으로 확인됐을 때만")
     ap.add_argument("--no-soak", dest="soak", action="store_false",
                     help="소킹을 끈다 (기본)")
+    ap.add_argument("--segment", type=int, default=None,
+                    help="이 세그먼트의 커널만 측정한다. scripts/sweep.py 가 "
+                         "라운드 로빈으로 넘겨준다")
+    ap.add_argument("--segment-kernels", type=int, default=0,
+                    help=f"세그먼트당 커널 수 (기본 env 또는 {SEGMENT_KERNELS})")
+    ap.add_argument("--time-budget", type=float, default=0,
+                    help="이 시간(초)이 지나면 깔끔하게 멈춘다. 종료 코드 7. "
+                         "병리적으로 느린 세그먼트가 라운드를 막지 않도록 하는 "
+                         "안전장치이며, 진행 배분은 --max-jobs 로 한다")
+    ap.add_argument("--max-jobs", type=int, default=0,
+                    help="이 개수만 측정하고 멈춘다. 종료 코드 7. "
+                         "세그먼트마다 커널 실행 시간 분포가 달라 시간 고정은 "
+                         "진행률이 어긋난다 — 작업 수로 배분하는 쪽이 맞다")
+    ap.add_argument("--list-segments", action="store_true",
+                    help="세그먼트 분할만 출력하고 끝낸다")
     args = ap.parse_args()
 
     env = json.loads(paths.ENV_JSON.read_text())
@@ -373,6 +493,40 @@ def main() -> int:
                   f"thr={r['threads']} regs={r['regs_per_thread']} "
                   f"blk/sm={r['max_blocks_per_sm']}")
 
+    # --- 세그먼트 분할 (드리프트 대책) --------------------------------------
+    # 한 프로세스가 로드하는 서로 다른 커널 수를 SEGMENT_KERNELS 로 묶는다.
+    # 이게 드리프트의 유일한 설명 변수다 (docs/measurement_drift.md).
+    seg_map = None
+    n_seg = 1
+    anchors = []
+    if args.all:
+        seg_size = (args.segment_kernels
+                    or (env.get("segments") or {}).get("kernels")
+                    or SEGMENT_KERNELS)
+        seg_map, n_seg = split_segments(
+            [r["kernel_id"] for r in sample], seg_size, seed)
+        anchors = pick_anchors(sample,
+                               (env.get("segments") or {}).get(
+                                   "anchor_kernels", ANCHOR_KERNELS), seed)
+        anchor_ids = {r["kernel_id"] for r in anchors}
+        if args.list_segments:
+            print(f"세그먼트 {n_seg}개 x 커널 {seg_size}개 "
+                  f"(전체 {len(sample)}개)")
+            print(f"앵커 {len(anchors)}개: "
+                  + ", ".join(r["kernel_id"] for r in anchors))
+            # 여기서 끝내지 않는다 — sweep.py 는 세그먼트 수와 **전체 작업 수**
+            # 를 같이 읽어 슬라이스 크기를 정한다. 작업 수는 아래에서 출력된다.
+        if args.segment is not None:
+            if not 0 <= args.segment < n_seg:
+                print(f"세그먼트 번호는 0~{n_seg - 1} 이다")
+                return 2
+            keep = {k for k, v in seg_map.items() if v == args.segment}
+            before = len(sample)
+            sample = [r for r in sample if r["kernel_id"] in keep]
+            print(f"[세그먼트 {args.segment}/{n_seg - 1}] "
+                  f"커널 {before} -> {len(sample)}개 "
+                  f"(앵커 {len(anchor_ids - keep)}개 별도)")
+
     # --- 작업 목록 ---------------------------------------------------------
     jobs = []
     for r in sample:
@@ -389,7 +543,7 @@ def main() -> int:
     by_shape = Counter((p.M, p.N, p.K) for _, p, _ in jobs)
     for k, v in sorted(by_shape.items()):
         print(f"  {k}: {v}")
-    if args.dry_run:
+    if args.dry_run or args.list_segments:
         return 0
 
     rng = random.Random(seed)
@@ -414,6 +568,11 @@ def main() -> int:
     kernels: dict[str, Kernel] = {}
     for r in sample:
         kernels[r["kernel_id"]] = Kernel(r["so_path"])
+    # 앵커는 이 세그먼트에 속하지 않아도 열어야 한다. 개수가 작아(6개)
+    # 모듈 압력에 실질적 영향이 없다.
+    for r in anchors:
+        if r["kernel_id"] not in kernels:
+            kernels[r["kernel_id"]] = Kernel(r["so_path"])
     probe = NvmlProbe(uuid=env["hardware_extra"]["uuid"], index=0)
 
     drift_kernel_id = picked[0]["kernel_id"]
@@ -471,12 +630,33 @@ def main() -> int:
 
     stats = Counter()
     n = 0
+    time_up = False
     last_heartbeat = 0.0
     write_heartbeat(state="starting", done=0, total=len(jobs),
                     env_hash=env["env_hash"], soak=soak_info)
+    # 세그먼트 시작 앵커. 끝 앵커와 짝지어 이 세그먼트 안의 이동량을,
+    # 세그먼트끼리 비교해 세그먼트 간 오프셋을 잰다.
+    if args.all and anchors:
+        measure_anchors(ctx, kernels, anchors, probe, env,
+                        args.segment if args.segment is not None else -1,
+                        "start")
     try:
         with RESULTS.open("a") as out:
             for (krow, p, rc) in jobs:
+                # 시간 예산 — 다음 세그먼트로 넘어가기 위해 깔끔하게 멈춘다.
+                # 중간에 멈춰도 results.jsonl 은 append-only 라 재개가 된다.
+                if args.max_jobs and n >= args.max_jobs:
+                    time_up = True
+                    print(f"\n[세그먼트] 작업 예산 {args.max_jobs:,}개 소진. "
+                          f"{(time.time() - t_start) / 60:.1f}분 걸렸다.",
+                          flush=True)
+                    break
+                if args.time_budget and (time.time() - t_start) > args.time_budget:
+                    time_up = True
+                    print(f"\n[세그먼트] 시간 상한 {args.time_budget:.0f}초 "
+                          f"도달. {n:,}개 측정하고 넘긴다. (작업 예산보다 "
+                          f"느리다 — 이 세그먼트가 무거운지 확인하라)", flush=True)
+                    break
                 thermal["soak_elapsed_s"] = round(time.time() - soak_started, 1)
                 row = measure_one(ctx, kernels[krow["kernel_id"]], krow, p, rc,
                                   probe, env, launch_overhead_ms, hw.regs_per_sm,
@@ -571,6 +751,10 @@ def main() -> int:
             repro = ([] if args.all else
                      reproducibility(ctx, kernels, jobs, probe, env,
                                      launch_overhead_ms, seed, hw.regs_per_sm))
+            if args.all and anchors:
+                measure_anchors(ctx, kernels, anchors, probe, env,
+                                args.segment if args.segment is not None else -1,
+                                "end")
         write_heartbeat(state="finishing", done=n, total=len(jobs),
                         status=dict(stats), env_hash=env["env_hash"],
                         soak=soak_info, thermal=dict(thermal))
@@ -594,6 +778,8 @@ def main() -> int:
         print("   results.jsonl 은 그대로 남아 있으므로 원인을 고친 뒤 "
               "같은 명령으로 이어서 진행하면 된다.")
         return 3
+    if time_up:
+        return 7      # 정상. sweep.py 가 다음 세그먼트로 넘어간다
     return 0
 
 
@@ -904,21 +1090,43 @@ def telemetry_tail_stats(seconds: int) -> dict:
             "clk_min": min(clks), "clk_max": max(clks)}
 
 
-def drift_check(ctx, kern, kernel_id, probe, env,
-                thermal: dict | None = None) -> float | None:
+def _probe_shape(ctx, kern, p: Problem):
     from measure.runner import KtProblemC
 
-    p = DRIFT_SHAPE
     ctx.prepare_problem(p.M, p.N, p.K)
     kp = KtProblemC(p.M, p.N, p.K, 1, 0)
     bufs = ctx.buffers(kern.workspace_bytes(kp), False)
     st, h = kern.prepare(kp, bufs)
     if st != 0 or not h:
-        return
+        return None
     try:
         st, m = ctx.measure(kern.launch_addr, h, 0)
     finally:
         kern.release(h)
+    return m
+
+
+def drift_check(ctx, kern, kernel_id, probe, env,
+                thermal: dict | None = None) -> float | None:
+    """기준 커널을 **여러 형상**에서 재고 전부 기록한다.
+
+    ⚠️ 큰 형상 하나만 재면 안 된다. Phase 3 이 4096³ 하나로 감시해서
+    드리프트를 +5.06 % 로 봤는데, 같은 조건의 512³ 측정은 +1380 % 오염되어
+    있었다. 런치당 상수 오버헤드는 긴 커널에서 안 보인다.
+
+    돌려주는 값은 **작은 형상** 쪽이다 — 감시의 민감도가 거기서 나온다.
+    """
+    extra = {}
+    for q in DRIFT_SHAPES[:-1]:
+        mq = _probe_shape(ctx, kern, q)
+        if mq is not None:
+            extra[f"time_ms_{q.M}"] = mq.time_ms
+            extra[f"n_reps_{q.M}"] = mq.n_reps
+
+    p = DRIFT_SHAPE
+    m = _probe_shape(ctx, kern, p)
+    if m is None:
+        return
     snap = probe.snapshot()
     with DRIFT.open("a") as f:
         f.write(json.dumps({
@@ -926,6 +1134,7 @@ def drift_check(ctx, kern, kernel_id, probe, env,
             "problem": {"M": p.M, "N": p.N, "K": p.K},
             "time_ms": m.time_ms, "time_std_ms": m.time_std_ms,
             "n_reps": m.n_reps,
+            **extra,
             "sm_clock_mhz": snap["sm_clock_mhz"],
             "gpu_temp_c": snap["gpu_temp_c"], "power_w": snap["power_w"],
             "clock_locked": env["clock_locked"],

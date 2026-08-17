@@ -38,7 +38,8 @@ from core.hardware import (  # noqa: E402
     hardware_to_dict,
     nvcc_arch_flag,
 )
-from measure.runner import PROTOCOL_DEFAULTS, SOAK_DEFAULTS  # noqa: E402
+from measure.runner import (  # noqa: E402
+    PROTOCOL_DEFAULTS, SEGMENT_DEFAULTS, SOAK_DEFAULTS)
 from measure.gpu_state import (  # noqa: E402
     ClockLockResult, drift_check_seconds, try_lock_clocks,
 )
@@ -509,6 +510,9 @@ def main() -> int:
         "shuffle_seed": seed,
         "protocol": PROTOCOL_DEFAULTS,
         "soak": SOAK_DEFAULTS,
+        # 드리프트 대책. 이 값이 바뀌면 측정 조건이 바뀐 것이므로 env_hash 도
+        # 바뀌어야 한다 — 다른 세그먼트 크기로 잰 데이터는 섞으면 안 된다.
+        "segments": SEGMENT_DEFAULTS,
     }
     env["env_hash"] = canonical_hash(env)
 

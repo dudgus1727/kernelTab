@@ -12,7 +12,7 @@ from pathlib import Path
 __all__ = [
     "KtProblemC", "KtBuffersC", "KtProtocolC", "KtMeasureC",
     "Ctx", "Kernel", "DEFAULT_PROTOCOL", "protocol_from_env",
-    "PROTOCOL_DEFAULTS", "SOAK_DEFAULTS",
+    "PROTOCOL_DEFAULTS", "SOAK_DEFAULTS", "SEGMENT_DEFAULTS",
 ]
 
 
@@ -77,6 +77,15 @@ SOAK_DEFAULTS = {
     "stable_runs": 3,
     "min_seconds": 45 * 60,
     "max_seconds": 180 * 60,
+}
+
+#: 드리프트 대책. 한 프로세스가 로드하는 서로 다른 커널 수를 묶고, 세그먼트를
+#: 라운드 로빈으로 돈다. 드리프트의 유일한 설명 변수가 이 수이기 때문이다
+#: (docs/measurement_drift.md). 측정 조건이므로 env_hash 에 들어간다.
+SEGMENT_DEFAULTS = {
+    "kernels": 500,          # 세그먼트당 커널 수
+    "seconds": 1800,         # 한 번에 도는 시간
+    "anchor_kernels": 6,     # 모든 세그먼트에서 재는 고정 커널
 }
 
 PROTOCOL_DEFAULTS = {

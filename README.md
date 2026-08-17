@@ -60,8 +60,28 @@ python3 scripts/smoke_splitk.py                    # split-K 경로 스모크
 python3 scripts/rehearse.py                        # 리허설 측정
 python3 scripts/recheck_stability.py               # 재현성 / 드리프트
 python3 scripts/report_rehearsal.py
+
+python3 scripts/sweep.py --dry-run                 # Phase 3 계획 확인
+python3 scripts/sweep.py                           # Phase 3 전수 (세그먼트)
 python3 scripts/export.py                          # -> results/table.parquet
 ```
+
+> ### ⛔ 새 GPU 에서는 드리프트 3 값을 먼저 재라
+>
+> 클럭 고정 검증과 **같은 위치**의 필수 절차다. 건너뛰면 무엇이 오염됐는지
+> 모른 채 33 시간을 버린다 (A6000 에서 226,211 행을 그렇게 버렸다).
+>
+> 한 프로세스가 실행한 서로 다른 커널이 쌓이면 **런치당 상수 오버헤드**가
+> 커진다. 상수이므로 긴 커널에서는 안 보이고 짧은 커널을 통째로 삼킨다.
+> 세 값이 GPU/드라이버마다 다르므로 매번 재야 한다.
+>
+> | 값 | A6000 / driver 580.173 / CUDA 12.4 | 왜 필요한가 |
+> |---|---|---|
+> | 문턱 (모듈 수) | ~1,200 개 | `segments.kernels` 를 이 값의 절반 이하로 |
+> | 상수 성분 | 42 us / 모듈 1,000 개 | 허용 오차에서 세그먼트 크기 역산 |
+> | 짧은 커널 왜곡 배율 | 100 배 (15 us vs 22 ms) | 감시 프로브에 짧은 형상이 필요한 이유 |
+>
+> 절차와 근거: `docs/measurement_drift.md`
 
 > ### ⚠️ 측정이 끝나면 클럭 고정을 반드시 해제할 것
 > ```bash
