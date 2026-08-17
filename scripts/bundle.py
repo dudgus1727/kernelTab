@@ -98,6 +98,156 @@ def run_validate(env_hash: str, out: Path) -> tuple[bool, str]:
     return p.returncode == 0, (p.stdout + p.stderr)
 
 
+#: GitHub Release 에셋 하나의 상한. 넘으면 업로드가 실패한다.
+GH_ASSET_LIMIT = 2 * 1024 ** 3
+
+
+def release_notes(b: dict) -> str:
+    """BUNDLE.json 에서 릴리즈 노트를 만든다.
+
+    측정 조건이 노트에 있어야 한다 — 릴리즈를 받은 사람이 저장소를 보지
+    않고도 이 표가 **어떤 조건에서 측정된 것인지** 알 수 있어야 인용과
+    재현이 가능하다.
+    """
+    m = b.get("manifest") or {}
+    return f"""\
+# kerneltab 측정 표 — {b['gpu_name']} (`{b['bundle_id']}`)
+
+CUTLASS GEMM 의 (형상 x config) -> 성능 표.
+
+## 측정 조건 — **인용할 때 반드시 함께 밝힐 것**
+
+| | |
+|---|---|
+| GPU | {b['gpu_name']} ({b['arch']}, {b['sm_count']} SM) |
+| `env_hash` | `{b['env_hash']}` |
+| SM 클럭 | {b.get('locked_mhz')} MHz (고정={b.get('clock_locked')}) |
+| 메모리 클럭 | {b.get('locked_mem_mhz')} MHz (고정={b.get('mem_clock_locked')}) |
+| 실효 피크 | {b.get('peak_tflops_f16_effective')} TFLOP/s (f16) |
+| 실효 대역폭 | {b.get('bandwidth_gbps_effective')} GB/s |
+| ridge point | {b.get('ridge_point')} FLOP/byte |
+| 측정 구간 | {b.get('measured_from_utc')} ~ {b.get('measured_to_utc')} |
+
+**`env_hash` 가 다르면 측정 조건이 다르다. 절대 시간을 직접 비교하지 마라.**
+
+스펙 시트 값(154.8 TFLOP/s, 768 GB/s)은 이 데이터에 적용되지 않는다.
+클럭을 고정해 측정했고, 컴퓨트 워크로드는 P2 상태로 동작해 메모리 클럭이
+P0 최대치에 도달하지 못한다.
+
+## 규모
+
+- 형상 {b.get('n_shapes')}개 x 커널 {b.get('n_kernels'):,}개 = **{b.get('n_rows'):,}행**
+- 층별 형상: {', '.join(f"{k} {len(v)}" for k, v in (b.get('shape_layers') or {{}}).items())}
+
+## 파일
+
+| 파일 | 내용 |
+|---|---|
+| `{b['bundle_id']}.tar.zst` | 번들 (table.parquet + env.json + kernels.jsonl + manifest + 체크섬) |
+| `results-raw-*.jsonl.zst` | 측정 원본 JSONL. `table.parquet` 은 파생물이므로 계산식이 바뀌면 여기서 재생성한다 |
+| `*.sha256` | 체크섬. 받은 뒤 반드시 대조할 것 |
+
+```bash
+sha256sum -c {b['bundle_id']}.tar.zst.sha256
+tar --zstd -xf {b['bundle_id']}.tar.zst
+```
+
+## 쓰는 법
+
+```python
+from core.bundle import load_bundle
+b = load_bundle("{b['bundle_id']}")   # sha256 자동 대조
+X = b.ranking()    # 규칙 입력 (정답 컬럼 제거됨)
+y = b.scoring()    # 채점용 (정답 포함)
+```
+
+`ranking()` 은 `time_ms` 등 정답과 그로부터 유도된 값(`difficulty` 포함)을
+제거한다. 규칙 함수에 `scoring()` 을 넘기면 정답을 훔쳐보는 것이다.
+
+## 재현
+
+| | |
+|---|---|
+| CUDA | {m.get('cuda_version')} / nvcc {m.get('nvcc_version')} |
+| CUTLASS | `{m.get('cutlass_commit')}` |
+| kerneltab | `{m.get('kerneltab_commit')}` |
+
+측정 방법과 주의점은 저장소의 `docs/measurement_drift.md` 를 볼 것.
+**다중 시간 측정 드리프트**가 실재하며, 대책 없이 재현하면 데이터가
+오염된다.
+
+## 라이선스
+
+측정 표: **CC BY 4.0** — 인용 시 위 측정 조건을 함께 밝힐 것.
+생성 도구(kerneltab): Apache-2.0. CUTLASS(NVIDIA, BSD-3)는 포함되지 않는다.
+"""
+
+
+def github_release(bundle: dict, out: Path, dsdir: Path, bundle_id: str,
+                   env_hash: str, publish: bool) -> int:
+    """오프사이트 백업. 기본은 dry-run 이다.
+
+    ⚠️ 공개 저장소면 실행하는 순간 데이터가 인터넷에 공개된다. 되돌리려면
+    에셋을 지워야 하는데 그 사이 누가 받아갔는지는 알 수 없다. 그래서
+    --publish 를 따로 요구한다.
+    """
+    gh = shutil.which("gh")
+    if not gh:
+        print("\n!! gh 가 없다. https://cli.github.com 에서 설치하라.")
+        return 5
+
+    notes = out / "RELEASE.md"
+    notes.write_text(release_notes(bundle))
+
+    assets = []
+    for pat in (f"{bundle_id}.tar.zst", f"{bundle_id}.tar.gz",
+                f"results-raw-{env_hash[:8]}.jsonl.zst",
+                f"results-raw-{env_hash[:8]}.jsonl.gz"):
+        f = dsdir / pat
+        if f.exists():
+            assets.append(f)
+            chk = f.with_suffix(f.suffix + ".sha256")
+            if chk.exists():
+                assets.append(chk)
+
+    print(f"\n--- GitHub Release ---")
+    print(f"릴리즈 노트: {notes}")
+    if not assets:
+        print("!! 올릴 파일이 없다. --archive --archive-raw 를 먼저 돌려라.")
+        return 5
+
+    too_big = [f for f in assets if f.stat().st_size > GH_ASSET_LIMIT]
+    for f in assets:
+        mark = "  !! 2GB 초과" if f in too_big else ""
+        print(f"  {f.name:56s} {human(f.stat().st_size):>10}{mark}")
+    if too_big:
+        print("\n!! GitHub Release 에셋은 파일당 2 GB 가 상한이다.")
+        print("   split -b 1900M 으로 나눠 올리고 cat 으로 복원하라.")
+        return 5
+
+    # 태그에 env_hash 가 들어가는 것이 핵심이다. 같은 GPU 라도 측정 조건이
+    # 다르면 다른 릴리즈여야 한다.
+    tag = f"data-{bundle_id}"
+    cmd = [gh, "release", "create", tag,
+           "--title", f"kerneltab 측정 표 — {bundle['gpu_name']} ({bundle_id})",
+           "--notes-file", str(notes)] + [str(f) for f in assets]
+
+    if not publish:
+        print("\n[dry-run] 실제로 올리지 않았다. 아래 명령을 확인한 뒤")
+        print("          --github-release --publish 로 다시 돌려라.\n")
+        print("  " + " \\\n    ".join(cmd))
+        print("\n  ⚠️ 저장소가 public 이면 이 순간 데이터가 인터넷에 공개된다.")
+        return 0
+
+    print(f"\n업로드 중 (tag={tag}) ...")
+    r = subprocess.run(cmd)
+    if r.returncode != 0:
+        print("!! gh release create 실패")
+        return r.returncode
+    print(f"  https://github.com/<owner>/<repo>/releases/tag/{tag}")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--env-hash", default=None)
@@ -108,6 +258,12 @@ def main() -> int:
                     help="results.jsonl 원본을 별도 압축 보관 (C-4). 번들에는 "
                          "넣지 않는다 — table.parquet 은 파생물이라 계산식이 "
                          "바뀌면 원본에서 다시 만들어야 한다")
+    ap.add_argument("--github-release", action="store_true",
+                    help="GitHub Release 로 오프사이트 백업한다. RELEASE.md 를 "
+                         "만들고 gh 명령을 **출력만** 한다 (기본 dry-run)")
+    ap.add_argument("--publish", action="store_true",
+                    help="--github-release 를 실제로 실행한다. 공개 저장소면 "
+                         "이 순간 데이터가 인터넷에 공개된다")
     ap.add_argument("--skip-validate", action="store_true",
                     help="무결성 검사를 건너뛴다. 검증 안 된 데이터를 배포하게 "
                          "되므로 진단 목적에만 쓸 것")
@@ -187,18 +343,28 @@ CUTLASS (NVIDIA, BSD-3-Clause) 는 이 번들에 포함되지 않는다.
     import pyarrow.parquet as pq
     t = pq.read_table(out / "table.parquet")
     cols = t.column_names
-    n_rows = t.num_rows
-    if "env_hash" in cols:
-        eh = t.column("env_hash").to_pylist()
-        n_rows = sum(1 for x in eh if str(x).startswith(env_hash))
-    shapes = {(a, b, c) for a, b, c in zip(
-        t.column("M").to_pylist(), t.column("N").to_pylist(),
-        t.column("K").to_pylist())} if "M" in cols else set()
-    n_kernels = len(set(t.column("kernel_id").to_pylist())) if "kernel_id" in cols else 0
+    # ⚠️ **이 측정 조건의 줄만** 센다. table.parquet 에는 다른 env_hash 의
+    #    줄도 들어 있다 (폐기된 드리프트 구간 등). 필터하지 않으면 형상 수,
+    #    커널 수, 측정 구간이 전부 남의 데이터를 포함한 값이 되고, 그게
+    #    릴리즈 노트에 실려 나간다. difficulty 가 22배로 나왔던 것과 같은
+    #    함정이다 — env_hash 는 조인 키가 아니라 격리 경계다.
+    ehs = ([str(x) for x in t.column("env_hash").to_pylist()]
+           if "env_hash" in cols else [""] * t.num_rows)
+    keep = [i for i, x in enumerate(ehs) if x.startswith(env_hash)]
+    n_rows = len(keep)
 
-    # 측정 시각 범위
-    ts = sorted(x for x in t.column("timestamp").to_pylist() if x) \
-        if "timestamp" in cols else []
+    def col(name):
+        if name not in cols:
+            return []
+        v = t.column(name).to_pylist()
+        return [v[i] for i in keep]
+
+    Ms, Ns, Ks = col("M"), col("N"), col("K")
+    shapes = set(zip(Ms, Ns, Ks))
+    n_kernels = len(set(col("kernel_id")))
+
+    # 측정 시각 범위 (이 조건의 줄만)
+    ts = sorted(x for x in col("timestamp") if x)
 
     # --- 층별 형상 목록 (층 C 는 GPU 마다 다르다) ---------------------------
     layers = {name: [[p.M, p.N, p.K] for p in probs]
@@ -334,6 +500,13 @@ CUTLASS (NVIDIA, BSD-3-Clause) 는 이 번들에 포함되지 않는다.
               f"  sha256={d[:16]}...")
         print("  ※ results.jsonl 은 append-only 원본이다. table.parquet 은 "
               "파생물이므로 계산식이 바뀌면 이 원본에서 재생성한다.")
+
+    # --- C-3: GitHub Release (오프사이트) ------------------------------------
+    if args.github_release:
+        rc = github_release(bundle, out, Path(args.out), bundle_id,
+                            env_hash, args.publish)
+        if rc:
+            return rc
 
     print(f"\n소비: KERNELTAB_DATASETS={Path(args.out).resolve()} "
           f"python3 -c \"from core.bundle import load_bundle; "
