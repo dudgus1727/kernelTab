@@ -142,6 +142,31 @@ def main() -> int:
     (out / "validate_report.md").write_text(
         f"# 무결성 검사 — `{bundle_id}`\n\n```\n{report}\n```\n")
 
+    # 번들은 코드와 분리되어 유통된다. 그러니 라이선스가 **파일 안에** 있어야
+    # 한다 — 저장소를 안 본 사람이 tar 하나만 받아도 조건을 알 수 있어야 한다.
+    # 데이터는 코드의 파생물이 아니므로 Apache-2.0 이 아니라 CC BY 4.0 이다.
+    # (소프트웨어 라이선스를 데이터셋에 붙이면 이용자가 오히려 혼란스럽다.)
+    (out / "LICENSE.txt").write_text(f"""\
+{bundle_id}
+kerneltab measurement table
+
+License: CC BY 4.0  (https://creativecommons.org/licenses/by/4.0/)
+
+인용할 때는 측정 조건을 함께 밝혀야 한다. 그것 없이는 재현이 불가능하다:
+
+  GPU        {hw.name} ({hw.arch}, {hw.sm_count} SM)
+  env_hash   {env["env_hash"]}
+  SM clock   {env.get("locked_mhz")} MHz (locked={env.get("clock_locked")})
+  MEM clock  {env.get("locked_mem_mhz")} MHz (locked={env.get("mem_clock_locked")})
+  effective  {env.get("peak_tflops_f16_effective")} TFLOP/s f16, \
+{env.get("bandwidth_gbps_effective")} GB/s
+
+전체 조건은 env.json, 생성 도구 버전은 manifest.json 에 있다.
+
+이 표를 만든 도구(kerneltab)는 Apache-2.0 이며 별개다.
+CUTLASS (NVIDIA, BSD-3-Clause) 는 이 번들에 포함되지 않는다.
+""")
+
     # --- 표 요약 (Phase 3 데이터를 분석하지 않고 개수만 센다) ---------------
     import pyarrow.parquet as pq
     t = pq.read_table(out / "table.parquet")
@@ -171,6 +196,15 @@ def main() -> int:
 
     bundle = {
         "bundle_id": bundle_id,
+        # 번들은 코드와 분리되어 유통되므로 파일이 라이선스를 들고 다닌다.
+        # 표는 코드의 파생물이 아니다 — 도구는 Apache-2.0, 데이터는 CC BY 4.0.
+        "license": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "attribution_required": [
+            "gpu_name", "env_hash", "locked_mhz", "locked_mem_mhz",
+            "peak_tflops_f16_effective", "bandwidth_gbps_effective",
+        ],
+        "tool_license": "Apache-2.0",
         "created_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "gpu_name": hw.name,
         "arch": hw.arch,

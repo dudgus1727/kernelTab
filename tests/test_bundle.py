@@ -173,3 +173,37 @@ class TestCombine:
         _, a, b = two_bundles
         df = load_bundles([a, b], kind="scoring")
         assert "time_ms" in df.columns
+
+
+# ---------------------------------------------------------------------------
+# 라이선스 — 번들은 코드와 분리되어 유통되므로 파일이 조건을 들고 다녀야 한다
+# ---------------------------------------------------------------------------
+
+
+def test_license_defaults_to_cc_by(tmp_path):
+    """license 필드가 없는 옛 번들도 CC BY 4.0 으로 읽힌다."""
+    d = _make(tmp_path, "gpu-sm_86-aaaa1111", "aaaa1111", "GPU A", 84,
+              [(512, 512, 512)])
+    info = json.loads((d / "BUNDLE.json").read_text())
+    assert "license" not in info          # 옛 번들
+    assert load_bundle(d).license == "CC-BY-4.0"
+
+
+def test_license_is_read_from_bundle_json(tmp_path):
+    d = _make(tmp_path, "gpu-sm_86-bbbb2222", "bbbb2222", "GPU B", 84,
+              [(512, 512, 512)])
+    info = json.loads((d / "BUNDLE.json").read_text())
+    info["license"] = "CC-BY-SA-4.0"
+    (d / "BUNDLE.json").write_text(json.dumps(info))
+    # 체크섬 대상에 BUNDLE.json 자신은 없으므로 verify 를 켜도 통과한다
+    assert load_bundle(d).license == "CC-BY-SA-4.0"
+
+
+def test_bundle_script_separates_tool_and_data_license():
+    """도구는 Apache-2.0, 표는 CC BY 4.0. 데이터셋에 소프트웨어 라이선스를
+    붙이면 이용자가 오히려 혼란스럽다."""
+    from pathlib import Path as _P
+    src = (_P(__file__).resolve().parent.parent / "scripts" / "bundle.py").read_text()
+    assert '"license": "CC-BY-4.0"' in src
+    assert '"tool_license": "Apache-2.0"' in src
+    assert 'LICENSE.txt' in src           # 번들 안에 라이선스 파일을 쓴다

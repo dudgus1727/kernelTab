@@ -88,6 +88,13 @@ class Bundle:
         return self.info["env_hash"]
 
     @property
+    def license(self) -> str:
+        """표의 라이선스. 도구(Apache-2.0)와 다르다 — 데이터는 코드의
+        파생물이 아니므로 CC BY 4.0 이다. 인용 시 `env_hash` 와 클럭 조건을
+        함께 밝혀야 한다 (번들 안 LICENSE.txt)."""
+        return self.info.get("license", "CC-BY-4.0")
+
+    @property
     def table_path(self) -> Path:
         return self.path / "table.parquet"
 
