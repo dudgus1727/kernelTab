@@ -6,8 +6,10 @@
 완료 예상: **2026-08-17(월) 15:00~16:00 UTC** (진행률 기준 추정).
 
 ```bash
-# 완료 확인
-pgrep -f "rehearse.py --all" || echo "측정 종료됨"
+# 완료 확인 — pgrep 을 쓰지 마라. 명령줄에 "rehearse.py --all" 이 들어간
+# 감시 셸 자신에 매칭되어 "아직 도는 중" 으로 오판한다 (13 시간을 그렇게
+# 날렸다). heartbeat.json + /proc 를 보는 watch.py 를 쓴다.
+python3 scripts/watch.py; echo "exit=$?"     # 0=진행중 3=끝남 5=죽음
 tail -30 <phase3 로그>
 ```
 
@@ -40,6 +42,23 @@ nohup python3 -u scripts/rehearse.py --all >> <phase3 로그> 2>&1 &
 ## 1. 백업 — 다른 무엇보다 먼저
 
 40 시간짜리 데이터다. 이후 단계에서 무엇이 잘못되든 되돌릴 수 있어야 한다.
+
+> **보존 순서 (C-5).** 아래가 전체 순서다. 이 문서의 절 번호와 대응한다.
+>
+> | # | 할 일 | 절 |
+> |---|---|---|
+> | 1 | `results/` 원본 tar 백업 | 1 |
+> | 2 | `validate_table.py --expect full` 통과 확인 | 3 |
+> | 3 | `export.py` → `table.parquet` | 4 |
+> | 4 | `bundle.py --archive --archive-raw` → 번들 (검증 실패 시 **거부됨**) | 4-b |
+> | 5 | **다른 물리 디스크**로 복사 | 4-b |
+> | 6 | 오프사이트 1 부 | 4-b |
+> | 7 | 체크섬 대조 | 4-b |
+>
+> **5~6 번(다른 물리 디스크 + 오프사이트)을 마치기 전에는 `results/` 안의
+> 무엇도 수정하지 마라.** 같은 디스크 안의 tar 는 백업이 아니다 — 디스크가
+> 죽으면 원본과 사본이 같이 죽는다. 1 번은 "실수로 지웠을 때" 용이고,
+> 5~6 번이 "디스크가 죽었을 때" 용이다. 둘은 대체재가 아니다.
 
 ```bash
 cd /home/piai/workspace
@@ -175,6 +194,46 @@ print(t.num_rows, '행', t.num_columns, '열')"
 (`kernels.jsonl` 의 값은 빌드 시점 것이다). 재계산 결과가 `smem_dynamic` 과
 다르면 `smem_matches=False` 로 표시된다 — 0 이어야 한다.
 
+## 4-b. 번들 + 오프사이트 — **여기까지 끝나야 수정 허용**
+
+```bash
+python3 scripts/bundle.py --archive --archive-raw
+ls -lh datasets/*/
+```
+
+`bundle.py` 는 안에서 `validate_table.py --expect full` 을 먼저 돌리고
+**통과하지 못하면 번들을 만들지 않는다.** 검증 안 된 데이터가 배포되면 안
+되기 때문이다. `--archive-raw` 는 `results.jsonl` 원본을
+`results-raw-{env_hash8}.jsonl.zst` 로 따로 압축한다 — `table.parquet` 은
+파생물이라 파생 지표 계산식이 바뀌면 원본에서 다시 만들어야 한다.
+
+그 다음 **물리적으로 다른 곳에 두 부**를 만든다.
+
+```bash
+BID=$(ls datasets | head -1)
+
+# 5. 다른 물리 디스크 (같은 디스크 안의 사본은 백업이 아니다)
+lsblk -o NAME,SIZE,MOUNTPOINT           # 마운트된 다른 디스크 확인
+cp -a datasets/$BID  /mnt/<other-disk>/kerneltab/
+cp -a datasets/$BID.tar.zst* ~/kerneltab-results-*.tar.gz  /mnt/<other-disk>/kerneltab/
+
+# 6. 오프사이트 1 부 (rclone / scp / GitHub Release 중 하나)
+rclone copy datasets/$BID.tar.zst  remote:kerneltab/
+
+# 7. 체크섬 대조 — 복사가 조용히 깨졌을 수 있다
+sha256sum -c datasets/$BID.tar.zst.sha256
+(cd /mnt/<other-disk>/kerneltab && sha256sum -c $BID.tar.zst.sha256)
+python3 -c "
+import sys; sys.path.insert(0,'.')
+from core.bundle import load_bundle
+b = load_bundle('/mnt/<other-disk>/kerneltab/$BID')   # verify=True 가 기본
+print('사본 무결성 OK:', b.bundle_id)"
+```
+
+> **5~6 번을 마치기 전에는 `results/` 안의 무엇도 수정하지 마라.**
+> 7 절(마이그레이션) 이후의 코드 수정은 파생 지표 계산식을 바꿀 수 있고,
+> `results.jsonl` 은 append-only 라 **되돌릴 방법이 원본 사본뿐**이다.
+
 ## 5. 리포트
 
 ```bash
@@ -230,12 +289,36 @@ P-1 이 끝난 뒤에만. 디렉토리 이동이 포함되므로 마지막에 �
 
 ---
 
+## 10. 다른 GPU 에서 재측정할 때 — **드리프트 절차를 먼저 돌려라**
+
+A6000 에서 다중 시간 측정 드리프트를 발견했다 (7.5 시간에 +5.06%).
+`docs/measurement_drift.md` 에 원인과 대책이 있다. **이 절차는 GPU 마다
+다시 해야 한다** — 드리프트의 크기도, 대책의 주기도 하드웨어에 의존한다.
+
+새 GPU(4090, H100 ...)에서 Phase 3 를 켜기 **전에**:
+
+1. **클럭 고정 검증** — `-lgc` 는 SM 만 잠근다. 메모리 클럭도 따로 잠그고
+   부하 중 실측이 요청값과 같은지 확인한다 (A6000 은 8001 요청 → P2 에서
+   7601 로 캡). `verify_clock_lock.py --minutes 5`
+2. **실효 피크 재측정** — 고정된 클럭에서의 실효 TFLOP/s 와 대역폭.
+   ridge point 가 여기서 나오고, 틀리면 `is_memory_bound` 가 전부 틀린다.
+3. **드리프트 프로파일 (2~3 시간)** — 기준 config 하나를 주기적으로 재측정
+   하면서 `t/t0` 를 기록한다. 가로축을 **경과 시간**과 **누적 커널 수**
+   둘 다로 그린다. A6000 에서 두 축이 다른 이야기를 했다.
+4. **대책 주기 결정** — 목표는 전 구간 드리프트 ≤ 1 %. 재시작 오버헤드가
+   주기의 5 % 를 넘으면 1.5 % 까지 완화한다 (E-2).
+5. **2~3 시간 짧은 검증** — 대책을 넣은 상태에서 드리프트가 목표 안에
+   들어오는지 확인한 뒤에야 전체 스윕을 켠다.
+
+건너뛰면 어떻게 되는지는 이미 안다: A6000 에서 226,100 행(23 %)을 버렸다.
+
+---
+
 ## 요약 — 한 화면
 
 ```bash
-# 0) 완료 확인
-pgrep -f "rehearse.py --all" || echo done
-python3 scripts/rehearse.py --all --dry-run | grep "남은 작업"
+# 0) 완료 확인 — pgrep 을 쓰지 마라 (자기 자신에 매칭된다, D-4)
+python3 scripts/watch.py; echo "exit=$?"     # 0=진행중 3=끝남 5=죽음
 
 # 1) 백업
 tar -C .. -czf ~/kerneltab-results-$(date +%Y%m%d-%H%M).tar.gz kernelTab/results
@@ -246,8 +329,16 @@ sudo nvidia-smi -i 3 -rgc && sudo nvidia-smi -i 3 -rmc
 # 3) 검증 (실패하면 여기서 멈춘다)
 python3 scripts/validate_table.py --expect full || echo "STOP"
 
-# 4~6) 산출물
+# 4) 산출물 + 번들
 python3 scripts/export.py
+python3 scripts/bundle.py --archive --archive-raw
+
+# 5~7) 다른 물리 디스크 / 오프사이트 / 체크섬 — 여기까지 끝나야 수정 허용
+cp -a datasets/* /mnt/<other-disk>/kerneltab/
+rclone copy datasets/*.tar.zst remote:kerneltab/
+sha256sum -c datasets/*.tar.zst.sha256
+
+# 리포트 · 소비 확인
 python3 scripts/report_phase3.py
 python3 -c "import sys;sys.path.insert(0,'.');from core.table import *;print('ok')"
 

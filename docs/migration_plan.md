@@ -5,7 +5,8 @@
 
 > ## ⛔ 착수 조건
 >
-> 1. `pgrep -f "rehearse.py --all"` 가 비어 있을 것 (측정 종료)
+> 1. `python3 scripts/watch.py` 가 종료 코드 3(완료)일 것.
+>    **`pgrep` 로 확인하지 마라** — 감시 셸 자신에 매칭된다 (D-4)
 > 2. `python3 scripts/validate_table.py` 통과 (종료 코드 0)
 > 3. `git status --porcelain` 가 비어 있을 것 (되돌릴 지점이 명확해야 한다)
 > 4. **백업**: `results/` 를 통째로 복사해 둔다. 40 시간짜리 데이터다.
