@@ -57,7 +57,7 @@ def log(rec: dict) -> None:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
 
-def n_segments(seg_kernels: int) -> tuple[int, int]:
+def n_segments(seg_kernels: int) -> tuple[int, int, dict]:
     out = subprocess.run(
         [sys.executable, str(REHEARSE), "--all", "--list-segments",
          "--segment-kernels", str(seg_kernels)],
@@ -66,14 +66,18 @@ def n_segments(seg_kernels: int) -> tuple[int, int]:
         print(out.stdout + out.stderr)
         raise SystemExit("세그먼트 목록을 얻지 못했다")
     n_seg = n_jobs = None
+    per_seg = {}
     for line in out.stdout.splitlines():
         if line.startswith("세그먼트 ") and n_seg is None:
             n_seg = int(line.split()[1].rstrip("개"))
+        if line.startswith("SEGJOBS "):
+            _, i, c = line.split()
+            per_seg[int(i)] = int(c)
         if line.startswith("작업 수:"):
             n_jobs = int(line.split(":")[1].split()[0].replace(",", ""))
-    if n_seg is None or n_jobs is None:
+    if n_seg is None or n_jobs is None or not per_seg:
         raise SystemExit("세그먼트/작업 수를 파싱하지 못했다:\n" + out.stdout)
-    return n_seg, n_jobs
+    return n_seg, n_jobs, per_seg
 
 
 def main() -> int:
@@ -97,24 +101,34 @@ def main() -> int:
     env = json.loads(paths.ENV_JSON.read_text())
     seg_cfg = env.get("segments") or {}
     seg_kernels = args.segment_kernels or seg_cfg.get("kernels", 500)
-    slice_s = args.slice_seconds or seg_cfg.get("seconds", 1800)
+    slice_s = args.slice_seconds or seg_cfg.get("seconds", 2700)
     seed = env["shuffle_seed"]
 
-    n_seg, n_jobs = n_segments(seg_kernels)
-    # 진행 배분은 **작업 수**로 한다. 세그먼트마다 커널 실행 시간 분포가
-    # 달라서 시간 고정은 진행률이 어긋난다. 시간은 상한으로만 쓴다.
-    slice_jobs = args.slice_jobs or max(
-        1, -(-n_jobs // (n_seg * max(args.target_rounds, 1))))
+    n_seg, n_jobs, per_seg = n_segments(seg_kernels)
+    # 진행 배분은 **작업 수**로 한다. 프로토콜이 시간 예산으로 반복 수를
+    # 정하므로 커널 속도가 상쇄되어 작업당 벽시계 편차가 6.6 % 뿐이다.
+    #
+    # 다만 세그먼트마다 작업 수가 1.8 배까지 갈린다 (커널 수는 같아도
+    # alignment/런타임 조합 수가 다르다). 모두에게 같은 슬라이스를 주면
+    # 가벼운 세그먼트가 먼저 끝나고 **후반 라운드에 무거운 것만 남아**
+    # 시각 상관이 되살아난다. 그래서 세그먼트마다 자기 작업 수에 비례해
+    # 나눠 준다 — 그러면 전부 같은 라운드에 끝난다.
+    R = max(args.target_rounds, 1)
+    slice_of = {s: (args.slice_jobs or max(1, -(-per_seg[s] // R)))
+                for s in per_seg}
     print(f"세그먼트 {n_seg}개 x 커널 {seg_kernels}개, 전체 작업 {n_jobs:,}개")
-    print(f"한 세그먼트당 {slice_jobs:,}개씩 라운드 로빈 "
-          f"(목표 {args.target_rounds}라운드, 시간 상한 {slice_s / 60:.0f}분)")
-    print(f"예상 재시작 {n_seg * args.target_rounds}회")
+    print(f"세그먼트별 작업 {min(per_seg.values()):,}~{max(per_seg.values()):,}개 "
+          f"({max(per_seg.values()) / min(per_seg.values()):.2f}배)")
+    print(f"슬라이스 {min(slice_of.values()):,}~{max(slice_of.values()):,}개 "
+          f"(작업 수 비례, 목표 {R}라운드, 시간 상한 {slice_s / 60:.0f}분)")
+    print(f"예상 재시작 {n_seg * R}회")
     print(f"env_hash={env['env_hash'][:16]}  로그: {LOG}")
     if args.dry_run:
         return 0
 
     log({"event": "sweep_start", "n_segments": n_seg, "n_jobs": n_jobs,
-         "segment_kernels": seg_kernels, "slice_jobs": slice_jobs,
+         "segment_kernels": seg_kernels, "slice_of": slice_of,
+         "jobs_per_segment": per_seg,
          "slice_seconds": slice_s, "target_rounds": args.target_rounds,
          "env_hash": env["env_hash"], "pid": os.getpid()})
 
@@ -135,7 +149,7 @@ def main() -> int:
             cmd = [sys.executable, str(REHEARSE), "--all",
                    "--segment", str(seg),
                    "--segment-kernels", str(seg_kernels),
-                   "--max-jobs", str(slice_jobs),
+                   "--max-jobs", str(slice_of[seg]),
                    "--time-budget", str(slice_s)]
             print(f"\n--- 라운드 {rnd} 세그먼트 {seg} ---", flush=True)
             t = time.time()

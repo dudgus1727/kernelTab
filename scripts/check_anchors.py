@@ -130,6 +130,47 @@ def main() -> int:
     else:
         print("  (sweep.jsonl 이 없어 라운드를 알 수 없다)")
 
+    # --- 절대값 추이 -------------------------------------------------------
+    # 비율(세그먼트 간 편차)만 보면 **모든 세그먼트가 함께 나빠지는** 경우를
+    # 놓친다. 편차는 0인데 전체가 드리프트하는 상황이다. 그래서 첫 라운드와
+    # 마지막 라운드의 절대값을 직접 비교한다.
+    print("\n절대값 추이 (첫 라운드 -> 마지막 라운드)")
+    if rounds:
+        r_of = {}
+        for r in rows:
+            rd = rounds.get((r["segment"], r["when"]))
+            if rd is not None:
+                r_of.setdefault(rd, []).append(r)
+        if len(r_of) >= 2:
+            first, last = min(r_of), max(r_of)
+            print(f"{'앵커':>46} {'형상':>6} {'R%d(ms)' % first:>10} "
+                  f"{'R%d(ms)' % last:>10} {'변화':>8}")
+            worst = 0.0
+            for key in order:
+                kid, M = key
+                a = [x["time_ms"] for x in r_of[first]
+                     if (x["kernel_id"], x["problem"]["M"]) == key]
+                b = [x["time_ms"] for x in r_of[last]
+                     if (x["kernel_id"], x["problem"]["M"]) == key]
+                if not a or not b:
+                    continue
+                ma, mb = statistics.median(a), statistics.median(b)
+                d = (mb / ma - 1) * 100
+                short = order.index(key) < max(len(order) // 2, 1)
+                if short:
+                    worst = max(worst, abs(d))
+                print(f"{kid[-46:]:>46} {M:6d} {ma:10.4f} {mb:10.4f} "
+                      f"{d:+7.2f}%")
+            if worst > args.tol:
+                fails.append(("라운드 간 절대값 이동", 0, worst))
+                print(f"  !! 짧은 앵커의 절대값이 {worst:.2f}% 움직였다. "
+                      f"세그먼트 간 편차가 작아도 전체가 함께 드리프트하고 "
+                      f"있다는 뜻이다 — 세그먼트 밖의 원인을 찾아야 한다.")
+        else:
+            print("  (라운드가 2개 미만이라 비교할 수 없다)")
+    else:
+        print("  (sweep.jsonl 이 없어 라운드를 알 수 없다)")
+
     # --- 세그먼트 시작/끝 이동 --------------------------------------------
     print("\n세그먼트 안에서의 이동 (start -> end, 짧은 앵커)")
     moved = []

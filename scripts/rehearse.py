@@ -145,7 +145,7 @@ STATUS_LOG_SECONDS = 3600
 #:
 #: scripts/sweep.py 가 이 순회를 관리한다.
 SEGMENT_KERNELS = 500          # 프로세스당 로드할 서로 다른 커널 수 상한
-SEGMENT_SECONDS = 1800         # 한 번에 도는 시간 (초)
+SEGMENT_SECONDS = 2700         # 한 슬라이스의 시간 상한 (초)
 ANCHOR_KERNELS = 6             # 모든 세그먼트에서 재는 고정 커널
 ANCHOR_SHAPES = 2
 
@@ -512,6 +512,22 @@ def main() -> int:
         if args.list_segments:
             print(f"세그먼트 {n_seg}개 x 커널 {seg_size}개 "
                   f"(전체 {len(sample)}개)")
+            # 세그먼트별 작업 수. 무작위 분할이라 커널 수는 같지만 형상
+            # alignment 와 런타임 조합 수가 달라 작업 수는 1.8 배까지 갈린다.
+            # 균등 슬라이스로 돌면 가벼운 세그먼트가 먼저 끝나고 후반
+            # 라운드에 무거운 것만 남아 시각 상관이 되살아난다. sweep.py 가
+            # 이 수로 세그먼트마다 슬라이스를 비례 배분한다.
+            _cnt = Counter()
+            for r in sample:
+                _a = (r["align"]["a"], r["align"]["b"], r["align"]["c"])
+                _cfg = cfg_from_row(r, backend)
+                for _p in shapes:
+                    if alignments_for(_p) != _a:
+                        continue
+                    _cnt[seg_map[r["kernel_id"]]] += len(
+                        enumerate_runtimes(backend, _p, _cfg))
+            for _s in sorted(_cnt):
+                print(f"SEGJOBS {_s} {_cnt[_s]}")
             print(f"앵커 {len(anchors)}개: "
                   + ", ".join(r["kernel_id"] for r in anchors))
             # 여기서 끝내지 않는다 — sweep.py 는 세그먼트 수와 **전체 작업 수**

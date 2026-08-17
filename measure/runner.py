@@ -84,7 +84,7 @@ SOAK_DEFAULTS = {
 #: (docs/measurement_drift.md). 측정 조건이므로 env_hash 에 들어간다.
 SEGMENT_DEFAULTS = {
     "kernels": 500,          # 세그먼트당 커널 수
-    "seconds": 1800,         # 한 번에 도는 시간
+    "seconds": 2700,         # 한 슬라이스의 **시간 상한** (진행 배분은 작업 수)
     "anchor_kernels": 6,     # 모든 세그먼트에서 재는 고정 커널
 }
 
