@@ -148,7 +148,7 @@ SEGMENT_KERNELS = 500          # 프로세스당 로드할 서로 다른 커널 
 SEGMENT_SECONDS = 2700         # 한 슬라이스의 시간 상한 (초)
 ANCHOR_KERNELS = 6             # 모든 세그먼트에서 재는 고정 커널
 ANCHOR_REPS = 3                # 앵커는 3회 중앙값 (1% 판정에 노이즈가 크다)
-ANCHOR_SHAPES = 2
+#: 앵커를 재는 형상은 DRIFT_SHAPES 를 그대로 쓴다 (짧은 것 + 긴 것).
 
 SOAK_ENABLED = False           # --soak / --no-soak, env.json 의 soak.enabled
 SOAK_PROBE_INTERVAL = 300      # 5분마다 기준 config 재측정
@@ -427,7 +427,7 @@ def main() -> int:
                          "라운드 로빈으로 넘겨준다")
     ap.add_argument("--segment-kernels", type=int, default=0,
                     help=f"세그먼트당 커널 수 (기본 env 또는 {SEGMENT_KERNELS})")
-    ap.add_argument("--time-budget", type=float, default=0,
+    ap.add_argument("--time-budget", type=float, default=SEGMENT_SECONDS,
                     help="이 시간(초)이 지나면 깔끔하게 멈춘다. 종료 코드 7. "
                          "병리적으로 느린 세그먼트가 라운드를 막지 않도록 하는 "
                          "안전장치이며, 진행 배분은 --max-jobs 로 한다")
@@ -639,17 +639,40 @@ def main() -> int:
               f"워밍업 {_warm_s}초. --soak 로 켤 수 있다", flush=True)
         _t0 = time.time()
         _wk = kernels[drift_kernel_id]
+        _max_mem = (env.get("clocks") or {}).get("max_memory_mhz")
+        _floor = _max_mem * MEM_CLOCK_MIN_FRAC if _max_mem else None
         _n = 0
-        while time.time() - _t0 < _warm_s:
+        _snap = None
+        # 시간이 아니라 **메모리 클럭이 올라온 것**으로 끝낸다. 유휴 상태에서
+        # 재개하면 메모리 클럭이 810 MHz 까지 떨어져 있고, 램프업 전에 재면
+        # 메모리 바운드 config 가 최대 66% 느리게 측정된다 (실측).
+        # 최대 3배까지 기다린다.
+        while time.time() - _t0 < _warm_s * 3:
             if _probe_ref(ctx, _wk) is None:
                 break
             _n += 1
-        _snap = probe.snapshot()
-        print(f"  워밍업 {_n}회, SM {_snap['sm_clock_mhz']} MHz "
+            if time.time() - _t0 < _warm_s:
+                continue
+            _snap = probe.snapshot()
+            if _floor is None or (_snap.get("mem_clock_mhz") or 0) >= _floor:
+                break
+        _snap = _snap or probe.snapshot()
+        _mem_ok = _floor is None or (_snap.get("mem_clock_mhz") or 0) >= _floor
+        print(f"  워밍업 {_n}회 {time.time() - _t0:.0f}초, "
+              f"SM {_snap['sm_clock_mhz']} MHz "
               f"mem {_snap.get('mem_clock_mhz')} MHz "
               f"{_snap['gpu_temp_c']}C", flush=True)
+        if not _mem_ok:
+            # 여기서 멈추지는 않는다 — 스윕 전체가 서면 더 곤란하다. 대신
+            # 크게 경고하고 기록에 남겨 리포트에서 걸러낼 수 있게 한다.
+            print(f"  !! 메모리 클럭 {_snap.get('mem_clock_mhz')} MHz 가 "
+                  f"최대치의 {100 * MEM_CLOCK_MIN_FRAC:.0f}%({_floor:.0f} MHz) "
+                  f"미만이다. 램프업이 끝나지 않았다 — 이 슬라이스의 "
+                  f"메모리 바운드 측정은 느리게 나올 수 있다.", flush=True)
         soak_info = {"soak_enabled": False, "soak_seconds": round(time.time() - _t0, 1),
-                     "warmup_reps": _n, "soak_ref_last_ms": None}
+                     "warmup_reps": _n, "soak_ref_last_ms": None,
+                     "warmup_mem_clock_mhz": _snap.get("mem_clock_mhz"),
+                     "warmup_mem_clock_ok": bool(_mem_ok)}
     soak_started = time.time()
     thermal = {"soak_elapsed_s": 0.0, "drift_ratio": 1.0}
     # 절대 기준. 소킹을 했으면 소킹 직후 값, 안 했으면 **첫 드리프트 측정값**
