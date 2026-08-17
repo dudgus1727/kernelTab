@@ -49,6 +49,10 @@ ANSWER_COLS = (
     "n_reps", "outlier_frac",
     "cublas_ms",
     "tflops", "frac_of_peak", "vs_cublas",
+    # 형상 난이도 = 중앙값 시간 / 최적 시간. **정답에서 유도된 값**이다.
+    # 규칙이 "이 형상은 어려우니 신중하게" 를 알면 그건 정답을 훔쳐본 것이다.
+    # 평가를 층화할 때(load_for_scoring) 쓰라고 넣어 둔 것이다.
+    "difficulty",
 )
 
 #: 정답은 아니지만 **측정을 해봐야 아는 값.** 규칙이 이것을 쓰면

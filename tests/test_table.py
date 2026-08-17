@@ -59,6 +59,9 @@ def _rows(env_hash="aaaa1111", n_shapes=3, n_cfg=5):
                 "cublas_ms": 1.05 + si,
                 "tflops": 100.0 - ci, "frac_of_peak": 0.8,
                 "vs_cublas": 1.05,
+                # 형상 난이도 = 중앙값/최적. 정답에서 유도된 값이라
+                # ANSWER_COLS 에 있다 (규칙에 노출되면 안 된다).
+                "difficulty": 1.8,
             })
     return out
 

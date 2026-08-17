@@ -106,6 +106,30 @@ def _difficulty(shape_cfg):
     return out
 
 
+def _is_a888(key) -> bool:
+    """이 형상이 alignment (8,8,8) 인가. 층 D(정렬 검증용)를 걸러낸다."""
+    from core.types import Problem as _P
+    from core.config import alignments_for as _af
+    M, N, K = key
+    return _af(_P(M, N, K)) == (8, 8, 8)
+
+
+def _layer_difficulty(diff, hw):
+    """[(층 이름, 형상 수, 난이도 중앙/최소/최대, 난이도>2 개수)]"""
+    from core.shapes import all_layers
+    dmap = {k: d for k, d, _ in diff}
+    out = []
+    for name, probs in all_layers(hw).items():
+        ds = [dmap[(p.M, p.N, p.K)] for p in probs
+              if (p.M, p.N, p.K) in dmap]
+        if not ds:
+            continue
+        out.append((name, len(ds), statistics.median(ds), min(ds), max(ds),
+                    sum(1 for d in ds if d > 2.0)))
+    out.sort(key=lambda r: -r[2])
+    return out
+
+
 def _difficulty_corr(diff, hw):
     """난이도가 어떤 형상 속성과 상관되는가."""
     import math as _m
@@ -526,6 +550,20 @@ def main() -> int:
                 w(f"| {tag} | {k[0]}x{k[1]}x{k[2]} | {n} | "
                   f"{min(shape_cfg[k].values()):.4f} | **{d:.2f}** |")
         w()
+        # 층별 기여 — 어느 층이 어려운 형상을 공급하는가
+        w("**층별 난이도** — 어느 층이 어려운 형상을 공급하는가")
+        w()
+        lay = _layer_difficulty(diff, hw)
+        if lay:
+            w("| 층 | 형상 | 난이도 중앙 | 최소 | 최대 | 난이도>2.0 |")
+            w("|---|---:|---:|---:|---:|---:|")
+            for name, n, med, lo, hi, nhard in lay:
+                w(f"| {name} | {n} | **{med:.2f}** | {lo:.2f} | {hi:.2f} "
+                  f"| {nhard} |")
+            w()
+            w("층을 하나 빼면 난이도 분포가 통째로 달라 보인다. 다른 GPU 로")
+            w("갈 때 어느 층을 촘촘히 할지의 근거가 여기 있다.")
+        w()
         # 상관
         w("**난이도와 무엇이 상관되는가**")
         w()
@@ -542,6 +580,23 @@ def main() -> int:
     w("크게 다르면 층화가 필수라는 증거다.")
     w()
     if len(diff) >= 4:
+        # a888 형상만: alignment 가 형상을 나누므로 전체로 재면 덮개가
+        # 100% 가 되지 않는다. a888 로 좁히면 덮개가 깨끗해지고 해석이
+        # 분명해진다. 층 D 5개는 alignment 검증용이지 실무 워크로드가
+        # 아니므로 **주 지표에서 빼는 편이 오히려 맞다.**
+        a8 = [d for d in diff if _is_a888(d[0])]
+        if len(a8) >= 4:
+            tk8 = _static_topk(shape_cfg, a8, kmax=8)
+            w(f"**주 지표 — a888 형상 {len(a8)}개만** "
+              f"(alignment 가 갈리지 않아 덮개가 깨끗하다)")
+            w()
+            w("| k | 전체 | 어려운 절반 | 쉬운 절반 | 덮개 |")
+            w("|---:|---:|---:|---:|---:|")
+            for k, a, b, c, cov in tk8:
+                w(f"| {k} | {a:.4f} | **{b:.4f}** | {c:.4f} | {100 * cov:.0f}% |")
+            w()
+        w(f"**참고 — 전체 형상 {len(diff)}개**")
+        w()
         tk = _static_topk(shape_cfg, diff, kmax=8)
         w("| k | 전체 | 어려운 절반 | 쉬운 절반 | 덮개 |")
         w("|---:|---:|---:|---:|---:|")

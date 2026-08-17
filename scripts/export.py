@@ -169,6 +169,42 @@ def main() -> int:
         print("내보낼 측정 결과가 없다.")
         return 1
 
+    # --- 형상 난이도 -------------------------------------------------------
+    # difficulty = 그 형상에서 무작위로 고른 config 가 최적 대비 몇 배 느린가
+    #              (= 중앙값 시간 / 최적 시간)
+    # 1.05 면 아무거나 골라도 되는 형상, 3.0 이면 선택이 결정적인 형상이다.
+    #
+    # ⛔ 이것은 **정답에서 유도된 값**이므로 core/table.py 의 ANSWER_COLS 에
+    #    들어 있다. 규칙이 "이 형상은 어려우니 신중하게" 를 알면 안 된다.
+    #    load_for_scoring 에만 나온다.
+    #    여기서 미리 계산해 두는 것은 kernelrule 이 평가를 층화할 때마다
+    #    표를 다시 훑지 않아도 되게 하려는 것이다.
+    import statistics as _st
+    from collections import defaultdict as _dd
+    # ⚠️ **env_hash 별로** 계산한다. 측정 조건이 다른 데이터를 섞으면
+    #    난이도가 오염된다 — 폐기된 드리프트 구간(368a84f1)의 시간이 섞이면
+    #    중앙값이 부풀어 난이도가 22배까지 나온다 (실제로 그랬다).
+    _by = _dd(list)
+    for r in rows:
+        if r.get("status") == "ok" and r.get("time_ms"):
+            _by[(r.get("env_hash"), r["M"], r["N"], r["K"])].append(r["time_ms"])
+    _diff = {}
+    for kk, ts in _by.items():
+        if len(ts) >= 5:
+            _diff[kk] = _st.median(ts) / min(ts)
+    for r in rows:
+        r["difficulty"] = _diff.get(
+            (r.get("env_hash"), r["M"], r["N"], r["K"]))
+    if _diff:
+        _cur = [v for k, v in _diff.items()
+                if k[0] and k[0] == env.get("env_hash")]
+        print(f"  난이도: (env_hash, 형상) {len(_diff)}쌍, "
+              f"현재 조건 형상 {len(_cur)}개, 중앙값 "
+              f"{_st.median(_cur):.2f}배" if _cur else
+              f"  난이도: {len(_diff)}쌍 (현재 조건 데이터 없음)")
+    else:
+        print("  난이도: 계산 불가")
+
     cols = list({c for r in rows for c in r})
     table = pa.table({c: [r.get(c) for r in rows] for c in sorted(cols)})
     pq.write_table(table, args.out, compression="zstd")
