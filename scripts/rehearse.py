@@ -591,7 +591,17 @@ def main() -> int:
             kernels[r["kernel_id"]] = Kernel(r["so_path"])
     probe = NvmlProbe(uuid=env["hardware_extra"]["uuid"], index=0)
 
-    drift_kernel_id = picked[0]["kernel_id"]
+    # 드리프트 감시 커널은 **모든 세그먼트에서 같아야** 한다. 세그먼트마다
+    # 다른 커널을 쓰면 drift.jsonl 을 세그먼트 사이에서 비교할 수 없다.
+    # 그리고 picked 는 세그먼트 필터 **전**의 목록이라 그대로 쓰면 이 세그먼트에
+    # 없는 커널을 가리켜 KeyError 가 난다 (3시간 검증에서 잡혔다).
+    # 앵커는 모든 세그먼트에서 로드되므로 그 중 하나를 쓴다.
+    if anchors:
+        drift_kernel_id = anchors[0]["kernel_id"]
+    else:
+        drift_kernel_id = picked[0]["kernel_id"]
+    if drift_kernel_id not in kernels:
+        drift_kernel_id = sample[0]["kernel_id"]
     tele_proc, tele_file = start_telemetry(env["device_index"])
     print(f"[telemetry] {TELEMETRY} (1초 간격)")
     # --- D-1 열평형 소킹. 여기부터 시간을 잰다 (D-3 의 soak_elapsed_s) --------
