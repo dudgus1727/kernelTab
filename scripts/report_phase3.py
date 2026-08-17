@@ -87,6 +87,117 @@ def dist(xs: list[float]) -> str:
 
 
 # ---------------------------------------------------------------------------
+def _med(v):
+    return statistics.median(v) if v else float("nan")
+
+
+def _difficulty(shape_cfg):
+    """[(형상, 난이도, 후보수)] — 난이도 내림차순.
+
+    난이도 = 중앙값 시간 / 최적 시간. 무작위 config 가 최적 대비 몇 배 느린가.
+    """
+    out = []
+    for k, d in shape_cfg.items():
+        ts = sorted(d.values())
+        if len(ts) < 5:
+            continue
+        out.append((k, statistics.median(ts) / ts[0], len(ts)))
+    out.sort(key=lambda r: -r[1])
+    return out
+
+
+def _difficulty_corr(diff, hw):
+    """난이도가 어떤 형상 속성과 상관되는가."""
+    import math as _m
+
+    def pearson(a, b):
+        n = len(a)
+        if n < 3:
+            return float("nan")
+        ma, mb = sum(a) / n, sum(b) / n
+        ca = [x - ma for x in a]
+        cb = [x - mb for x in b]
+        da = sum(x * x for x in ca) ** 0.5
+        db = sum(x * x for x in cb) ** 0.5
+        return sum(x * y for x, y in zip(ca, cb)) / (da * db) if da and db else float("nan")
+
+    y = [d for _, d, _ in diff]
+    M = [k[0] for k, _, _ in diff]
+    N = [k[1] for k, _, _ in diff]
+    K = [k[2] for k, _, _ in diff]
+    flop = [2 * a * b * c for a, b, c in zip(M, N, K)]
+    byte = [2 * (a * c + c * b + a * b) for a, b, c in zip(M, N, K)]
+    ai = [f / b for f, b in zip(flop, byte)]
+    return [
+        ("log M", pearson(y, [_m.log(max(x, 1)) for x in M])),
+        ("log N", pearson(y, [_m.log(max(x, 1)) for x in N])),
+        ("log K", pearson(y, [_m.log(max(x, 1)) for x in K])),
+        ("log 연산강도 (FLOP/byte)", pearson(y, [_m.log(max(x, 1e-9)) for x in ai])),
+        ("log 총 FLOP", pearson(y, [_m.log(max(x, 1)) for x in flop])),
+        ("후보 수", pearson(y, [n for _, _, n in diff])),
+    ]
+
+
+def _static_topk(shape_cfg, diff, kmax=8):
+    """형상 무관 고정 k 개의 geomean regret. 탐욕적으로 고른다.
+
+    전체 / 어려운 절반 / 쉬운 절반으로 나눠 돌려준다. 정적 top-k 의 regret 이
+    낮게 나올 때 그게 "선택이 쉽다" 인지 "쉬운 형상이 많다" 인지 구분하려면
+    이 분해가 필요하다.
+    """
+    import math as _m
+
+    shapes = [k for k, _, _ in diff]
+    best = {k: min(shape_cfg[k].values()) for k in shapes}
+    half = len(diff) // 2
+    hard = {k for k, _, _ in diff[:half]}
+    # config -> {형상: regret}
+    cfgs = {}
+    for k in shapes:
+        for i, t in shape_cfg[k].items():
+            cfgs.setdefault(i, {})[k] = t / best[k]
+    # 측정되지 않은 (형상, config) 에 벌점을 주면 안 된다. alignment 가
+    # 형상을 나누므로 **어떤 config 도 모든 형상에서 측정되지 않는다** —
+    # a888 커널은 alignment 4 형상에 애초에 쓰이지 않는다. 벌점을 주면
+    # 그 구조적 사실이 regret 으로 둔갑한다.
+    # 그래서 **덮은 형상에서만** regret 을 재고 덮개율을 따로 보고한다.
+    def geo(sel, group):
+        tot = 0.0
+        n = 0
+        for k in group:
+            rs = [cfgs[i][k] for i in sel if k in cfgs[i]]
+            if not rs:
+                continue
+            tot += _m.log(min(rs))
+            n += 1
+        if not n:
+            return float("nan"), 0.0
+        return _m.exp(tot / n), n / len(group)
+
+    hard_s = [k for k in shapes if k in hard]
+    easy_s = [k for k in shapes if k not in hard]
+    chosen = []
+    out = []
+    pool = list(cfgs)
+    for _ in range(kmax):
+        bestc, bestkey = None, None
+        for c in pool:
+            g, cov = geo(chosen + [c], shapes)
+            # 덮개를 먼저 늘리고, 같은 덮개면 regret 을 줄인다
+            key = (-cov, g if g == g else 1e9)
+            if bestkey is None or key < bestkey:
+                bestc, bestkey = c, key
+        if bestc is None:
+            break
+        chosen.append(bestc)
+        pool.remove(bestc)
+        g, cov = geo(chosen, shapes)
+        gh, _ = geo(chosen, hard_s)
+        ge, _ = geo(chosen, easy_s)
+        out.append((len(chosen), g, gh, ge, cov))
+    return out
+
+
 def _rank_stability(by):
     """형상마다 최적 대비 1%/5% 이내 config 수. 순위가 의미 있는지 본다.
 
@@ -223,6 +334,10 @@ def main() -> int:
     cublas: dict[tuple, float] = {}
     # 순위 안정성용. 형상당 시간 목록만 모은다 (형상 66개라 메모리는 작다).
     shape_times: dict[tuple, list] = defaultdict(list)
+    # 난이도 / 정적 top-k 용: (형상) -> {config 인덱스: 시간}
+    # config 를 문자열 대신 정수로 인터닝해서 메모리를 줄인다.
+    cfg_ix: dict[tuple, int] = {}
+    shape_cfg: dict[tuple, dict] = defaultdict(dict)
     n_rows = 0
     tmin = tmax = None
     for d in iter_rows(env_hash):
@@ -239,6 +354,14 @@ def main() -> int:
             continue
         if d.get("status") == "ok" and d.get("time_ms"):
             shape_times[key].append(d["time_ms"])
+            rt = d.get("runtime") or {}
+            ck = (d["kernel_id"], rt.get("split_k"), rt.get("split_k_mode"))
+            i = cfg_ix.get(ck)
+            if i is None:
+                i = cfg_ix[ck] = len(cfg_ix)
+            cur = shape_cfg[key].get(i)
+            if cur is None or d["time_ms"] < cur:
+                shape_cfg[key][i] = d["time_ms"]
         st = d.get("status")
         status[st] += 1
         if st != "ok":
@@ -369,6 +492,77 @@ def main() -> int:
           f"(최적 대비 1% 이내 config 가 후보의 10% 이상)")
         w("- 이 형상들은 `launch_overhead_frac` 이 큰 쪽에 몰려 있어야 한다 "
           "— 그렇지 않으면 다른 원인이다")
+    w()
+
+    # ---------------- 2-d. 형상 난이도 / 정적 top-k -----------------------
+    w("## 2-d. 형상 난이도 — 평가를 층화해야 하는가")
+    w()
+    w("`난이도 = 중앙값 시간 / 최적 시간`. **무작위로 고른 config 가 최적")
+    w("대비 몇 배 느린가**를 뜻한다. 1.05 면 아무거나 골라도 되는 형상,")
+    w("3.0 이면 선택이 결정적인 형상이다.")
+    w()
+    w("이게 중요한 이유: regret 을 형상별로 **균등 평균** 내면 쉬운 형상이")
+    w("분모를 부풀린다. 어려운 형상에서 20 % 손해를 봐도 쉬운 형상 10 개가")
+    w("1.00 이면 전체 geomean 이 좋아 보인다. 쉬운 형상이 많으면 균등")
+    w("geomean 은 의미가 없고, 난이도로 가중하거나 어려운 형상만 따로")
+    w("보고해야 한다.")
+    w()
+    diff = _difficulty(shape_cfg)
+    if len(diff) < 4:
+        w("(형상이 부족해 계산할 수 없다)")
+    else:
+        ds = sorted(d for _, d, _ in diff)
+        w(f"- 형상 {len(diff)}개, 난이도 중앙값 **{_med(ds):.2f}배**, "
+          f"범위 {ds[0]:.2f} ~ {ds[-1]:.2f}")
+        w(f"- 난이도 < 1.2 (선택이 거의 무의미) **"
+          f"{sum(1 for d in ds if d < 1.2)}개**")
+        w(f"- 난이도 > 2.0 (선택이 결정적) **"
+          f"{sum(1 for d in ds if d > 2.0)}개**")
+        w()
+        w("| | 형상 | 후보 | 최적(ms) | 난이도 |")
+        w("|---|---|---:|---:|---:|")
+        for tag, sel in (("가장 어려움", diff[:8]), ("가장 쉬움", diff[-8:])):
+            for k, d, n in sel:
+                w(f"| {tag} | {k[0]}x{k[1]}x{k[2]} | {n} | "
+                  f"{min(shape_cfg[k].values()):.4f} | **{d:.2f}** |")
+        w()
+        # 상관
+        w("**난이도와 무엇이 상관되는가**")
+        w()
+        cor = _difficulty_corr(diff, hw)
+        for name, r in cor:
+            w(f"- {name}: r = {r:+.3f}")
+        w()
+
+    w("### 정적 top-k — 형상 무관 고정 config")
+    w()
+    w("형상을 보지 않고 **고정된 k 개**만 시도했을 때의 regret 이다.")
+    w("규칙이 이겨야 하는 하한선이고, 동시에 **문제가 얼마나 쉬운지**의")
+    w("척도다. 전체 / 어려운 절반 / 쉬운 절반으로 나눠 본다 — 세 숫자가")
+    w("크게 다르면 층화가 필수라는 증거다.")
+    w()
+    if len(diff) >= 4:
+        tk = _static_topk(shape_cfg, diff, kmax=8)
+        w("| k | 전체 | 어려운 절반 | 쉬운 절반 | 덮개 |")
+        w("|---:|---:|---:|---:|---:|")
+        for k, a, b, c, cov in tk:
+            w(f"| {k} | {a:.4f} | **{b:.4f}** | {c:.4f} | {100 * cov:.0f}% |")
+        w()
+        w("(geomean regret = 고른 것 / 최적, 1.0 이 완벽. **덮은 형상에서만**")
+        w("잰다 — alignment 가 형상을 나누므로 어떤 config 도 모든 형상에서")
+        w("측정되지는 않는다. 덮개가 낮으면 regret 도 신뢰할 수 없다.)")
+        w()
+        if tk and tk[-1][4] < 0.9:
+            w(f"- ⚠️ 덮개 {100 * tk[-1][4]:.0f}% — 측정이 아직 부족하다. "
+              f"이 표는 전수 완료 후에 다시 봐야 한다.")
+        if tk:
+            _, a1, b1, c1, _cov = tk[-1]
+            if b1 - c1 > 0.02:
+                w(f"- 어려운 절반과 쉬운 절반의 차이가 **{b1 - c1:.3f}** 이다. "
+                  f"**층화가 필수다** — 균등 geomean 은 쉬운 형상에 가려진다.")
+            else:
+                w("- 두 절반의 차이가 작다. 균등 geomean 을 써도 크게 왜곡되지 "
+                  "않는다.")
     w()
 
     # ---------------- 3 / 6. cuBLAS 대비 ----------------------------------
