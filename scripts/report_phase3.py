@@ -87,6 +87,27 @@ def dist(xs: list[float]) -> str:
 
 
 # ---------------------------------------------------------------------------
+def _rank_stability(by):
+    """형상마다 최적 대비 1%/5% 이내 config 수. 순위가 의미 있는지 본다.
+
+    작은 형상은 커널 시간이 런치 오버헤드와 같은 자릿수라 config 를 바꿔도
+    성능이 거의 같다. 그런 형상에서는 1 등과 2 등의 차이가 측정 노이즈보다
+    작아 **순위 자체가 의미 없다.** 규칙이 그걸 알아야 틀린 선택에 부당한
+    벌점을 주지 않는다.
+    """
+    out = []
+    for (M, N, K), ts in by.items():
+        if len(ts) < 5:
+            continue
+        best = min(ts)
+        out.append((M, N, K, len(ts), best,
+                    sum(1 for t in ts if t <= best * 1.01),
+                    sum(1 for t in ts if t <= best * 1.05)))
+    # 1% 이내 비율이 높은 순
+    out.sort(key=lambda r: -r[5] / r[3])
+    return out
+
+
 def _anchor_report(env_hash: str):
     """앵커 요약. check_anchors.py 와 같은 데이터를 리포트용으로 압축한다."""
     import statistics
@@ -200,6 +221,8 @@ def main() -> int:
     err_reason = Counter()
     best: dict[tuple, dict] = {}
     cublas: dict[tuple, float] = {}
+    # 순위 안정성용. 형상당 시간 목록만 모은다 (형상 66개라 메모리는 작다).
+    shape_times: dict[tuple, list] = defaultdict(list)
     n_rows = 0
     tmin = tmax = None
     for d in iter_rows(env_hash):
@@ -214,6 +237,8 @@ def main() -> int:
             if d.get("time_ms"):
                 cublas[key] = min(cublas.get(key, math.inf), d["time_ms"])
             continue
+        if d.get("status") == "ok" and d.get("time_ms"):
+            shape_times[key].append(d["time_ms"])
         st = d.get("status")
         status[st] += 1
         if st != "ok":
@@ -315,6 +340,35 @@ def main() -> int:
         w(f"- → {anc['verdict']}")
     w()
     w("자세한 판정은 `python3 scripts/check_anchors.py`.")
+    w()
+
+    # ---------------- 2-c. 순위 안정성 -------------------------------------
+    w("## 2-c. 순위 안정성 — 순위가 의미 있는 형상인가")
+    w()
+    w("작은 형상은 커널 실행 시간이 런치 오버헤드와 같은 자릿수라, config 를")
+    w("바꿔도 성능이 거의 같다. 그런 형상에서는 **1 등과 2 등의 차이가 측정")
+    w("노이즈보다 작아 순위 자체가 의미 없다.**")
+    w()
+    w("각 형상에서 최적 대비 1 % 이내에 들어오는 config 가 몇 개인지 센다.")
+    w("이 수가 크면 그 형상에서는 어떤 config 를 골라도 같다는 뜻이고,")
+    w("규칙이 그걸 알아야 한다 (틀린 선택에 벌점을 주면 안 된다).")
+    w()
+    st = _rank_stability(shape_times)
+    if not st:
+        w("(측정 데이터가 부족하다)")
+    else:
+        w("| 형상 | 후보 | 최적(ms) | 1% 이내 | 5% 이내 | 순위 |")
+        w("|---|---:|---:|---:|---:|---|")
+        for _M, _N, _K, _n, _best, _w1, _w5 in st[:25]:
+            tag = ("**의미 없음**" if _w1 >= max(3, 0.10 * _n)
+                   else ("주의" if _w1 >= 3 else "유효"))
+            w(f"| {_M}x{_N}x{_K} | {_n} | {_best:.4f} | {_w1} | {_w5} | {tag} |")
+        n_bad = sum(1 for r in st if r[5] >= max(3, 0.10 * r[3]))
+        w()
+        w(f"- 순위가 의미 없는 형상 **{n_bad}/{len(st)}** "
+          f"(최적 대비 1% 이내 config 가 후보의 10% 이상)")
+        w("- 이 형상들은 `launch_overhead_frac` 이 큰 쪽에 몰려 있어야 한다 "
+          "— 그렇지 않으면 다른 원인이다")
     w()
 
     # ---------------- 3 / 6. cuBLAS 대비 ----------------------------------
