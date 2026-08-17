@@ -169,6 +169,31 @@ def main() -> int:
         print("내보낼 측정 결과가 없다.")
         return 1
 
+    # --- 조건별 집계 가드 ---------------------------------------------------
+    def _per_env(rows, key_fn, val_fn, agg, min_n=5):
+        """**env_hash 별로** 집계한다. 형상/조건 단위 파생 지표의 유일한 경로다.
+
+        `core/table.py` 의 load_for_ranking 은 소비 시점에 env_hash 혼재를
+        막아 준다. 그러나 **여기(export)에는 그 보호가 없다** — rows 에는
+        모든 측정 조건의 줄이 섞여 있다. 조건이 다르면 절대 시간이 비교
+        불가능하므로, 형상 단위로 중앙값이나 최소값을 내는 순간 조용히
+        오염된다.
+
+        실제로 겪었다: `difficulty` 를 env_hash 없이 계산했더니 폐기된
+        드리프트 구간(368a84f1)의 느린 시간이 섞여 난이도가 **22배**까지
+        나왔다. 고친 뒤 1.11~2.60 이다.
+
+        앞으로 형상별·조건별 집계를 추가할 때는 반드시 이 함수를 쓴다.
+        """
+        from collections import defaultdict as _d
+        buf = _d(list)
+        for r in rows:
+            v = val_fn(r)
+            if v is None:
+                continue
+            buf[(r.get("env_hash"),) + tuple(key_fn(r))].append(v)
+        return {k: agg(v) for k, v in buf.items() if len(v) >= min_n}
+
     # --- 형상 난이도 -------------------------------------------------------
     # difficulty = 그 형상에서 무작위로 고른 config 가 최적 대비 몇 배 느린가
     #              (= 중앙값 시간 / 최적 시간)
@@ -180,18 +205,16 @@ def main() -> int:
     #    여기서 미리 계산해 두는 것은 kernelrule 이 평가를 층화할 때마다
     #    표를 다시 훑지 않아도 되게 하려는 것이다.
     import statistics as _st
-    from collections import defaultdict as _dd
     # ⚠️ **env_hash 별로** 계산한다. 측정 조건이 다른 데이터를 섞으면
     #    난이도가 오염된다 — 폐기된 드리프트 구간(368a84f1)의 시간이 섞이면
     #    중앙값이 부풀어 난이도가 22배까지 나온다 (실제로 그랬다).
-    _by = _dd(list)
-    for r in rows:
-        if r.get("status") == "ok" and r.get("time_ms"):
-            _by[(r.get("env_hash"), r["M"], r["N"], r["K"])].append(r["time_ms"])
-    _diff = {}
-    for kk, ts in _by.items():
-        if len(ts) >= 5:
-            _diff[kk] = _st.median(ts) / min(ts)
+    _diff = _per_env(
+        rows,
+        key_fn=lambda r: (r["M"], r["N"], r["K"]),
+        val_fn=lambda r: (r["time_ms"]
+                          if r.get("status") == "ok" and r.get("time_ms")
+                          else None),
+        agg=lambda ts: _st.median(ts) / min(ts))
     for r in rows:
         r["difficulty"] = _diff.get(
             (r.get("env_hash"), r["M"], r["N"], r["K"]))
