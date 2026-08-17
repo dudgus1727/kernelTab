@@ -147,6 +147,7 @@ STATUS_LOG_SECONDS = 3600
 SEGMENT_KERNELS = 500          # 프로세스당 로드할 서로 다른 커널 수 상한
 SEGMENT_SECONDS = 2700         # 한 슬라이스의 시간 상한 (초)
 ANCHOR_KERNELS = 6             # 모든 세그먼트에서 재는 고정 커널
+ANCHOR_REPS = 3                # 앵커는 3회 중앙값 (1% 판정에 노이즈가 크다)
 ANCHOR_SHAPES = 2
 
 SOAK_ENABLED = False           # --soak / --no-soak, env.json 의 soak.enabled
@@ -362,14 +363,22 @@ def measure_anchors(ctx, kernels, anchor_rows, probe, env, segment, when):
             if kern is None:
                 continue
             for p in DRIFT_SHAPES:
-                m = _probe_shape(ctx, kern, p)
-                if m is None:
+                # 3회 중앙값. 앵커의 판정 기준이 1% 인데 512³ 짜리는 한 번
+                # 재면 노이즈가 그보다 크다 — 그러면 "대책이 실패했다" 와
+                # "짧은 커널이라 원래 시끄럽다" 를 구분할 수 없다.
+                ms = [_probe_shape(ctx, kern, p) for _ in range(ANCHOR_REPS)]
+                ms = [x for x in ms if x is not None]
+                if not ms:
                     continue
+                m = sorted(ms, key=lambda x: x.time_ms)[len(ms) // 2]
                 f.write(json.dumps({
                     "kernel_id": r["kernel_id"],
                     "problem": {"M": p.M, "N": p.N, "K": p.K},
                     "time_ms": m.time_ms, "time_std_ms": m.time_std_ms,
-                    "n_reps": m.n_reps,
+                    "n_reps": m.n_reps, "anchor_reps": len(ms),
+                    "time_spread_pct": round(
+                        100 * (ms[-1].time_ms - ms[0].time_ms)
+                        / max(m.time_ms, 1e-9), 3) if len(ms) > 1 else 0.0,
                     "segment": segment, "when": when,
                     "sm_clock_mhz": snap["sm_clock_mhz"],
                     "gpu_temp_c": snap["gpu_temp_c"],
@@ -620,10 +629,27 @@ def main() -> int:
     else:
         # 소킹을 건너뛰어도 워밍업은 반드시 한다 — 메모리 클럭이 유휴 시
         # 810 MHz 까지 떨어지고, 램프업 전에 재면 최대 66% 느리게 나온다.
-        print("[soak] 비활성 (A6000 에서 이득 없음). 워밍업만 한다. "
-              "--soak 로 켤 수 있다")
-        soak_info = {"soak_enabled": False, "soak_seconds": 0.0,
-                     "soak_ref_last_ms": None}
+        # WARMUP_SECONDS 는 정의만 되어 있고 쓰이지 않았다 — 워밍업이
+        # thermal_soak 안에만 있어서 소킹을 끄면 **워밍업이 통째로 사라졌다.**
+        # 세그먼트 방식은 프로세스를 104 번 새로 띄우므로 매번 냉시작 측정이
+        # 섞인다. 3시간 검증에서 첫 슬라이스 앵커가 9.75% 튄 것이 이것이다.
+        _warm_s = (env.get("segments") or {}).get(
+            "warmup_seconds", WARMUP_SECONDS)
+        print(f"[soak] 비활성 (A6000 에서 이득 없음). "
+              f"워밍업 {_warm_s}초. --soak 로 켤 수 있다", flush=True)
+        _t0 = time.time()
+        _wk = kernels[drift_kernel_id]
+        _n = 0
+        while time.time() - _t0 < _warm_s:
+            if _probe_ref(ctx, _wk) is None:
+                break
+            _n += 1
+        _snap = probe.snapshot()
+        print(f"  워밍업 {_n}회, SM {_snap['sm_clock_mhz']} MHz "
+              f"mem {_snap.get('mem_clock_mhz')} MHz "
+              f"{_snap['gpu_temp_c']}C", flush=True)
+        soak_info = {"soak_enabled": False, "soak_seconds": round(time.time() - _t0, 1),
+                     "warmup_reps": _n, "soak_ref_last_ms": None}
     soak_started = time.time()
     thermal = {"soak_elapsed_s": 0.0, "drift_ratio": 1.0}
     # 절대 기준. 소킹을 했으면 소킹 직후 값, 안 했으면 **첫 드리프트 측정값**

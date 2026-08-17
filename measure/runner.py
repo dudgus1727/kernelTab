@@ -86,6 +86,10 @@ SEGMENT_DEFAULTS = {
     "kernels": 500,          # 세그먼트당 커널 수
     "seconds": 2700,         # 한 슬라이스의 **시간 상한** (진행 배분은 작업 수)
     "anchor_kernels": 6,     # 모든 세그먼트에서 재는 고정 커널
+    # 슬라이스마다 프로세스를 새로 띄우므로 **매번 워밍업이 필요하다.**
+    # 측정 조건이므로 env_hash 에 들어간다 — 워밍업 유무가 다른 데이터를
+    # 섞으면 안 된다.
+    "warmup_seconds": 20,
 }
 
 PROTOCOL_DEFAULTS = {

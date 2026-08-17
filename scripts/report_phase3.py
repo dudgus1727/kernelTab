@@ -87,6 +87,74 @@ def dist(xs: list[float]) -> str:
 
 
 # ---------------------------------------------------------------------------
+def _anchor_report(env_hash: str):
+    """앵커 요약. check_anchors.py 와 같은 데이터를 리포트용으로 압축한다."""
+    import statistics
+    from collections import defaultdict
+    f = paths.RESULTS_DIR / "anchors.jsonl"
+    if not f.exists():
+        return None
+    rows = []
+    for line in f.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            r = json.loads(line)
+        except Exception:
+            continue
+        if str(r.get("env_hash", "")).startswith(env_hash[:8]):
+            rows.append(r)
+    if not rows:
+        return None
+    by = defaultdict(lambda: defaultdict(list))
+    for r in rows:
+        by[(r["kernel_id"], r["problem"]["M"])][r["segment"]].append(r["time_ms"])
+    order = sorted(by, key=lambda k: statistics.median(
+        [t for v in by[k].values() for t in v]))
+    out, worst = [], 0.0
+    for i, key in enumerate(order):
+        med = {s: statistics.median(v) for s, v in by[key].items()}
+        overall = statistics.median(med.values())
+        spread = (max(med.values()) - min(med.values())) / overall * 100
+        if i < max(len(order) // 2, 1):
+            worst = max(worst, spread)
+        out.append((key[0], key[1], overall, len(med), spread))
+    # 라운드 간 절대값 이동 (짧은 앵커)
+    move = None
+    sw = paths.RESULTS_DIR / "sweep.jsonl"
+    if sw.exists():
+        rnd = {}
+        for line in sw.read_text().splitlines():
+            try:
+                d = json.loads(line)
+            except Exception:
+                continue
+            if d.get("event") == "slice":
+                rnd[(d["segment"], "start")] = d["round"]
+                rnd[(d["segment"], "end")] = d["round"]
+        per = defaultdict(list)
+        short = set(order[: max(len(order) // 2, 1)])
+        for r in rows:
+            k = (r["kernel_id"], r["problem"]["M"])
+            if k not in short:
+                continue
+            rd = rnd.get((r["segment"], r["when"]))
+            if rd is not None:
+                base = statistics.median([t for v in by[k].values() for t in v])
+                per[rd].append(r["time_ms"] / base)
+        if len(per) >= 2:
+            a = statistics.median(per[min(per)])
+            b = statistics.median(per[max(per)])
+            move = (b / a - 1) * 100
+    ok = worst <= 1.0 and (move is None or abs(move) <= 1.0)
+    verdict = ("세그먼트 간 계통 오차가 1% 이내다. 대책이 듣는다."
+               if ok else
+               "**1% 를 넘는다.** 이 표의 config 순위를 그대로 믿으면 안 된다. "
+               "docs/measurement_drift.md 의 실패 대응을 따르라.")
+    return {"rows": out, "worst_short": worst, "round_move": move,
+            "verdict": verdict}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--env-hash", default=None,
@@ -220,6 +288,33 @@ def main() -> int:
                           for k, v in tel["throttle"].items()))
         else:
             w("  - 스로틀 발생 구간 없음")
+    w()
+
+    # ---------------- 2-b. 앵커 (세그먼트 간 계통 오차) --------------------
+    w("## 2-b. 앵커 — 세그먼트 간 계통 오차")
+    w()
+    w("측정은 커널을 세그먼트로 나눠 **세그먼트마다 새 프로세스**로 돈다")
+    w("(드리프트 대책, `docs/measurement_drift.md`). 프로세스가 다르면 계통")
+    w("오차가 생길 수 있으므로 모든 세그먼트에서 같은 앵커 커널을 잰다.")
+    w()
+    w("⚠️ 판정은 **짧은 앵커**로 한다. 드리프트의 정체는 런치당 상수라 긴")
+    w("커널에서는 안 보인다.")
+    w()
+    anc = _anchor_report(env_hash)
+    if anc is None:
+        w("`results/anchors.jsonl` 이 없다 — 세그먼트 방식으로 측정하지 않았다.")
+    else:
+        w(f"| 앵커 | 형상 | 중앙(ms) | 세그먼트 | 변동폭 |")
+        w("|---|---:|---:|---:|---:|")
+        for kid, M, med, nseg, spread in anc["rows"]:
+            w(f"| `{kid[-38:]}` | {M} | {med:.4f} | {nseg} | {spread:.2f}% |")
+        w()
+        w(f"- 짧은 앵커 최대 변동폭 **{anc['worst_short']:.2f}%**")
+        w(f"- 라운드 간 절대값 이동 "
+          f"{'**' + format(anc['round_move'], '+.2f') + '%**' if anc['round_move'] is not None else '(라운드 정보 없음)'}")
+        w(f"- → {anc['verdict']}")
+    w()
+    w("자세한 판정은 `python3 scripts/check_anchors.py`.")
     w()
 
     # ---------------- 3 / 6. cuBLAS 대비 ----------------------------------

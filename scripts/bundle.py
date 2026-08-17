@@ -73,6 +73,22 @@ def human(n: int) -> str:
     return str(n)
 
 
+def measurement_running() -> bool:
+    """측정이 도는 중인가. heartbeat.json 의 pid 를 /proc 로 확인한다.
+
+    pgrep 을 쓰지 않는다 — 감시하는 쪽 명령줄에 패턴이 들어가 자기 자신을
+    찾는다 (scripts/waitpid.sh 참조).
+    """
+    hb = paths.RESULTS_DIR / "heartbeat.json"
+    if not hb.exists():
+        return False
+    try:
+        pid = json.loads(hb.read_text()).get("pid")
+    except Exception:
+        return False
+    return bool(pid) and Path(f"/proc/{pid}").exists()
+
+
 def run_validate(env_hash: str, out: Path) -> tuple[bool, str]:
     """validate_table.py --expect full 을 돌려 결과를 문자열로 받는다."""
     p = subprocess.run(
@@ -282,14 +298,35 @@ CUTLASS (NVIDIA, BSD-3-Clause) 는 이 번들에 포함되지 않는다.
 
     # --- C-4: 원본 보존 -----------------------------------------------------
     if args.archive_raw:
+        # 측정이 도는 중이면 results.jsonl 이 계속 자란다. zstd 는 stat 으로
+        # 크기를 먼저 읽으므로 "Incomplete read" 로 죽고(코드 27), 죽지 않더라도
+        # 마지막 줄이 잘린 스냅샷이 된다. 리허설에서 실제로 터졌다.
+        if measurement_running():
+            print("\n!! 측정이 진행 중이다. --archive-raw 는 건너뛴다.")
+            print("   results.jsonl 이 자라는 중이라 잘린 스냅샷이 된다.")
+            print("   측정이 끝난 뒤 다시 돌려라 (scripts/watch.py 로 확인).")
+            args.archive_raw = False
+            # 지난 시도가 남긴 파일이 있으면 지운다. 잘린 스냅샷이 정상
+            # 아카이브처럼 남아 있는 것이 가장 위험하다.
+            for ext in (".jsonl.zst", ".jsonl.gz"):
+                stale = Path(args.out) / f"results-raw-{env_hash[:8]}{ext}"
+                if stale.exists():
+                    stale.unlink()
+                    (stale.parent / (stale.name + ".sha256")).unlink(missing_ok=True)
+                    print(f"   (잘렸을 수 있는 이전 파일 {stale.name} 삭제)")
+    if args.archive_raw:
         raw = Path(args.out) / f"results-raw-{env_hash[:8]}.jsonl.zst"
         print(f"\n원본 압축 -> {raw}")
+        # 파일 경로가 아니라 **stdin 으로** 넘긴다. 그러면 zstd 가 크기를
+        # 미리 재지 않고 EOF 까지 읽는다.
         if shutil.which("zstd"):
-            subprocess.run(["zstd", "-q", "-19", "-T0", "-f", str(RESULTS),
-                            "-o", str(raw)], check=True)
+            with RESULTS.open("rb") as f, raw.open("wb") as o:
+                subprocess.run(["zstd", "-q", "-19", "-T0", "-"],
+                               stdin=f, stdout=o, check=True)
         else:
             raw = raw.with_suffix(".gz")
-            subprocess.run(f"gzip -9 -c {RESULTS} > {raw}", shell=True, check=True)
+            with RESULTS.open("rb") as f, raw.open("wb") as o:
+                subprocess.run(["gzip", "-9", "-c"], stdin=f, stdout=o, check=True)
             print("  (zstd 가 없어 gzip 으로 대체했다)")
         d = sha256(raw)
         raw.with_suffix(raw.suffix + ".sha256").write_text(f"{d}  {raw.name}\n")
