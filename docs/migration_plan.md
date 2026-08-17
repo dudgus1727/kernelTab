@@ -104,7 +104,7 @@ results/env_registry.jsonl   (append-only)
 | `results/env.pre-clocklock.json` | `b42df475…` | 클럭 미고정. 리허설 데이터 |
 | `results/env.minreps30.json` | `1f0b6924…` | SM 클럭만 고정, min_reps=30 |
 | `results/env.smlock-only.json` | `dda3431a…` | SM 클럭 고정 + 새 프로토콜 |
-| `results/env.json` (현재) | `368a84f1…` | SM+메모리 클럭 고정. **Phase 3 본 데이터** |
+| `results/env.json` (현재) | `368a84f1…` | SM+메모리 클럭 고정. **⛔ 드리프트로 폐기** — `docs/measurement_drift.md` |
 
 주의: `results.jsonl` 에는 `de6de3c1…` 도 있다 (834 줄). 메모리 클럭 고정
 직전의 resume 테스트 잔여물이며 **해당 env.json 파일이 남아 있지 않다.**

@@ -68,6 +68,10 @@ DEFAULT_PROTOCOL = KtProtocolC(
 #: env_hash 에 반영된다.** 소킹 없이 잰 데이터와 소킹 후 데이터는 서로 다른
 #: 조건이며 절대 섞으면 안 된다 (2026-08-16 열 램프 구간 폐기 사건 참조).
 SOAK_DEFAULTS = {
+    # 기본 False. A6000 에서 열 가설이 기각됐다 (69도/230W 소킹 후 -0.07%).
+    # 코드를 남기는 이유는 다른 GPU 에서는 다를 수 있어서다.
+    # docs/measurement_drift.md
+    "enabled": False,
     "probe_interval_s": 300,
     "stable_span": 0.003,
     "stable_runs": 3,

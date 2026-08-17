@@ -7,7 +7,7 @@
 
     from core.bundle import load_bundle, load_bundles
 
-    b = load_bundle("rtx-a6000-sm_86-368a84f1")
+    b = load_bundle("rtx-a6000-sm_86-<env_hash8>")
     X = b.ranking()          # 규칙 입력 (정답 제거됨)
     y = b.scoring()          # 채점용
 

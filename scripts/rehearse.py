@@ -106,6 +106,20 @@ STATUS_LOG_SECONDS = 3600
 #
 # 그래서 본 측정 전에 실부하로 소킹하고, **드리프트 측정 자체로** 평형을
 # 판정한다.
+#
+# ── 후속 (2026-08-17): **열 가설은 기각됐다.** ──────────────────────────────
+# 위 서술은 관찰이 맞고 해석이 틀렸다. 대조 실험에서 69°C / 230 W (Phase 3 보다
+# 뜨겁다) 로 30 분 소킹한 뒤 재측정하니 드리프트가 **-0.07%** 였다. 열이
+# 원인이면 소킹 후에도 같은 상승이 나와야 했다. 나오지 않았다.
+# (내가 세운 가설이고 D-1 까지 구현한 뒤 스스로 기각했다. 자세한 것은
+#  docs/measurement_drift.md.)
+#
+# 그래서 SOAK_ENABLED 의 기본값은 False 다. 45 분을 쓰고 얻는 것이 -0.07%
+# 라면 쓸 이유가 없다. 코드를 지우지 않는 이유는 **다른 GPU 에서는 다를 수
+# 있기 때문**이다 — 클라우드 인스턴스는 냉각도 전력 한계도 다르다. 새 GPU
+# 에서는 docs/post_measurement.md 10 절의 드리프트 프로파일을 먼저 돌리고,
+# 열이 실제 원인으로 나오면 `--soak` 로 켠다.
+SOAK_ENABLED = False           # --soak / --no-soak, env.json 의 soak.enabled
 SOAK_PROBE_INTERVAL = 300      # 5분마다 기준 config 재측정
 SOAK_STABLE_SPAN = 0.003       # 최근 3회(10분 구간)의 (max-min)/median
 SOAK_STABLE_RUNS = 3
@@ -289,6 +303,11 @@ def main() -> int:
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--soak-max-min", type=int, default=0,
                     help="열평형 소킹 최대 시간(분). 평형 판정이 먼저 되면 그때 끝난다")
+    ap.add_argument("--soak", dest="soak", action="store_true", default=None,
+                    help="열평형 소킹을 켠다. A6000 에서는 이득이 없었다"
+                         "(-0.07%%) — 새 GPU 에서 열이 원인으로 확인됐을 때만")
+    ap.add_argument("--no-soak", dest="soak", action="store_false",
+                    help="소킹을 끈다 (기본)")
     args = ap.parse_args()
 
     env = json.loads(paths.ENV_JSON.read_text())
@@ -402,17 +421,30 @@ def main() -> int:
     print(f"[telemetry] {TELEMETRY} (1초 간격)")
     # --- D-1 열평형 소킹. 여기부터 시간을 잰다 (D-3 의 soak_elapsed_s) --------
     _soak_cfg = env.get("soak") or {}
-    soak_info = thermal_soak(
-        ctx, kernels, sample, probe, drift_kernel_id,
-        max_seconds=(args.soak_max_min * 60 if args.soak_max_min
-                     else _soak_cfg.get("max_seconds", SOAK_MAX_SECONDS)),
-        min_seconds=_soak_cfg.get("min_seconds", SOAK_MIN_SECONDS),
-        interval=_soak_cfg.get("probe_interval_s", SOAK_PROBE_INTERVAL),
-        span_tol=_soak_cfg.get("stable_span", SOAK_STABLE_SPAN),
-        runs=_soak_cfg.get("stable_runs", SOAK_STABLE_RUNS))
+    _soak_on = (args.soak if args.soak is not None
+                else _soak_cfg.get("enabled", SOAK_ENABLED))
+    if _soak_on:
+        soak_info = thermal_soak(
+            ctx, kernels, sample, probe, drift_kernel_id,
+            max_seconds=(args.soak_max_min * 60 if args.soak_max_min
+                         else _soak_cfg.get("max_seconds", SOAK_MAX_SECONDS)),
+            min_seconds=_soak_cfg.get("min_seconds", SOAK_MIN_SECONDS),
+            interval=_soak_cfg.get("probe_interval_s", SOAK_PROBE_INTERVAL),
+            span_tol=_soak_cfg.get("stable_span", SOAK_STABLE_SPAN),
+            runs=_soak_cfg.get("stable_runs", SOAK_STABLE_RUNS))
+    else:
+        # 소킹을 건너뛰어도 워밍업은 반드시 한다 — 메모리 클럭이 유휴 시
+        # 810 MHz 까지 떨어지고, 램프업 전에 재면 최대 66% 느리게 나온다.
+        print("[soak] 비활성 (A6000 에서 이득 없음). 워밍업만 한다. "
+              "--soak 로 켤 수 있다")
+        soak_info = {"soak_enabled": False, "soak_seconds": 0.0,
+                     "soak_ref_last_ms": None}
     soak_started = time.time()
     thermal = {"soak_elapsed_s": 0.0, "drift_ratio": 1.0}
-    drift_base = soak_info.get("soak_ref_last_ms")   # 소킹 직후 절대 기준
+    # 절대 기준. 소킹을 했으면 소킹 직후 값, 안 했으면 **첫 드리프트 측정값**
+    # 으로 래치한다. None 으로 두면 drift_ratio 가 영원히 1.0 이라 D-3 이
+    # 무의미해진다.
+    drift_base = soak_info.get("soak_ref_last_ms")
 
     # --- alignment 가드가 실제로 필요한지 확인 (측정 전에) ---------------
     print("\n[가드 검증] (1024,4096,4100) 에 a888 커널을 강제로 물려본다")
@@ -469,6 +501,8 @@ def main() -> int:
                         # D-3: 이 시점의 열 상태를 이후 측정 줄에 실어 보낸다
                         thermal["soak_elapsed_s"] = round(
                             time.time() - soak_started, 1)
+                        if not drift_base:
+                            drift_base = t_drift     # 소킹 없이 시작한 경우
                         if drift_base:
                             thermal["drift_ratio"] = round(t_drift / drift_base, 5)
                         # D-2: 이동 중앙값 기준. 완만한 예열은 통과시키고
