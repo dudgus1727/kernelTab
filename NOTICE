@@ -1,0 +1,28 @@
+kerneltab
+Copyright 2026 kerneltab contributors
+
+이 제품은 Apache License 2.0 으로 배포된다 (LICENSE 참조).
+
+--------------------------------------------------------------------------------
+서드파티
+
+CUTLASS (NVIDIA) — BSD-3-Clause
+  https://github.com/NVIDIA/cutlass
+
+  이 저장소는 CUTLASS 소스를 **포함하지 않는다.** 빌드 시 외부 체크아웃을
+  찾아 헤더로 include 할 뿐이다 (`build/paths.py`).
+
+  다만 `measure/*.cu` 는 CUTLASS 템플릿을 인스턴스화하며, 컴파일 산출물
+  (`build/artifacts/lib/*.so`)에는 CUTLASS 코드가 들어간다. 그 산출물을
+  배포한다면 CUTLASS 의 BSD-3-Clause 고지를 함께 실어야 한다.
+  현재 배포 대상은 `.so` 가 아니라 측정 표(번들)이므로 해당되지 않는다.
+
+  BSD-3-Clause 는 Apache-2.0 과 호환된다 (Apache-2.0 쪽이 더 엄격하며,
+  결합 저작물은 Apache-2.0 으로 배포할 수 있다).
+
+--------------------------------------------------------------------------------
+데이터
+
+`datasets/` 의 측정 표는 이 저장소의 코드로 생성한 측정값이며 CUTLASS 의
+파생 저작물이 아니다. CC BY 4.0 으로 배포할 수 있다 — 배포 시
+`BUNDLE.json` 의 `env_hash` 와 측정 조건을 함께 인용해야 재현 가능하다.

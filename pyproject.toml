@@ -7,6 +7,8 @@ name = "kerneltab"
 version = "0.1.0"
 description = "CUTLASS GEMM (형상 x config) -> 성능 표 측정 하네스"
 requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 
 # 의존성은 최소로 유지한다. 오케스트레이션은 표준 라이브러리 + ctypes 로
 # 충분하고, 무거운 프레임워크(torch/cupy)는 컨테이너 이미지를 몇 GB 불린다.
