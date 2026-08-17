@@ -16,9 +16,22 @@ dependencies = [
 
 [project.optional-dependencies]
 # parquet 내보내기 전용. 측정 경로에는 들어가지 않는다.
-export = ["pyarrow>=15", "pandas>=2"]
+export = ["pyarrow>=15"]
+# 표를 소비하는 쪽(kernelrule). core/table.py 가 to_pandas() 를 쓴다.
+consumer = ["pyarrow>=15", "pandas>=2"]
+# 테스트는 GPU 를 전혀 쓰지 않는다 (docs/testing.md)
+test = ["pytest>=8", "pyarrow>=15", "pandas>=2"]
+# 리포트 그림
+plots = ["matplotlib>=3.7"]
+dev = ["ruff", "vermin", "uv"]
 
 [tool.setuptools]
+# ⚠️ 이 상태로 `pip install` 하지 마라. `build` 는 PyPI 에 실제로 존재하는
+#    패키지(`python -m build`)이며, 충돌하면 ImportError 가 아니라 **다른
+#    모듈이 조용히 import 된다.** `core` / `measure` 도 흔한 이름이라 소비
+#    프로젝트와 부딪힌다.
+#    docs/packaging.md 의 `kerneltab.*` 네임스페이스 이전을 먼저 적용할 것.
+#    (이전은 디렉토리 이동을 포함하므로 P-1(so_path) 수정 이후에 해야 한다)
 packages = ["core", "backends", "build", "measure"]
 # hwspec/ 은 데이터 디렉토리이며 Python 패키지가 아니다 (__init__.py 없음).
 

@@ -12,7 +12,7 @@ from pathlib import Path
 __all__ = [
     "KtProblemC", "KtBuffersC", "KtProtocolC", "KtMeasureC",
     "Ctx", "Kernel", "DEFAULT_PROTOCOL", "protocol_from_env",
-    "PROTOCOL_DEFAULTS",
+    "PROTOCOL_DEFAULTS", "SOAK_DEFAULTS",
 ]
 
 
@@ -63,6 +63,17 @@ DEFAULT_PROTOCOL = KtProtocolC(
     target_ms=20.0, min_total_ms=3.0, min_reps_floor=5, min_reps_cap=30,
     max_reps=1000, warmup_frac=0.2, min_warmup=10, iqr_k=1.5,
 )
+
+#: 열평형 소킹 파라미터. **측정 조건의 일부이므로 env.json 에 기록되어
+#: env_hash 에 반영된다.** 소킹 없이 잰 데이터와 소킹 후 데이터는 서로 다른
+#: 조건이며 절대 섞으면 안 된다 (2026-08-16 열 램프 구간 폐기 사건 참조).
+SOAK_DEFAULTS = {
+    "probe_interval_s": 300,
+    "stable_span": 0.003,
+    "stable_runs": 3,
+    "min_seconds": 45 * 60,
+    "max_seconds": 180 * 60,
+}
 
 PROTOCOL_DEFAULTS = {
     "target_ms": 20.0, "min_total_ms": 3.0, "min_reps_floor": 5,

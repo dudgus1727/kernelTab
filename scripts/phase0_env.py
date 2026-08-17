@@ -38,7 +38,7 @@ from core.hardware import (  # noqa: E402
     hardware_to_dict,
     nvcc_arch_flag,
 )
-from measure.runner import PROTOCOL_DEFAULTS  # noqa: E402
+from measure.runner import PROTOCOL_DEFAULTS, SOAK_DEFAULTS  # noqa: E402
 from measure.gpu_state import (  # noqa: E402
     ClockLockResult, drift_check_seconds, try_lock_clocks,
 )
@@ -508,6 +508,7 @@ def main() -> int:
         "below_launch_overhead_ms": 3 * launch_overhead_ms,
         "shuffle_seed": seed,
         "protocol": PROTOCOL_DEFAULTS,
+        "soak": SOAK_DEFAULTS,
     }
     env["env_hash"] = canonical_hash(env)
 

@@ -22,6 +22,7 @@ import random
 import subprocess
 import sys
 import time
+import statistics
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -34,12 +35,19 @@ from build import paths  # noqa: E402
 from core.hardware import hardware_from_env  # noqa: E402
 from core.config import alignments_for, enumerate_runtimes  # noqa: E402
 from core.shapes import all_shapes  # noqa: E402
+from measure.runner import SOAK_DEFAULTS  # noqa: E402,F401
 from core.types import Hardware, KernelConfig, Problem, RuntimeConfig  # noqa: E402
 
 RESULTS = paths.RESULTS_DIR / "results.jsonl"
 DRIFT = paths.RESULTS_DIR / "drift.jsonl"
 TELEMETRY = paths.RESULTS_DIR / "telemetry.csv"
 KERNELS = paths.RESULTS_DIR / "kernels.jsonl"
+#: D-4. 진행 상태 하트비트. 감시자는 pgrep 이 아니라 이 파일을 본다.
+#: pgrep -f "rehearse.py --all" 은 **감시자 자신의 명령줄에도 그 문자열이
+#: 들어 있어 자기 자신을 찾아낸다.** 2026-08-16 에 이것 때문에 측정이 죽은 뒤
+#: 13 시간 동안 알아채지 못했다.
+HEARTBEAT = paths.RESULTS_DIR / "heartbeat.json"
+HEARTBEAT_SECONDS = 600
 
 # 리허설 형상 (지시된 6개)
 REHEARSAL_SHAPES = [
@@ -62,15 +70,47 @@ NUMERICAL_TOL = 5e-2
 OUTLIER_TOL = 0.20
 
 # --- 장시간 실행 감시 임계 (요청 O) ---------------------------------------
-#: 드리프트가 기준 대비 이만큼 벗어나면 위반 1회
+# --- D-2. 드리프트 판정 (이동 기준) --------------------------------------
+#
+# "첫 측정 대비" 는 완만한 예열과 급격한 조건 변화를 구분하지 못한다.
+# 최근 구간의 이동 중앙값을 기준으로 삼으면 예열은 통과하고 클럭 풀림 /
+# 다른 프로세스 난입 / 하드웨어 문제만 잡힌다.
+#: 이동 기준 = 최근 이 횟수의 드리프트 측정 중앙값 (10분 주기면 약 1시간)
+DRIFT_WINDOW = 6
+#: 이동 기준 대비 이만큼 벗어나면 위반 1회
 DRIFT_TOL = 0.05
-#: 위반이 연속 이 횟수면 중단. 일시적 변동이 아니라 조건이 변한 것이다.
+#: 위반이 연속 이 횟수면 중단
 DRIFT_STRIKES = 3
+#: 이동 기준과 별개로, 소킹 직후 기준값 대비 이 값을 넘으면 경고.
+#: 아주 느린 드리프트가 누적되는 것을 놓치지 않기 위함이다.
+DRIFT_ABS_WARN = 0.08
 #: 최근 구간에서 sw_power_cap 이 이 비율을 넘으면 즉시 경고
 #: (클럭 고정이 풀렸거나 다른 프로세스가 GPU 를 쓰고 있다)
 POWER_CAP_TOL = 0.05
 #: status 분포를 이 주기로 로그에 남긴다
 STATUS_LOG_SECONDS = 3600
+
+# --- D-1. 열평형 소킹 ---------------------------------------------------
+#
+# 2026-08-16 전수 측정이 7.5 시간 만에 "드리프트 5% 3 연속" 으로 중단됐다.
+# 원인은 조건 변화가 아니라 **열 포화**였다. SM 클럭 1350 고정, 메모리 7601,
+# 스로틀 0%, 온도 56~64°C 안정인데도 기준 config 가 서서히 느려졌다.
+#
+#     0.0h +0.00%   0.5h +0.90%   1.0h +2.05%   2.0h +3.34%
+#     3.0h +4.15%   5.0h +4.91%   7.5h +5.06%   <- 5h 부근에서 포화
+#
+# 13 시간 유휴(46°C) 후 재측정하면 +0.29% 로 완전히 돌아온다 — 가역적이다.
+# `temperature.gpu` 는 5 분이면 69°C 로 평형에 도달하지만 **성능은 몇 시간에
+# 걸쳐 계속 느려진다.** 즉 코어 온도로는 평형을 판정할 수 없고, 기준 config 를
+# 직접 재서 판정해야 한다 (메모리/기판 쪽의 느린 열용량으로 추정).
+#
+# 그래서 본 측정 전에 실부하로 소킹하고, **드리프트 측정 자체로** 평형을
+# 판정한다.
+SOAK_PROBE_INTERVAL = 300      # 5분마다 기준 config 재측정
+SOAK_STABLE_SPAN = 0.003       # 최근 3회(10분 구간)의 (max-min)/median
+SOAK_STABLE_RUNS = 3
+SOAK_MIN_SECONDS = 45 * 60
+SOAK_MAX_SECONDS = 180 * 60    # --soak-max-min 으로 조정
 
 #: 측정 시작 전 GPU 를 달구는 시간(초).
 #: `nvidia-smi -lgc` 는 SM 클럭만 고정한다. **메모리 클럭은 고정되지 않으며**
@@ -247,6 +287,8 @@ def main() -> int:
                     help="Phase 3: 전체 형상 그리드 x 빌드된 커널 전부")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--soak-max-min", type=int, default=0,
+                    help="열평형 소킹 최대 시간(분). 평형 판정이 먼저 되면 그때 끝난다")
     args = ap.parse_args()
 
     env = json.loads(paths.ENV_JSON.read_text())
@@ -355,9 +397,22 @@ def main() -> int:
         kernels[r["kernel_id"]] = Kernel(r["so_path"])
     probe = NvmlProbe(uuid=env["hardware_extra"]["uuid"], index=0)
 
+    drift_kernel_id = picked[0]["kernel_id"]
     tele_proc, tele_file = start_telemetry(env["device_index"])
     print(f"[telemetry] {TELEMETRY} (1초 간격)")
-    warm_up(ctx, kernels, sample, probe)
+    # --- D-1 열평형 소킹. 여기부터 시간을 잰다 (D-3 의 soak_elapsed_s) --------
+    _soak_cfg = env.get("soak") or {}
+    soak_info = thermal_soak(
+        ctx, kernels, sample, probe, drift_kernel_id,
+        max_seconds=(args.soak_max_min * 60 if args.soak_max_min
+                     else _soak_cfg.get("max_seconds", SOAK_MAX_SECONDS)),
+        min_seconds=_soak_cfg.get("min_seconds", SOAK_MIN_SECONDS),
+        interval=_soak_cfg.get("probe_interval_s", SOAK_PROBE_INTERVAL),
+        span_tol=_soak_cfg.get("stable_span", SOAK_STABLE_SPAN),
+        runs=_soak_cfg.get("stable_runs", SOAK_STABLE_RUNS))
+    soak_started = time.time()
+    thermal = {"soak_elapsed_s": 0.0, "drift_ratio": 1.0}
+    drift_base = soak_info.get("soak_ref_last_ms")   # 소킹 직후 절대 기준
 
     # --- alignment 가드가 실제로 필요한지 확인 (측정 전에) ---------------
     print("\n[가드 검증] (1024,4096,4100) 에 a888 커널을 강제로 물려본다")
@@ -375,21 +430,25 @@ def main() -> int:
         print(f"  가드 검증 중 예외: {e!r}")
 
     cublas_cache: dict[tuple, dict] = {}
-    drift_kernel_id = picked[0]["kernel_id"]
     last_drift = 0.0
     last_status_log = time.time()
-    drift_ref: float | None = None
+    drift_hist: list[float] = []          # D-2 이동 기준용
     drift_strikes = 0
     aborted = None
     t_start = time.time()
 
     stats = Counter()
     n = 0
+    last_heartbeat = 0.0
+    write_heartbeat(state="starting", done=0, total=len(jobs),
+                    env_hash=env["env_hash"], soak=soak_info)
     try:
         with RESULTS.open("a") as out:
             for (krow, p, rc) in jobs:
+                thermal["soak_elapsed_s"] = round(time.time() - soak_started, 1)
                 row = measure_one(ctx, kernels[krow["kernel_id"]], krow, p, rc,
-                                  probe, env, launch_overhead_ms, hw.regs_per_sm)
+                                  probe, env, launch_overhead_ms, hw.regs_per_sm,
+                                  thermal)
                 out.write(json.dumps(row, ensure_ascii=False) + "\n")
                 out.flush()
                 stats[row["status"]] += 1
@@ -404,20 +463,37 @@ def main() -> int:
                 if time.time() - last_drift > drift_period:
                     last_drift = time.time()
                     t_drift = drift_check(ctx, kernels[drift_kernel_id],
-                                          drift_kernel_id, probe, env)
+                                          drift_kernel_id, probe, env,
+                                          thermal)
                     if t_drift:
-                        if drift_ref is None:
-                            drift_ref = t_drift
-                        dev = abs(t_drift - drift_ref) / drift_ref
-                        if dev > DRIFT_TOL:
-                            drift_strikes += 1
-                            print(f"  !! 드리프트 {100 * dev:.2f}% "
-                                  f"({t_drift:.4f} vs 기준 {drift_ref:.4f} ms) "
-                                  f"연속 {drift_strikes}회", flush=True)
-                        else:
-                            drift_strikes = 0
+                        # D-3: 이 시점의 열 상태를 이후 측정 줄에 실어 보낸다
+                        thermal["soak_elapsed_s"] = round(
+                            time.time() - soak_started, 1)
+                        if drift_base:
+                            thermal["drift_ratio"] = round(t_drift / drift_base, 5)
+                        # D-2: 이동 중앙값 기준. 완만한 예열은 통과시키고
+                        #      급격한 변화만 잡는다.
+                        if drift_hist:
+                            ref = statistics.median(drift_hist[-DRIFT_WINDOW:])
+                            dev = abs(t_drift - ref) / ref
+                            if dev > DRIFT_TOL:
+                                drift_strikes += 1
+                                print(f"  !! 드리프트 {100 * dev:.2f}% "
+                                      f"({t_drift:.4f} vs 이동기준 {ref:.4f} ms) "
+                                      f"연속 {drift_strikes}회", flush=True)
+                            else:
+                                drift_strikes = 0
+                        drift_hist.append(t_drift)
+                        # 절대 상한: 소킹 직후 대비 누적 드리프트 경고
+                        if drift_base and abs(t_drift - drift_base) / drift_base \
+                                > DRIFT_ABS_WARN:
+                            print(f"  !! 소킹 후 누적 드리프트 "
+                                  f"{100 * (t_drift - drift_base) / drift_base:+.2f}% "
+                                  f"> {100 * DRIFT_ABS_WARN:.0f}% "
+                                  f"(이동기준으로는 정상이지만 느린 누적이다)",
+                                  flush=True)
                         if drift_strikes >= DRIFT_STRIKES:
-                            aborted = (f"드리프트 {DRIFT_TOL:.0%} 초과가 "
+                            aborted = (f"이동 기준 대비 {DRIFT_TOL:.0%} 초과가 "
                                        f"{DRIFT_STRIKES}회 연속 — 조건이 변했다")
                             break
                     tel = telemetry_tail_stats(int(drift_period) + 60)
@@ -439,12 +515,31 @@ def main() -> int:
                     el = time.time() - t_start
                     print(f"  {n}/{len(jobs)}  {el / 60:.1f}분  "
                           f"{dict(stats)}", flush=True)
+                if time.time() - last_heartbeat > HEARTBEAT_SECONDS or n == len(jobs):
+                    last_heartbeat = time.time()
+                    el = time.time() - t_start
+                    rate = n / max(el, 1e-9)
+                    write_heartbeat(
+                        state="running", done=n, total=len(jobs),
+                        pct=round(100 * n / max(len(jobs), 1), 3),
+                        elapsed_h=round(el / 3600, 3),
+                        eta_h=round((len(jobs) - n) / max(rate, 1e-9) / 3600, 2),
+                        rate_per_s=round(rate, 2), status=dict(stats),
+                        env_hash=env["env_hash"], soak=soak_info,
+                        thermal=dict(thermal))
+                    print(f"  [hb] {n}/{len(jobs)} "
+                          f"({100 * n / max(len(jobs), 1):.2f}%) "
+                          f"ETA {(len(jobs) - n) / max(rate, 1e-9) / 3600:.1f}h",
+                          flush=True)
 
             # --- 재현성 검증 ---------------------------------------------
             print("\n[재현성] 무작위 20개 조합 재측정")
             repro = ([] if args.all else
                      reproducibility(ctx, kernels, jobs, probe, env,
                                      launch_overhead_ms, seed, hw.regs_per_sm))
+        write_heartbeat(state="finishing", done=n, total=len(jobs),
+                        status=dict(stats), env_hash=env["env_hash"],
+                        soak=soak_info, thermal=dict(thermal))
     finally:
         tele_proc.terminate()
         try:
@@ -455,6 +550,10 @@ def main() -> int:
         probe.close()
         ctx.close()
 
+    write_heartbeat(state="aborted" if aborted else "done", done=n,
+                    total=len(jobs), status=dict(stats),
+                    env_hash=env["env_hash"], soak=soak_info,
+                    thermal=dict(thermal), abort_reason=aborted)
     report(stats, repro, clock_locked)
     if aborted:
         print(f"\n!! 중단: {aborted}")
@@ -465,7 +564,8 @@ def main() -> int:
 
 
 def measure_one(ctx, kern, krow, p: Problem, rc: RuntimeConfig, probe, env,
-                launch_overhead_ms: float, regs_per_sm: int) -> dict:
+                launch_overhead_ms: float, regs_per_sm: int,
+                thermal: dict | None = None) -> dict:
     from measure.runner import KtProblemC
 
     parallel = rc.split_k_mode == "parallel"
@@ -477,6 +577,10 @@ def measure_one(ctx, kern, krow, p: Problem, rc: RuntimeConfig, probe, env,
         "runtime": {"split_k": rc.split_k, "split_k_mode": rc.split_k_mode},
         "env_hash": env["env_hash"],
         "clock_locked": env["clock_locked"],
+        # D-3: 열 상태. 사후에 "열이 랭킹에 영향을 줬는가" 를 데이터로 검증할 수
+        # 있어야 한다. 이 정보가 없어서 226k 행을 폐기해야 했다.
+        "soak_elapsed_s": (thermal or {}).get("soak_elapsed_s"),
+        "drift_ratio": (thermal or {}).get("drift_ratio"),
         "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
 
@@ -622,31 +726,120 @@ def measure_cublas(ctx, p: Problem, probe, env, out) -> dict:
     return row
 
 
-def warm_up(ctx, kernels, sample, probe, seconds: int = WARMUP_SECONDS) -> None:
-    """측정 시작 전 메모리 클럭을 램프업시킨다 (WARMUP_SECONDS 주석 참조)."""
+def _probe_ref(ctx, kern_obj, shape=DRIFT_SHAPE) -> float | None:
+    """기준 config 를 한 번 재서 시간을 돌려준다 (소킹 판정 / 드리프트 공용)."""
     from measure.runner import KtProblemC
 
-    krow = sample[0]
-    k = kernels[krow["kernel_id"]]
-    a = (krow["align"]["a"], krow["align"]["b"], krow["align"]["c"])
-    p = Problem(4096, 4096, 4096) if a == (8, 8, 8) else Problem(1024, 4096, 4100)
-    ctx.prepare_problem(p.M, p.N, p.K)
-    kp = KtProblemC(p.M, p.N, p.K, 1, 0)
-    bufs = ctx.buffers(k.workspace_bytes(kp), False)
-    st, h = k.prepare(kp, bufs)
+    ctx.prepare_problem(shape.M, shape.N, shape.K)
+    kp = KtProblemC(shape.M, shape.N, shape.K, 1, 0)
+    bufs = ctx.buffers(kern_obj.workspace_bytes(kp), False)
+    st, h = kern_obj.prepare(kp, bufs)
     if st != 0 or not h:
-        return
-    t0 = time.time()
-    before = probe.snapshot()
+        return None
     try:
-        while time.time() - t0 < seconds:
-            ctx.run_once(k.launch_addr, h, 0)
+        _, m = ctx.measure(kern_obj.launch_addr, h, 0)
     finally:
-        k.release(h)
-    after = probe.snapshot()
-    print(f"[warmup] {seconds}초 부하  "
-          f"mem_clock {before['mem_clock_mhz']} -> {after['mem_clock_mhz']} MHz, "
-          f"sm_clock {after['sm_clock_mhz']} MHz, temp {after['gpu_temp_c']}°C")
+        kern_obj.release(h)
+    return m.time_ms
+
+
+def thermal_soak(ctx, kernels, sample, probe, ref_kid: str,
+                 max_seconds: int = SOAK_MAX_SECONDS,
+                 min_seconds: int = SOAK_MIN_SECONDS,
+                 interval: int = SOAK_PROBE_INTERVAL,
+                 span_tol: float = SOAK_STABLE_SPAN,
+                 runs: int = SOAK_STABLE_RUNS) -> dict:
+    """본 측정 전 실부하로 열평형에 도달시킨다 (D-1).
+
+    코어 온도는 5 분이면 평형이지만 성능은 몇 시간에 걸쳐 계속 느려진다.
+    그래서 온도가 아니라 **기준 config 의 측정값 자체**로 판정한다.
+    최근 3 회(10 분 구간)의 (max-min)/median 이 SOAK_STABLE_SPAN 이내면 평형.
+
+    돌려주는 값은 results 줄에 기록된다 (D-3).
+    """
+    from measure.runner import KtProblemC
+
+    ref = kernels[ref_kid]
+    # 소킹 부하는 실제 측정과 비슷해야 한다. 큰 형상을 반복한다.
+    load_kid = ref_kid
+    lk = kernels[load_kid]
+    load_shape = Problem(8192, 4096, 4096)
+    ctx.prepare_problem(load_shape.M, load_shape.N, load_shape.K)
+    lkp = KtProblemC(load_shape.M, load_shape.N, load_shape.K, 1, 0)
+    lbufs = ctx.buffers(lk.workspace_bytes(lkp), False)
+    lst, lh = lk.prepare(lkp, lbufs)
+    if lst != 0 or not lh:
+        print("[soak] 부하 커널 prepare 실패 — 소킹을 건너뛴다")
+        return {"soak_seconds": 0, "soak_reason": "prepare_fail"}
+
+    t0 = time.time()
+    probes: list[tuple[float, float]] = []
+    s0 = probe.snapshot()
+    print(f"[soak] 시작  temp={s0['gpu_temp_c']}°C mem={s0['mem_clock_mhz']}MHz  "
+          f"최소 {min_seconds // 60}분 / 최대 {max_seconds // 60}분", flush=True)
+    reason = "max_seconds"
+    try:
+        while True:
+            # 5분 부하
+            t_chunk = time.time()
+            while time.time() - t_chunk < interval:
+                if ctx.run_once(lk.launch_addr, lh, 0) != 0:
+                    break
+            el = time.time() - t0
+            t_ref = _probe_ref(ctx, ref)
+            # 부하 형상으로 되돌린다 (다음 청크를 위해)
+            ctx.prepare_problem(load_shape.M, load_shape.N, load_shape.K)
+            if t_ref is None:
+                break
+            probes.append((el, t_ref))
+            sn = probe.snapshot()
+            rel = 100 * (t_ref - probes[0][1]) / probes[0][1]
+            span = None
+            if len(probes) >= runs:
+                w = [v for _, v in probes[-runs:]]
+                span = (max(w) - min(w)) / statistics.median(w)
+            print(f"[soak] {el / 60:5.1f}분  ref={t_ref:.4f} ms ({rel:+.2f}%)  "
+                  f"span={'-' if span is None else f'{100 * span:.3f}%'}  "
+                  f"temp={sn['gpu_temp_c']}°C power={sn['power_w']:.0f}W", flush=True)
+            if el >= max_seconds:
+                break
+            if (el >= min_seconds and span is not None
+                    and span <= span_tol):
+                reason = "stable"
+                break
+    finally:
+        lk.release(lh)
+
+    base = probes[0][1] if probes else None
+    last = probes[-1][1] if probes else None
+    # 최근 두 점의 기울기로 잔여 드리프트를 대략 추정한다 (로그 목적)
+    slope = None
+    if len(probes) >= 2 and probes[-1][0] > probes[-2][0]:
+        slope = ((probes[-1][1] - probes[-2][1]) / probes[-2][1]
+                 / (probes[-1][0] - probes[-2][0]) * 3600)
+    info = {
+        "soak_seconds": round(time.time() - t0, 1),
+        "soak_reason": reason,
+        "soak_ref_first_ms": base,
+        "soak_ref_last_ms": last,
+        "soak_total_drift": (last - base) / base if base else None,
+        "soak_slope_per_hour": slope,
+        "soak_probes": [[round(a, 1), b] for a, b in probes],
+    }
+    print(f"[soak] 종료 ({reason})  {info['soak_seconds'] / 60:.1f}분, "
+          f"누적 드리프트 {100 * (info['soak_total_drift'] or 0):+.2f}%, "
+          f"잔여 기울기 {'?' if slope is None else f'{100 * slope:+.2f}%/h'}",
+          flush=True)
+    return info
+
+
+def write_heartbeat(**kw) -> None:
+    """감시자가 읽을 진행 상태. 원자적으로 교체한다."""
+    kw["pid"] = os.getpid()
+    kw["utc"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    tmp = HEARTBEAT.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(kw, ensure_ascii=False, indent=2))
+    tmp.replace(HEARTBEAT)
 
 
 def telemetry_tail_stats(seconds: int) -> dict:
@@ -677,7 +870,8 @@ def telemetry_tail_stats(seconds: int) -> dict:
             "clk_min": min(clks), "clk_max": max(clks)}
 
 
-def drift_check(ctx, kern, kernel_id, probe, env) -> float | None:
+def drift_check(ctx, kern, kernel_id, probe, env,
+                thermal: dict | None = None) -> float | None:
     from measure.runner import KtProblemC
 
     p = DRIFT_SHAPE
@@ -701,6 +895,9 @@ def drift_check(ctx, kern, kernel_id, probe, env) -> float | None:
             "sm_clock_mhz": snap["sm_clock_mhz"],
             "gpu_temp_c": snap["gpu_temp_c"], "power_w": snap["power_w"],
             "clock_locked": env["clock_locked"],
+            # drift.jsonl 에 env_hash 가 없어 조건별로 나눌 수 없었다 (감사 지적).
+            "env_hash": env["env_hash"],
+            "soak_elapsed_s": (thermal or {}).get("soak_elapsed_s"),
             "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         }) + "\n")
     return m.time_ms

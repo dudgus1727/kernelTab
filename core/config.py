@@ -11,10 +11,15 @@ alignment 는 탐색 축이 아니다. 형상과 레이아웃에서 유도되는
 from __future__ import annotations
 
 from collections import Counter
-from typing import Iterable
+from typing import TYPE_CHECKING, Iterable
 
-from backends.base import Backend
 from core.types import KernelConfig, Problem, RuntimeConfig
+
+if TYPE_CHECKING:  # pragma: no cover
+    # 타입 힌트 전용이다. 런타임에 import 하면 core -> backends 역의존이 생겨
+    # "피처만 쓰고 싶은" 소비 프로젝트가 backends 까지 끌어오게 된다.
+    # 레이어는 core <- backends 방향이어야 한다.
+    from backends.base import Backend
 
 __all__ = [
     "DTYPE_BYTES",
@@ -72,7 +77,7 @@ def alignment_combos(problems: Iterable[Problem]) -> list[tuple[int, int, int]]:
 
 def enumerate_kernels(
     hw,
-    backend: Backend,
+    backend: "Backend",
     align_combos: Iterable[tuple[int, int, int]],
     dtype: str = "f16",
 ) -> list[KernelConfig]:
@@ -82,7 +87,7 @@ def enumerate_kernels(
 
 def enumerate_kernels_with_funnel(
     hw,
-    backend: Backend,
+    backend: "Backend",
     align_combos: Iterable[tuple[int, int, int]],
     dtype: str = "f16",
 ) -> tuple[list[KernelConfig], Counter]:
@@ -112,6 +117,6 @@ def enumerate_kernels_with_funnel(
 
 
 def enumerate_runtimes(
-    backend: Backend, p: Problem, cfg: KernelConfig
+    backend: "Backend", p: Problem, cfg: KernelConfig
 ) -> list[RuntimeConfig]:
     return backend.enumerate_runtime(p, cfg)

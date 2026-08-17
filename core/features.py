@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from math import ceil
 
-from core.config import dtype_bytes
+from core.config import alignments_for, dtype_bytes
 from core.types import Hardware, KernelConfig, Problem, RuntimeConfig
 
 __all__ = [
@@ -64,8 +64,6 @@ def is_memory_bound(p: Problem, hw: Hardware) -> bool:
 
 def min_access_bytes(p: Problem) -> int:
     """A/B 전역 로드의 최소 벡터 접근 폭(바이트). 형상+레이아웃에서 결정된다."""
-    from core.config import alignments_for
-
     al_a, al_b, _ = alignments_for(p)
     return min(al_a, al_b) * dtype_bytes(p.dtype)
 
