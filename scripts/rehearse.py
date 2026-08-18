@@ -1269,6 +1269,13 @@ def report(stats, repro, clock_locked):
 
     if DRIFT.exists():
         ds = [json.loads(l) for l in DRIFT.read_text().splitlines() if l.strip()]
+        # ⚠️ **이 측정 조건의 줄만** 본다. drift.jsonl 은 append-only 라
+        #    클럭 미고정 리허설(1.45ms @1800MHz)과 폐기된 드리프트 구간이
+        #    같이 들어 있고, 필터하지 않으면 변동폭이 55% 로 나와 경고가
+        #    상시 울린다. 그러면 진짜 드리프트를 구분할 수 없다.
+        #    env_hash 는 조인 키가 아니라 격리 경계다 (docs/decisions.md 13).
+        _eh = json.loads(paths.ENV_JSON.read_text())["env_hash"]
+        ds = [d for d in ds if str(d.get("env_hash", "")).startswith(_eh[:8])]
         if ds:
             ts = [d["time_ms"] for d in ds]
             mean = sum(ts) / len(ts)
