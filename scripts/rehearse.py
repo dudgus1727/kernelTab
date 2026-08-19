@@ -895,10 +895,16 @@ def main() -> int:
         probe.close()
         ctx.close()
 
+    # R-4b: NVML 조회 실패를 세어 보고한다. 조용히 None 이 들어가면
+    #       sm_clock/mem_clock 이 결측으로 기록되고, 33시간 뒤에
+    #       "조건이 유지됐는가" 를 확인할 근거가 사라진다.
+    nvml_fail = probe.failures()
     write_heartbeat(state="aborted" if aborted else "done", done=n,
                     total=len(jobs), status=dict(stats),
                     env_hash=env["env_hash"], soak=soak_info,
-                    thermal=dict(thermal), abort_reason=aborted)
+                    thermal=dict(thermal), abort_reason=aborted,
+                    nvml=nvml_fail)
+    print("\n" + probe.report())
     report(stats, repro, clock_locked)
     if aborted:
         print(f"\n!! 중단: {aborted}")
