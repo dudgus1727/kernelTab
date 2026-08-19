@@ -27,6 +27,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from build import paths  # noqa: E402
+from core.env_hash import env_hash_v2  # noqa: E402
 from core.hardware import (  # noqa: E402
     bandwidth_from_api,
     bandwidth_reference_mhz,
@@ -298,6 +299,12 @@ def sanity_check_example(cutlass_root: Path, arch_flag: str) -> dict:
 
 
 def canonical_hash(obj: dict) -> str:
+    """구 정의 — `env` 전체를 해싱한다.
+
+    ⚠️ 실행마다 변하는 값이 섞여 있어 **조건이 같아도 값이 달라진다.**
+    기존 데이터의 조회 키라 유지할 뿐이고, 새 판정에는 `env_hash_v2` 를
+    쓴다 (`core/env_hash.py`).
+    """
     blob = json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(blob.encode()).hexdigest()
 
@@ -515,6 +522,12 @@ def main() -> int:
         "segments": SEGMENT_DEFAULTS,
     }
     env["env_hash"] = canonical_hash(env)
+    # P-3: 측정 조건에만 의존하는 해시. 구 해시는 실행마다 변하는 값
+    # (created_utc, host.*, launch_overhead 측정값)을 포함해서, 조건이
+    # 같아도 다시 돌리면 값이 바뀐다. 재개가 끊기고 같은 조건의 데이터가
+    # 갈라진다 — 이 캠페인에서 실제로 겪었다.
+    # 구 해시는 그대로 두어 기존 98만 줄의 조회를 깨뜨리지 않는다.
+    env["env_hash_v2"] = env_hash_v2(env)
 
     paths.ensure_dirs()
     paths.ENV_JSON.write_text(json.dumps(env, indent=2, ensure_ascii=False) + "\n")

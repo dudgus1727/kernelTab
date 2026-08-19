@@ -34,6 +34,40 @@
 
 ---
 
+> ## ✅ P-3 완료 (2026-08-19)
+>
+> `core/env_hash.py` + `scripts/migrate_env_registry.py` + `tests/test_env_hash.py`.
+>
+> **핵심 검증 통과** — 같은 조건으로 `phase0_env.py` 를 두 번 돌렸을 때:
+> ```
+> 1회차   구 65e39f70...   v2 1b6a0c0c...
+> 2회차   구 40d1df47...   v2 1b6a0c0c...
+>         ^^^ 매번 다름     ^^^ 동일
+> ```
+> 구 해시가 조건이 같은데도 매번 다르다는 것이 실증됐다. v2 는 안정적이고
+> 캠페인 원본(`1b6a0c0c`)과도 일치한다.
+>
+> **계획서와 달라진 점 두 가지:**
+>
+> 1. `segments`, `soak` 을 해시 키에 **추가**했다. 계획서 작성 뒤에 생긴
+>    필드인데 둘 다 측정 조건이다 (드리프트 대책의 세그먼트 크기, 워밍업 초).
+>    빠뜨리면 대책이 다른 데이터가 같은 해시로 섞인다.
+> 2. orphan 이 `de6de3c1` 이 아니라 **`ff1f3049`** 였다. `env.minreps30.json`
+>    이 `de6de3c1` 을 보존하고 있었다. 진짜 orphan 은 메모리 클럭 기록을
+>    빠뜨려 재실행하면서 덮어쓴 `ff1f3049`(7,538줄)다.
+>
+> 레지스트리 백필 결과 (`results/env_registry.jsonl`):
+> ```
+> 368a84f1 -> ffeff01e   226,211줄  env-368a84f1.json
+> c63710df -> 1b6a0c0c   991,210줄  env.json
+> de6de3c1 -> 990f406d       834줄  env.minreps30.json
+> b42df475 -> d58da5cf     1,526줄  env.pre-clocklock.json
+> dda3431a -> f763c610         0줄  env.smlock-only.json
+> ff1f3049 -> (없음)       7,538줄  orphan (--allow-orphan 으로 명시 허용)
+> ```
+> 중단 조건도 확인했다 — `--allow-orphan` 없이 돌리면 exit 3 으로 멈춘다.
+> `results.jsonl` 은 건드리지 않았고 재개는 그대로 동작한다(980,981 조합 인식).
+
 ## 1. P-3 — `env_hash` 재정의 + `env_registry`
 
 **가장 위험한 수정이다.** 잘못하면 98 만 건이 조회 불가능해진다.
