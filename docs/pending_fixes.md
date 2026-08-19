@@ -231,6 +231,18 @@ python3 -c "import measure.runner, scripts.rehearse"
 **`measure/` 를 특히 주의 깊게 본다.** 여기서 예외가 삼켜지면 클럭 조회 실패나
 NVML 오작동을 놓친다. (R-1 의 "조용히 아무것도 안 하는 안전장치" 와 같은 축이다.)
 
+R-1 의 AST 전수 검사가 찾아둔 것 (`docs/decisions.md` 14번):
+
+* **예외를 삼키고 진행: 17건** — `build/compile.py:337`, `measure/gpu_state.py:149`,
+  `scripts/rehearse.py:290/406/1155`, `scripts/report_phase3.py:259/991/1016`,
+  `scripts/phase0_env.py:69/224`, `scripts/check_anchors.py:83/277`,
+  `scripts/manifest.py:107`, `scripts/build_kernels.py:68` 외
+* **검증 함수가 조건 불충족 시 조용히 return: 1건**
+  — `scripts/rehearse.py:1203` `drift_check()`. 프로브 커널 준비가 실패하면
+  `return` 이고 호출부가 `if t_drift:` 라 **드리프트 감시가 남은 실행 내내
+  조용히 멈춘다.** 33시간 측정에서는 발생하지 않았지만(242회 정상 기록)
+  잠재된 같은 병이다. 경고를 찍고 heartbeat 에 플래그를 남기도록 고친다.
+
 **(c)** `scripts/report_phase3.py` 의 `g if g == g else 1e9` -> `math.isnan(g)`.
 NaN 관용구인데 후자가 읽기 쉽고 린터 오탐도 사라진다.
 
