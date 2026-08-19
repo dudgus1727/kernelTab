@@ -586,7 +586,7 @@ def main() -> int:
         # 아니므로 **주 지표에서 빼는 편이 오히려 맞다.**
         a8 = [d for d in diff if _is_a888(d[0])]
         if len(a8) >= 4:
-            tk8 = _static_topk(shape_cfg, a8, kmax=8)
+            tk8 = _static_topk(shape_cfg, a8, kmax=20)
             w(f"**주 지표 — a888 형상 {len(a8)}개만** "
               f"(alignment 가 갈리지 않아 덮개가 깨끗하다)")
             w()
@@ -597,7 +597,7 @@ def main() -> int:
             w()
         w(f"**참고 — 전체 형상 {len(diff)}개**")
         w()
-        tk = _static_topk(shape_cfg, diff, kmax=8)
+        tk = _static_topk(shape_cfg, diff, kmax=20)
         w("| k | 전체 | 어려운 절반 | 쉬운 절반 | 덮개 |")
         w("|---:|---:|---:|---:|---:|")
         for k, a, b, c, cov in tk:
