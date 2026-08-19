@@ -12,8 +12,30 @@ import shutil
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-RESULTS_DIR = REPO_ROOT / "results"
-ARTIFACT_DIR = REPO_ROOT / "build" / "artifacts"
+
+
+def _dir_from_env(var: str, default: Path) -> Path:
+    """환경변수로 덮어쓸 수 있는 디렉토리 (수정 6).
+
+    컨테이너에서는 `results/` 와 `build/artifacts/` 를 **볼륨으로 마운트**한다.
+    이미지 안 경로와 호스트 경로가 다르므로 코드에 박으면 안 된다.
+
+    ⚠️ **기본값은 반드시 현재 경로여야 한다.** 바꾸면 기존 산출물
+    (98 만 줄, 7.4 GB 커널)을 못 찾는다. 환경변수를 안 주면 지금과 똑같이
+    동작한다.
+    """
+    v = os.environ.get(var)
+    return Path(v).expanduser().resolve() if v else default
+
+
+#: 측정 산출물. `KERNELTAB_RESULTS_DIR` 로 덮어쓴다 (컨테이너 볼륨).
+RESULTS_DIR = _dir_from_env("KERNELTAB_RESULTS_DIR", REPO_ROOT / "results")
+
+#: 빌드 산출물(커널 .so 7.4 GB). `KERNELTAB_ARTIFACT_DIR` 로 덮어쓴다.
+#: 아키텍처마다 다르므로 이미지에 굽지 않고 볼륨에 캐싱한다.
+ARTIFACT_DIR = _dir_from_env("KERNELTAB_ARTIFACT_DIR",
+                             REPO_ROOT / "build" / "artifacts")
+
 ENV_JSON = RESULTS_DIR / "env.json"
 
 

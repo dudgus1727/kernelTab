@@ -106,7 +106,16 @@ def cuda_info() -> dict:
     }
 
 
-def cutlass_info(explicit: str | None) -> dict:
+def cutlass_info(explicit: str | None, commit_override: str | None = None) -> dict:
+    """CUTLASS 커밋/버전. `.git` 이 없으면 `commit_override` 로 주입한다 (수정 11).
+
+    컨테이너에서는 특정 커밋으로 얕게 clone 하거나 tarball 을 풀어 쓰므로
+    `.git` 이 없을 수 있다. 그러면 `commit` 이 `None` 이 되는데,
+    **`cutlass.commit` 은 `env_hash_v2` 의 키다**(P-3) — `None` 으로 두면
+    서로 다른 CUTLASS 버전이 같은 해시를 받는다.
+
+    `--cutlass-commit` 으로 주입하고, 주입했다는 사실을 기록에 남긴다.
+    """
     root = paths.cutlass_dir(explicit)
     rc, commit = run(["git", "-C", str(root), "rev-parse", "HEAD"])
     rc2, dirty = run(["git", "-C", str(root), "status", "--porcelain"])
@@ -137,9 +146,16 @@ def cutlass_info(explicit: str | None) -> dict:
             if re.search(r"deprecat", line, re.I):
                 dep_hits.append(f"{rel}:{i}: {line.strip()[:120]}")
 
+    detected = commit.strip() if rc == 0 else None
+    if not detected and commit_override:
+        detected = commit_override.strip()
     return {
         "dir": str(root),
-        "commit": commit.strip() if rc == 0 else None,
+        "commit": detected,
+        # 어떻게 알아냈는지 남긴다. 주입한 값을 git 에서 읽은 것처럼
+        # 보이게 하면 나중에 신뢰도를 판단할 수 없다.
+        "commit_source": ("git" if rc == 0 else
+                          ("injected" if commit_override else "unknown")),
         "describe": desc.strip() if rc3 == 0 else None,
         "version": ver,
         "worktree_dirty": bool(dirty.strip()) if rc2 == 0 else None,
@@ -298,6 +314,21 @@ def sanity_check_example(cutlass_root: Path, arch_flag: str) -> dict:
     }
 
 
+def _safe_manifest() -> dict | None:
+    """`scripts/manifest.py` 로 코드/의존성 버전을 모은다.
+
+    실패해도 측정을 막지 않는다 — 기록용이기 때문이다. 다만 **조용히
+    비우지 않고** 이유를 남긴다 (`docs/decisions.md` 14번).
+    """
+    try:
+        sys.path.insert(0, str(REPO_ROOT / "scripts"))
+        from manifest import build as _build
+        return _build()
+    except Exception as e:
+        print(f"  [경고] manifest 수집 실패: {e!r} — env.json 에 이유만 남긴다")
+        return {"error": repr(e)}
+
+
 def canonical_hash(obj: dict) -> str:
     """구 정의 — `env` 전체를 해싱한다.
 
@@ -313,6 +344,11 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--device", type=int, default=0, help="사용할 GPU 인덱스")
     ap.add_argument("--cutlass", default=None, help="CUTLASS 저장소 경로")
+    ap.add_argument("--cutlass-commit", default=None,
+                    help="CUTLASS 에 .git 이 없을 때 커밋 해시를 주입한다 "
+                         "(컨테이너에서 얕은 clone/tarball 을 쓰는 경우). "
+                         "cutlass.commit 은 env_hash_v2 의 키라 비워 두면 "
+                         "서로 다른 버전이 같은 해시를 받는다")
     ap.add_argument("--lock-mhz", type=int, default=None, help="고정할 SM 클럭")
     ap.add_argument("--externally-locked-mem-mhz", type=int, default=None,
                     help="관리자가 nvidia-smi -lmc 로 메모리 클럭을 고정한 경우. "
@@ -337,7 +373,7 @@ def main() -> int:
 
     host = host_info()
     cuda = cuda_info()
-    cutlass = cutlass_info(args.cutlass)
+    cutlass = cutlass_info(args.cutlass, args.cutlass_commit)
     nvml = pynvml_info()
 
     print(f"\n[host] {host['hostname']}  {host['os']}")
@@ -346,7 +382,13 @@ def main() -> int:
     print(f"[cuda] nvcc {cuda['nvcc_release']} (V{cuda['nvcc_version']}), "
           f"driver {cuda['driver_version']}, driver API {cuda['cuda_driver_api_version']}")
     print(f"[cutlass] {cutlass['dir']}")
-    print(f"          version {cutlass['version']}  commit {cutlass['commit']}")
+    print(f"          version {cutlass['version']}  commit {cutlass['commit']}"
+          f"  ({cutlass['commit_source']})")
+    if cutlass["commit_source"] == "unknown":
+        print("  !! CUTLASS 커밋을 알 수 없다 (.git 이 없고 주입도 없다).")
+        print("     cutlass.commit 은 env_hash_v2 의 키라, 비워 두면 서로")
+        print("     다른 CUTLASS 버전이 **같은 해시**를 받는다.")
+        print("     --cutlass-commit <해시> 로 주입하라.")
     print(f"          2.x GEMM API deprecated? "
           f"{'YES' if cutlass['gemm_2x_api_deprecated'] else 'no'}")
     print(f"[gpu {args.device}] {smi.get('name')}  {smi.get('pci.bus_id')}")
@@ -520,6 +562,11 @@ def main() -> int:
         # 드리프트 대책. 이 값이 바뀌면 측정 조건이 바뀐 것이므로 env_hash 도
         # 바뀌어야 한다 — 다른 세그먼트 크기로 잰 데이터는 섞으면 안 된다.
         "segments": SEGMENT_DEFAULTS,
+        # 수정 8: 코드/CUTLASS/패키지 버전을 env.json 에 기록한다.
+        # **해시 키에는 안 들어간다** (P-3) — manifest_hash 는 소스
+        # tree_hash 를 포함해서 한 글자만 고쳐도 값이 바뀌고, 그러면
+        # 측정 도중 오타 수정조차 못 한다. 사후 추적용으로 기록만 한다.
+        "manifest": _safe_manifest(),
     }
     env["env_hash"] = canonical_hash(env)
     # P-3: 측정 조건에만 의존하는 해시. 구 해시는 실행마다 변하는 값

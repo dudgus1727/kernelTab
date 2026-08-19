@@ -14,15 +14,26 @@ license-files = ["LICENSE", "NOTICE"]
 # 충분하고, 무거운 프레임워크(torch/cupy)는 컨테이너 이미지를 몇 GB 불린다.
 dependencies = [
     "nvidia-ml-py>=12",   # NVML. 측정 루프 안 클럭/온도 스냅샷용
+    # 수정 7: pyarrow/pandas 를 **필수**로 올린다.
+    #
+    # 계획서에는 "pandas 는 미사용" 이라고 적혀 있었으나 실측과 다르다 —
+    # `core/table.py` 의 로더가 `to_pandas()` 를 쓰고 `core/bundle.py` 도
+    # 쓴다. 둘 다 **정답 누출을 막는 소비 경로의 핵심**이다.
+    #
+    # 선택 의존성으로 두면 안 되는 이유가 하나 더 있다: 없으면
+    # `test_table.py`/`test_bundle.py` 41개가 통째로 스킵되는데, 그게 바로
+    # 누출 방지를 검증하는 모듈이다 (R-1). 필수로 두면 그 상황 자체가
+    # 생기지 않는다.
+    "pyarrow>=15",
+    "pandas>=2",
 ]
 
 [project.optional-dependencies]
-# parquet 내보내기 전용. 측정 경로에는 들어가지 않는다.
-export = ["pyarrow>=15"]
-# 표를 소비하는 쪽(kernelrule). core/table.py 가 to_pandas() 를 쓴다.
-consumer = ["pyarrow>=15", "pandas>=2"]
+# 아래 둘은 이제 필수 의존성이라 비어 있다. 이름은 호환을 위해 남긴다.
+export = []
+consumer = []
 # 테스트는 GPU 를 전혀 쓰지 않는다 (docs/testing.md)
-test = ["pytest>=8", "pyarrow>=15", "pandas>=2"]
+test = ["pytest>=8"]
 # 리포트 그림
 plots = ["matplotlib>=3.7"]
 dev = ["ruff", "vermin", "uv"]

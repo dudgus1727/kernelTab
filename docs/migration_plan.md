@@ -330,6 +330,29 @@ CUDA_VISIBLE_DEVICES=0 python3 scripts/count_space.py >/dev/null && echo "존중
 
 ---
 
+> ## ✅ 나머지 8 건 — 6 건 완료, 2 건은 컨테이너 단계로 (2026-08-19)
+>
+> | # | 항목 | 상태 |
+> |---|---|---|
+> | 5 | `nvidia-smi -i` UUID | ✅ P-2 에서 처리 |
+> | 9 | 텔레메트리 `Popen` 실패 감지 | ✅ P-2 에서 처리 |
+> | 8 | `env["manifest"]` 추가 | ✅ `env_hash_v2` **불변** 확인 |
+> | 6 | `KERNELTAB_RESULTS_DIR` / `_ARTIFACT_DIR` | ✅ 기본값 불변 확인 |
+> | 7 | `pyarrow` 필수화 | ✅ **pandas 도 필수로** (아래) |
+> | 4 | `requirements.lock` | ✅ pandas 포함해 재생성, 결정성 확인 |
+> | 11 | CUTLASS 커밋 주입 | ✅ `git`/`injected`/`unknown` 구분 |
+> | 10 | Python 3.10 실검증 | ⏸ **컨테이너 단계로** (3.10 환경이 필요하다) |
+>
+> **계획서의 "pandas 는 미사용" 은 사실이 아니었다.** `core/table.py` 의
+> 로더가 `to_pandas()` 를 쓰고 `core/bundle.py` 도 쓴다. 둘 다 정답 누출을
+> 막는 소비 경로의 핵심이고, 없으면 그것을 검증하는 테스트 41개가 통째로
+> 스킵된다(R-1). **제거가 아니라 필수화**했다.
+>
+> 8 번도 계획과 달라졌다. 계획서는 "`manifest_hash` 를 해시 키에 넣기로
+> 했다면 P-3 과 같은 커밋에서" 라고 했는데, P-3 에서 **빼기로 결정**했으므로
+> `env["manifest"]` 추가가 `env_hash_v2` 를 바꾸지 않는다. 독립적으로 처리했고
+> 테스트로 고정했다.
+
 ## 4. 나머지 8 건
 
 | # | 항목 | 깨질 수 있는 것 | 검증 |

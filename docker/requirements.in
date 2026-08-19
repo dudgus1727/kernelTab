@@ -1,3 +1,9 @@
-# kerneltab 런타임 의존성 (측정 + export 전부 포함)
+# kerneltab 런타임 의존성 (측정 + export + 번들 전부 포함)
+#
+# pandas 는 **필요하다.** 이전 주석에 "코드 어디서도 쓰지 않는다" 고 적혀
+# 있었으나 사실이 아니다 — core/table.py 의 로더가 to_pandas() 를 쓰고
+# core/bundle.py 도 쓴다. 둘 다 정답 누출을 막는 소비 경로의 핵심이고,
+# 없으면 그것을 검증하는 테스트 41개가 통째로 스킵된다 (R-1).
 nvidia-ml-py==13.610.43
 pyarrow==25.0.1
+pandas==2.3.3
