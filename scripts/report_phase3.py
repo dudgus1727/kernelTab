@@ -29,6 +29,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from backends import get_backend
 from build import paths
+from core import anchors as A
 from core import features as F
 from core import records
 from core.hardware import hardware_from_env
@@ -239,72 +240,20 @@ def _rank_stability(by):
 
 
 def _anchor_report(env_hash: str):
-    """앵커 요약. check_anchors.py 와 같은 데이터를 리포트용으로 압축한다."""
-    import statistics
-    from collections import defaultdict
-    f = paths.RESULTS_DIR / "anchors.jsonl"
-    if not f.exists():
-        return None
-    rows = []
-    for line in f.read_text().splitlines():
-        if not line.strip():
-            continue
-        try:
-            r = json.loads(line)
-        except json.JSONDecodeError:
-            continue          # 쓰다 만 줄. 손상 판정은 core.records 가 한다
-        if str(r.get("env_hash", "")).startswith(env_hash[:8]):
-            rows.append(r)
+    """앵커 판정. **계산은 `core/anchors.py` 가 한다** (R-6).
+
+    예전에는 이 함수가 판정을 따로 했다 — 절대 1% 기준으로. `check_anchors.py`
+    는 노이즈 대비로 판정해서 **같은 데이터에 두 답**이 나왔다. 512³ 앵커는
+    12~23 us 라 노이즈 자체가 2% 대이므로 1% 절대 기준은 달성 불가능하고,
+    못 달성했다고 대책이 실패한 것도 아니다. 리포트 쪽이 틀렸는데, 사람이
+    읽는 것은 리포트라 틀린 답이 더 널리 읽혔다.
+    """
+    from core import anchors
+    rows, rnd, src, n_sl = anchors.load(env_hash)
     if not rows:
         return None
-    by = defaultdict(lambda: defaultdict(list))
-    for r in rows:
-        by[(r["kernel_id"], r["problem"]["M"])][r["segment"]].append(r["time_ms"])
-    order = sorted(by, key=lambda k: statistics.median(
-        [t for v in by[k].values() for t in v]))
-    out, worst = [], 0.0
-    for i, key in enumerate(order):
-        med = {s: statistics.median(v) for s, v in by[key].items()}
-        overall = statistics.median(med.values())
-        spread = (max(med.values()) - min(med.values())) / overall * 100
-        if i < max(len(order) // 2, 1):
-            worst = max(worst, spread)
-        out.append((key[0], key[1], overall, len(med), spread))
-    # 라운드 간 절대값 이동 (짧은 앵커)
-    move = None
-    sw = paths.RESULTS_DIR / "sweep.jsonl"
-    if sw.exists():
-        rnd = {}
-        for line in sw.read_text().splitlines():
-            try:
-                d = json.loads(line)
-            except json.JSONDecodeError:
-                continue      # 중단 시 쓰다 만 줄
-            if d.get("event") == "slice":
-                rnd[(d["segment"], "start")] = d["round"]
-                rnd[(d["segment"], "end")] = d["round"]
-        per = defaultdict(list)
-        short = set(order[: max(len(order) // 2, 1)])
-        for r in rows:
-            k = (r["kernel_id"], r["problem"]["M"])
-            if k not in short:
-                continue
-            rd = rnd.get((r["segment"], r["when"]))
-            if rd is not None:
-                base = statistics.median([t for v in by[k].values() for t in v])
-                per[rd].append(r["time_ms"] / base)
-        if len(per) >= 2:
-            a = statistics.median(per[min(per)])
-            b = statistics.median(per[max(per)])
-            move = (b / a - 1) * 100
-    ok = worst <= 1.0 and (move is None or abs(move) <= 1.0)
-    verdict = ("세그먼트 간 계통 오차가 1% 이내다. 대책이 듣는다."
-               if ok else
-               "**1% 를 넘는다.** 이 표의 config 순위를 그대로 믿으면 안 된다. "
-               "docs/measurement_drift.md 의 실패 대응을 따르라.")
-    return {"rows": out, "worst_short": worst, "round_move": move,
-            "verdict": verdict}
-
+    return anchors.analyze(rows, rnd, env_hash, round_source=src,
+                           n_slices=n_sl)
 
 def main() -> int:
     ap = argparse.ArgumentParser()
@@ -471,15 +420,74 @@ def main() -> int:
     if anc is None:
         w("`results/anchors.jsonl` 이 없다 — 세그먼트 방식으로 측정하지 않았다.")
     else:
-        w("| 앵커 | 형상 | 중앙(ms) | 세그먼트 | 변동폭 |")
-        w("|---|---:|---:|---:|---:|")
-        for kid, M, med, nseg, spread in anc["rows"]:
-            w(f"| `{kid[-38:]}` | {M} | {med:.4f} | {nseg} | {spread:.2f}% |")
+        w("판정은 **절대 기준이 아니라 노이즈 대비**다. 512³ 앵커는 14~56 us 라")
+        w("측정 노이즈 자체가 몇 %다. 물어야 할 것은 \"노이즈 대비 계통 성분이")
+        w("있는가\" 이지 \"변동폭이 1% 미만인가\" 가 아니다.")
         w()
-        w(f"- 짧은 앵커 최대 변동폭 **{anc['worst_short']:.2f}%**")
-        w(f"- 라운드 간 절대값 이동 "
-          f"{'**' + format(anc['round_move'], '+.2f') + '%**' if anc['round_move'] is not None else '(라운드 정보 없음)'}")
-        w(f"- → {anc['verdict']}")
+        w("| 앵커 | 형상 | 중앙(ms) | 세그 | 폭 | sB | sW | 모델 | 비율 | 판정 |")
+        w("|---|---:|---:|---:|---:|---:|---:|---:|---:|:--:|")
+        for st in anc.stats:
+            rs = "n/a" if st.ratio is None else f"{st.ratio:.2f}"
+            mark = ("OK" if st.ok else "**실패**") if st.judged else "참고"
+            sw = "n/a" if st.s_within is None else f"{st.s_within:.2f}%"
+            w(f"| `{st.kernel_id[-38:]}` | {st.M} | {st.median_ms:.4f} "
+              f"| {st.n_segments} | {st.spread_pct:.2f}% | {st.s_between:.2f}% "
+              f"| {sw} | {st.model_pct:.2f}% | {rs} | {mark} |")
+        w()
+        w("- `sB` = 세그먼트 중앙값들의 표준편차 (계통 성분)")
+        w("- `sW` = 세그먼트 중앙값의 표준오차 (노이즈). **`sB` 와 집계 수준을**")
+        w("  **맞춘 값이다** — 1회 측정 노이즈를 분모로 쓰면 판정이 조용히")
+        w("  느슨해진다.")
+        w("- `모델` = `core/noise.py` 의 `sigma_rel(t)=0.000374/t+0.00044`.")
+        w("  **다른 데이터에서 유도한 모델**이므로 `sW` 와 맞으면 교차 검증이다.")
+        w(f"- 판정: 비율 <= {A.RATIO_MAX} 또는 `sB` <= {anc.tol_pct}% "
+          f"(짧은 앵커 절반만. 드리프트는 런치당 상수라 긴 커널에서는 안 보인다)")
+        w()
+
+        # --- 라운드 ------------------------------------------------------
+        w("**라운드 추이** — 세그먼트 밖에 누적이 있는가")
+        w()
+        src_txt = {"recorded": "앵커 줄에 기록된 `round`",
+                   "timestamp": "`sweep.jsonl` 슬라이스 구간에서 시각으로 복원",
+                   "none": "알 수 없음"}[anc.round_source]
+        w(f"라운드 출처: {src_txt} (슬라이스 {anc.n_slices}개).")
+        w()
+        if anc.rounds:
+            w("| 라운드 | 기준선 대비 (중앙) | (평균) | n |")
+            w("|---:|---:|---:|---:|")
+            for pt in anc.rounds:
+                w(f"| {pt.round} | {pt.rel_pct:+.3f}% | {pt.mean_pct:+.3f}% "
+                  f"| {pt.n} |")
+            w()
+            w("중앙값이 0.000% 로 고정돼 보이는 것은 **타이머 눈금** 때문이다.")
+            w("CUDA 이벤트 타이머의 눈금은 1.024 us 이고, 14 us 앵커에서 한")
+            w("눈금은 7.3% 다. 중앙값은 대부분 같은 눈금에 떨어진다 — 완벽히")
+            w("안정적인 것이 아니라 **중앙값이 둔한 것**이다. 평균을 함께 본다.")
+            w()
+        else:
+            w("라운드를 알 수 없어 이 검사가 돌지 않았다.")
+            w()
+        if anc.abs_moves:
+            w(f"**절대값 이동** (라운드 {anc.abs_first} → {anc.abs_last}). ")
+            w("비율만 보면 **모든 세그먼트가 함께** 나빠지는 경우를 놓친다 —")
+            w("편차는 0인데 전체가 드리프트하는 상황이다.")
+            w()
+            w(f"| 앵커 | 형상 | R{anc.abs_first}(ms) | R{anc.abs_last}(ms) | 변화 |")
+            w("|---|---:|---:|---:|---:|")
+            for m in anc.abs_moves:
+                w(f"| `{m.kernel_id[-38:]}` | {m.M} | {m.first_ms:.4f} "
+                  f"| {m.last_ms:.4f} | {m.delta_pct:+.2f}% |")
+            w()
+            w(f"짧은 앵커 최대 이동 **{anc.abs_worst:.2f}%**, "
+              f"노이즈 바닥 {anc.abs_floor:.2f}%.")
+            w()
+        if anc.notes:
+            w("**주의** (실패는 아니다)")
+            w()
+            for n in anc.notes:
+                w(f"- {n}")
+            w()
+        w(f"→ {anc.verdict}")
     w()
     w("자세한 판정은 `python3 scripts/check_anchors.py`.")
     w()

@@ -382,8 +382,17 @@ def pick_anchors(rows, n: int, seed: int):
 ANCHORS = paths.RESULTS_DIR / "anchors.jsonl"
 
 
-def measure_anchors(ctx, kernels, anchor_rows, probe, env, segment, when):
+def measure_anchors(ctx, kernels, anchor_rows, probe, env, segment, when,
+                    rnd=None):
     """세그먼트마다 같은 커널을 재서 세그먼트 간 오차를 사후에 잴 수 있게 한다.
+
+    ⚠️ `round` 를 반드시 남긴다 (R-6). `sweep.py` 의 실행 단위는 세그먼트가
+    아니라 **슬라이스 = (라운드, 세그먼트)** 이고, 같은 세그먼트가 라운드마다
+    다시 돈다. 예전에는 `segment` 와 `when` 만 적어서, 사후에 라운드를
+    복원하려면 `(segment, when) -> round` 로 매핑할 수밖에 없었고 **라운드마다
+    덮어써서 마지막 하나만 남았다.** 그 결과 "라운드에 따라 전체가 함께
+    드리프트하는가" 라는 검사가 통째로 죽어 있었다 — 8 라운드를 돌고도
+    "라운드가 2개 미만이라 비교할 수 없다" 가 찍혔다.
 
     `results.jsonl` 이 아니라 별도 파일에 쓴다 — 같은 (커널, 형상) 을 여러 번
     재므로 무결성 검사의 중복 판정에 걸린다. 앵커는 측정 표의 일부가 아니라
@@ -414,7 +423,7 @@ def measure_anchors(ctx, kernels, anchor_rows, probe, env, segment, when):
                     "time_spread_pct": round(
                         100 * (ms[-1].time_ms - ms[0].time_ms)
                         / max(m.time_ms, 1e-9), 3) if len(ms) > 1 else 0.0,
-                    "segment": segment, "when": when,
+                    "segment": segment, "when": when, "round": rnd,
                     "sm_clock_mhz": snap["sm_clock_mhz"],
                     "gpu_temp_c": snap["gpu_temp_c"],
                     "env_hash": env["env_hash"],
@@ -452,6 +461,9 @@ def main() -> int:
                          "(-0.07%%) — 새 GPU 에서 열이 원인으로 확인됐을 때만")
     ap.add_argument("--no-soak", dest="soak", action="store_false",
                     help="소킹을 끈다 (기본)")
+    ap.add_argument("--round", type=int, default=None, dest="round_",
+                    help="sweep.py 가 넘기는 라운드 번호. 앵커 줄에 기록해 "
+                         "사후에 라운드별 추이를 볼 수 있게 한다 (R-6)")
     ap.add_argument("--segment", type=int, default=None,
                     help="이 세그먼트의 커널만 측정한다. scripts/sweep.py 가 "
                          "라운드 로빈으로 넘겨준다")
@@ -768,7 +780,7 @@ def main() -> int:
     if args.all and anchors:
         measure_anchors(ctx, kernels, anchors, probe, env,
                         args.segment if args.segment is not None else -1,
-                        "start")
+                        "start", args.round_)
     try:
         with RESULTS.open("a") as out:
             for (krow, p, rc) in jobs:
@@ -883,7 +895,7 @@ def main() -> int:
             if args.all and anchors:
                 measure_anchors(ctx, kernels, anchors, probe, env,
                                 args.segment if args.segment is not None else -1,
-                                "end")
+                                "end", args.round_)
         write_heartbeat(state="finishing", done=n, total=len(jobs),
                         status=dict(stats), env_hash=env["env_hash"],
                         soak=soak_info, thermal=dict(thermal))

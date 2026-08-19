@@ -215,6 +215,10 @@ def main() -> int:
         for seg in order:
             cmd = [sys.executable, str(REHEARSE), "--all",
                    "--segment", str(seg),
+                   # 앵커 줄에 라운드를 남긴다. 없으면 사후에 시각으로
+                   # 복원해야 하고, 그 복원이 없던 시절에는 라운드별 추이
+                   # 검사가 통째로 죽어 있었다 (R-6, core/anchors.py).
+                   "--round", str(rnd),
                    "--segment-kernels", str(seg_kernels),
                    "--max-jobs", str(slice_of[seg]),
                    "--time-budget", str(slice_s)]
@@ -222,8 +226,12 @@ def main() -> int:
             t = time.time()
             rc = subprocess.run(cmd, cwd=REPO_ROOT).returncode
             el = time.time() - t
+            # env_hash 를 슬라이스 줄에도 적는다. 없으면 사후 분석이
+            # sweep_start 에서 물려받아야 하고, 파일에 여러 캠페인이
+            # 섞이면 그 추론이 위험해진다 (R-6).
             log({"event": "slice", "round": rnd, "segment": seg,
-                 "rc": rc, "seconds": round(el, 1)})
+                 "rc": rc, "seconds": round(el, 1),
+                 "env_hash": env.get("env_hash")})
             if rc == RC_DONE:
                 done.add(seg)
                 print(f"[세그먼트 {seg}] 완료 ({el / 60:.1f}분)")
