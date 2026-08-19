@@ -121,7 +121,15 @@ def cutlass_info(explicit: str | None, commit_override: str | None = None) -> di
     """
     root = paths.cutlass_dir(explicit)
     rc, commit = run(["git", "-C", str(root), "rev-parse", "HEAD"])
-    rc2, dirty = run(["git", "-C", str(root), "status", "--porcelain"])
+    # 추적 파일의 수정과 미추적 파일을 **구분한다.** 빌드에 영향을 주는
+    # 것은 추적 파일 쪽이다. 실측 캠페인의 env.json 에는
+    # worktree_dirty=true 가 찍혀 있는데, 실제로는 관계 없는 디렉토리가
+    # 하나 놓여 있었을 뿐이었다. 재현성 신호가 상시 켜져 있으면 아무도
+    # 안 본다 — R-1 이 잡은 병과 같다.
+    rc2, dirty = run(["git", "-C", str(root), "status", "--porcelain",
+                      "--untracked-files=no"])
+    _rc2u, untracked = run(["git", "-C", str(root), "ls-files",
+                            "--others", "--exclude-standard"])
     rc3, desc = run(["git", "-C", str(root), "describe", "--tags", "--always"])
     ver = None
     vfile = root / "include" / "cutlass" / "version.h"
@@ -161,7 +169,13 @@ def cutlass_info(explicit: str | None, commit_override: str | None = None) -> di
                           ("injected" if commit_override else "unknown")),
         "describe": desc.strip() if rc3 == 0 else None,
         "version": ver,
+        # 빌드에 영향을 주는 것 = 추적 파일의 수정. 이것이 true 면 commit
+        # 만으로는 재현할 수 없다.
         "worktree_dirty": bool(dirty.strip()) if rc2 == 0 else None,
+        "worktree_modified": [x[3:] for x in dirty.splitlines()][:20]
+        if rc2 == 0 else None,
+        # 미추적 파일은 빌드에 안 들어간다. 참고로만 센다.
+        "untracked_files": len(untracked.splitlines()) if _rc2u == 0 else None,
         "gemm_2x_api_deprecation_hits": dep_hits,
         "gemm_2x_api_deprecated": bool(dep_hits),
     }

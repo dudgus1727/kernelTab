@@ -81,7 +81,8 @@ python3 scripts/export.py                          # -> results/table.parquet
 > | 상수 성분 | **75 us / 모듈 1,000 개** (문턱 위) | 허용 오차에서 세그먼트 크기 역산 |
 > | 짧은 커널 왜곡 배율 | 100 배 (15 us vs 22 ms) | 감시 프로브에 짧은 형상이 필요한 이유 |
 >
-> 절차와 근거: `docs/measurement_drift.md`
+> 절차: **`docs/new_gpu_checklist.md`** (게이트 8개, 선행 ~7시간).
+> 근거: `docs/measurement_drift.md`
 
 > ### ⚠️ 측정이 끝나면 클럭 고정을 반드시 해제할 것
 > ```bash

@@ -10,7 +10,7 @@
 #   1) docs/portability_audit.md 의 "수정 목록" 1~4 번을 먼저 적용할 것.
 #      특히 so_path 절대경로 / GPU 인덱스 / env_hash 불안정 / 버전 미고정.
 #      고치지 않으면 "실행은 되는데 데이터가 이상한" 상태가 된다.
-#   2) 아래 BASE 다이제스트를 실제 값으로 채울 것 (지금은 자리표시자다).
+#   2) (완료) BASE 다이제스트 — nvidia/cuda:12.4.0-devel-ubuntu22.04.
 #   3) (완료) docker/requirements.lock — 해시 고정, Python 3.10 으로 해석함.
 #
 # ---------------------------------------------------------------------------
@@ -41,20 +41,44 @@
 # ---------------------------------------------------------------------------
 # BASE
 # ---------------------------------------------------------------------------
-# 태그(예: 12.4.1-devel-ubuntu22.04)는 같은 이름으로 내용이 바뀌므로 재현성이
+# 태그(예: 12.4.0-devel-ubuntu22.04)는 같은 이름으로 내용이 바뀌므로 재현성이
 # 없다. 반드시 다이제스트로 고정한다. 값은 아래로 얻는다:
 #
-#   docker buildx imagetools inspect nvidia/cuda:12.4.1-devel-ubuntu22.04 \
-#       --format '{{.Manifest.Digest}}'
+#   docker buildx imagetools inspect nvidia/cuda:12.4.0-devel-ubuntu22.04
 #
-# TODO: 실제 다이제스트로 교체할 것. 아래는 자리표시자이며 그대로 빌드하면
-#       실패한다 (일부러 그렇게 두었다 — 가짜 해시를 박아두면 언젠가 그것이
-#       진짜인 줄 알고 쓰게 된다).
-ARG BASE_IMAGE=nvidia/cuda@sha256:REPLACE_ME_WITH_REAL_DIGEST
+# ---------------------------------------------------------------------------
+# 왜 12.4.**0** 인가 — 12.4.1 이 아니다
+# ---------------------------------------------------------------------------
+# 공개한 데이터는 **nvcc V12.4.99** 로 만들었다 (results/env.json 의
+# cuda.nvcc_version). 그 컴파일러가 들어 있는 것은 CUDA **12.4.0** 이다.
+# 12.4.1 에는 nvcc 12.4.131 이 들어 있다 — 다른 컴파일러다.
+#
+# 이것은 취향 문제가 아니다. nvcc 버전은 `env_hash_v2` 의 입력이므로
+# (core/env_hash.py 의 `cuda.nvcc_version`), 12.4.1 로 빌드하면 **다른
+# env_hash 가 나오고 기존 표와 절대 시간을 비교할 수 없다.** 도커 안팎
+# 대조(커널별 1% 이내)라는 검증 자체가 성립하지 않는다.
+#
+# 다중 아키텍처 매니페스트 리스트라 amd64/arm64 둘 다 이 다이제스트로
+# 간다 (나중에 GH200 을 쓰더라도 같은 값).
+ARG BASE_IMAGE=nvidia/cuda@sha256:28326fefd36d43ecf82447e9ca1175db639b931e234019b2807f35a0d1551656
+#                nvidia/cuda:12.4.0-devel-ubuntu22.04  (2026-08-19 확인)
+#
+# ---------------------------------------------------------------------------
+# 다음 이미지 — Blackwell 이 필요해지면
+# ---------------------------------------------------------------------------
+# sm_100/sm_120 은 CUDA 12.8 이상이 필요하다. 그때 쓸 값을 미리 적어 둔다:
+#
+#   nvidia/cuda:12.8.1-devel-ubuntu22.04
+#     sha256:a99a1860ba8e2916e5c3e73b72ec4c4301653a84586e05bfc9a2aa2d58027e97
+#
+# ubuntu22.04 를 유지하므로 Python 은 그대로 3.10 이고
+# docker/requirements.lock 도 그대로 쓸 수 있다.
+#
+# ⚠️ **CUDA 를 올리는 것은 재측정이지 이전이 아니다.** nvcc 가 바뀌면
+#    커널 코드 생성이 바뀌고 env_hash 가 바뀐다. 12.8 이미지로 잰 표와
+#    12.4 이미지로 잰 표는 **다른 캠페인**이며, 절대 시간을 섞으면 안 된다.
+#    A6000 기존 데이터와의 대조는 반드시 12.4.0 이미지로 해야 한다.
 
-# devel 이어야 한다. runtime 에는 nvcc / cuobjdump / nvdisasm 이 없다.
-# CUDA 버전은 측정에 쓴 것과 맞춘다: 현재 데이터는 nvcc 12.4.99 로 만들었다.
-# 상위 버전으로 올리면 커널 코드 생성이 달라질 수 있으므로 재측정 대상이다.
 FROM ${BASE_IMAGE} AS base
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -115,8 +139,7 @@ ENV KERNELTAB_COMMIT=${KERNELTAB_COMMIT}
 # 산출물 경로. 둘 다 **쓰기 가능해야 하고 볼륨이어야 한다.**
 #   results   : 측정 결과 (append-only jsonl). 날리면 40 시간을 다시 쓴다.
 #   artifacts : 커널 .so 7.4 GB + 생성된 .cu. 날리면 30~40 분 재빌드.
-# TODO: 코드가 아직 이 환경변수를 읽지 않는다 (build/paths.py 는 REPO_ROOT
-#       기준으로 고정). portability_audit 수정 6 번.
+# (완료) build/paths.py 가 이 환경변수를 읽는다 (P-1).
 ENV KERNELTAB_RESULTS_DIR=/work/results \
     KERNELTAB_ARTIFACT_DIR=/work/artifacts
 RUN mkdir -p /work/results /work/artifacts
