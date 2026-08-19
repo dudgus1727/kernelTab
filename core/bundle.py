@@ -95,6 +95,18 @@ class Bundle:
         return self.info.get("license", "CC-BY-4.0")
 
     @property
+    def noise_floor(self):
+        """이 측정 조건의 노이즈 바닥 함수. `f(time_ms) -> 상대 표준편차`.
+
+        정답 허용치를 고정 1 % 로 두면 작은 형상에서 노이즈를 신호로
+        배운다 (33시간 앵커에서 크기별 재현성 35 배 차이).
+        """
+        c = self.info.get("noise_floor") or {}
+        a = c.get("sigma_abs_ms", 0.000374)
+        b = c.get("sigma_rel", 0.00044)
+        return lambda t: (a / t + b) if t and t > 0 else b
+
+    @property
     def table_path(self) -> Path:
         return self.path / "table.parquet"
 

@@ -73,6 +73,12 @@ def human(n: int) -> str:
     return str(n)
 
 
+def _noise_coefficients() -> dict:
+    """앵커에서 잰 노이즈 바닥 계수. 없으면 core.noise 의 기본값."""
+    from core import noise
+    return noise.coefficients()
+
+
 def measurement_running() -> bool:
     """측정이 도는 중인가. heartbeat.json 의 pid 를 /proc 로 확인한다.
 
@@ -408,6 +414,9 @@ CUTLASS (NVIDIA, BSD-3-Clause) 는 이 번들에 포함되지 않는다.
         "bandwidth_gbps_effective": env.get("bandwidth_gbps_effective"),
         "ridge_point": round(hw.peak_tflops_f16 * 1e12 / (hw.bandwidth_gbps * 1e9), 3),
         "protocol": env.get("protocol"),
+        # 측정 노이즈 바닥. 소비 쪽이 재계산 없이 정답 허용치를 정할 수
+        # 있어야 한다. 형상마다 다르므로 고정 1% 를 쓰면 안 된다.
+        "noise_floor": _noise_coefficients(),
         "soak": env.get("soak"),
         # 층별 형상. 층 C 는 sm_count 에서 M 을 역산하므로 GPU 마다 다르다.
         # 여러 번들을 합칠 때 공통 형상을 가려내려면 이 정보가 필요하다.

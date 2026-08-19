@@ -203,6 +203,35 @@ def load_for_scoring(
     return df[keys + ans]
 
 
+def answer_set(df, tol: float | None = None):
+    """이 형상에서 **정답으로 인정할 config 집합** (채점용).
+
+    `df` 는 한 형상의 행들이어야 한다 (`time_ms` 필요 -> `load_for_scoring`).
+
+    ⚠️ `tol=None` 이 기본이고, 그때는 **형상마다 다른** 노이즈 바닥을 쓴다
+    (`core.noise`). 고정 1 % 를 기본값으로 두면 안 된다 — 15 us 커널에서
+    1 % 는 재현되지 않는 차이라서, 그 형상에서는 노이즈를 정답/오답으로
+    가르게 된다. 33시간 앵커에서 크기별 재현성이 **35 배** 차이났다.
+
+    `tol` 을 명시하면 그 값을 쓴다. 왜 노이즈 바닥이 아닌지 근거를 남길 것.
+    """
+    from core.noise import noise_floor
+
+    t = df["time_ms"]
+    best = t.min()
+    if tol is None:
+        # 최적 시간 기준 노이즈. 2 시그마를 허용치로 본다.
+        tol = 2.0 * noise_floor(float(best))
+    return df[t <= best * (1.0 + tol)]
+
+
+def answer_tolerance(best_time_ms: float, tol: float | None = None) -> float:
+    """`answer_set` 이 쓰는 허용치. 리포트/문서에서 인용하려고 분리했다."""
+    from core.noise import noise_floor
+
+    return 2.0 * noise_floor(best_time_ms) if tol is None else tol
+
+
 def assert_no_answers(df, where: str = "규칙 입력") -> None:
     """정답 컬럼이 섞이지 않았는지 확인한다. 소비 쪽 단위 테스트용.
 
