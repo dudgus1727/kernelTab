@@ -128,7 +128,7 @@ class TestSmemBytes:
 
         align_c=2 커널 120개가 과대평가됐던 버그의 회귀 테스트다.
         """
-        base = dict(tile=(64, 64, 32), warp=(16, 64, 32), stages=2)
+        base = {"tile": (64, 64, 32), "warp": (16, 64, 32), "stages": 2}
         a8 = backend.smem_bytes(mk_cfg(**base, align=(8, 8, 8)), 2)
         a2 = backend.smem_bytes(mk_cfg(**base, align=(8, 8, 2)), 2)
         assert a8 == 18432      # epilogue 가 이긴다 (frags=2)

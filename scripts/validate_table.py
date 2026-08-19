@@ -26,6 +26,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+import itertools
+
 from backends import get_backend
 from build import paths
 from core.config import (
@@ -369,7 +371,7 @@ def main() -> int:
         c.ok("모든 그룹이 상한 이내")
     if len(ser_med) >= 3:
         ks = sorted(ser_med)
-        mono = sum(1 for a, b in zip(ks, ks[1:]) if ser_med[b] >= ser_med[a] - 1e-9)
+        mono = sum(1 for a, b in itertools.pairwise(ks) if ser_med[b] >= ser_med[a] - 1e-9)
         if mono >= len(ks) - 2:
             c.ok("serial 오차가 split_k 에 대해 대체로 증가한다 (예상대로)")
         else:

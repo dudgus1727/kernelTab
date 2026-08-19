@@ -62,7 +62,7 @@ def main() -> int:
         if sh not in best or t[i] < best[sh]:
             best[sh] = t[i]
         d = y["difficulty"].values[i]
-        if d == d:
+        if not math.isnan(d):
             diff[sh] = d
         # ⛔ 동점을 시간으로 깨면 정답 누출이다. 행 인덱스로 깬다.
         by.setdefault(sh, []).append((sc[i], i, t[i]))

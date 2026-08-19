@@ -48,6 +48,15 @@ __all__ = [
 #: 빈 문자열이나 None 은 허용하지 않는다.
 ALL = "ALL"
 
+#: 파일별 JSON 파싱 실패 줄 수. 쓰다 만 마지막 줄 하나는 정상이지만
+#: 여러 줄이면 손상이다 — 조용히 넘기지 않고 `parse_skips()` 로 드러낸다.
+_parse_skips: dict[str, int] = {}
+
+
+def parse_skips() -> dict[str, int]:
+    """지금까지 건너뛴 깨진 줄 수. 진단용."""
+    return dict(_parse_skips)
+
 
 class EnvHashError(ValueError):
     """`env_hash` 를 쓰지 않았거나 파일에 그 조건이 없다."""
@@ -80,8 +89,11 @@ def iter_records(path: str | Path, env_hash: str) -> Iterator[dict]:
                 continue
             try:
                 r = json.loads(line)
-            except Exception:
-                continue          # 쓰다 만 마지막 줄 등
+            except json.JSONDecodeError:
+                # append-only 파일이라 **쓰다 만 마지막 줄**은 정상이다.
+                # 다만 여러 줄이 깨졌다면 파일이 손상된 것이므로 센다.
+                _parse_skips[str(p)] = _parse_skips.get(str(p), 0) + 1
+                continue
             if _match(r, env_hash):
                 yield r
 
@@ -119,5 +131,5 @@ def aggregate_per_env(
         v = val_fn(r)
         if v is None:
             continue
-        buf[(str(r.get("env_hash") or ""),) + tuple(key_fn(r))].append(v)
+        buf[(str(r.get("env_hash") or ""), *tuple(key_fn(r)))].append(v)
     return {k: agg(v) for k, v in buf.items() if len(v) >= min_n}

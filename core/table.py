@@ -199,7 +199,7 @@ def load_for_scoring(
     df = _read(path, env_hash, ok_only)
     keys = [c for c in ("kernel_id", "env_hash", "M", "N", "K",
                         "split_k", "split_k_mode") if c in df.columns]
-    ans = [c for c in ANSWER_COLS + ("status",) if c in df.columns]
+    ans = [c for c in (*ANSWER_COLS, "status") if c in df.columns]
     return df[keys + ans]
 
 

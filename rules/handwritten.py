@@ -38,6 +38,8 @@ M=1 인 decode 형상에서 tile_m=128 을 고르면 타일의 99% 가 낭비인
 """
 from __future__ import annotations
 
+import math
+
 # 리터럴 8개.
 W_REUSE = 1.00     # DRAM 트래픽 ∝ ceil(M/tm)·ceil(N/tn)·(tm+tn) (지배 항)
 W_UTIL = 0.85      # SM 활용률. 연산 시간 ∝ 1/(1 - tail_waste)
@@ -63,7 +65,7 @@ def score(f: dict) -> float:
     # 2) SM 활용률 — GPU 는 wave 단위로 시간을 쓴다. 유효 처리량이
     #    peak x (1 - tail_waste) 이므로 연산 시간은 그 역수에 비례한다.
     tw = f["tail_waste_occ"]
-    if tw is None or tw != tw:
+    if tw is None or math.isnan(tw):
         tw = f["tail_waste"]
     s += W_UTIL * (1.0 / max(1.0 - tw, 0.02) - 1.0)
 

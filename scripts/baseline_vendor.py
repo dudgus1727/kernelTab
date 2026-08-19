@@ -165,7 +165,7 @@ def score(path: str) -> int:
         sh = tuple(int(x) for x in skey.split("x"))
         if sh not in best:
             continue
-        lut = {v: tm for v, tm in cand[sh]}
+        lut = dict(cand[sh])
         ts_s, ts_n = [], []
         for cf in lst:
             if cf.get("parse_fail"):

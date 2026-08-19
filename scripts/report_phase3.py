@@ -70,7 +70,7 @@ def q(xs: list[float], p: float) -> float:
     if not xs:
         return float("nan")
     s = sorted(xs)
-    i = min(len(s) - 1, max(0, int(round(p * (len(s) - 1)))))
+    i = min(len(s) - 1, max(0, round(p * (len(s) - 1))))
     return s[i]
 
 
@@ -201,9 +201,9 @@ def _static_topk(shape_cfg, diff, kmax=8):
     for _ in range(kmax):
         bestc, bestkey = None, None
         for c in pool:
-            g, cov = geo(chosen + [c], shapes)
+            g, cov = geo([*chosen, c], shapes)
             # 덮개를 먼저 늘리고, 같은 덮개면 regret 을 줄인다
-            key = (-cov, g if g == g else 1e9)
+            key = (-cov, 1e9 if math.isnan(g) else g)
             if bestkey is None or key < bestkey:
                 bestc, bestkey = c, key
         if bestc is None:
@@ -251,8 +251,8 @@ def _anchor_report(env_hash: str):
             continue
         try:
             r = json.loads(line)
-        except Exception:
-            continue
+        except json.JSONDecodeError:
+            continue          # 쓰다 만 줄. 손상 판정은 core.records 가 한다
         if str(r.get("env_hash", "")).startswith(env_hash[:8]):
             rows.append(r)
     if not rows:
@@ -278,8 +278,8 @@ def _anchor_report(env_hash: str):
         for line in sw.read_text().splitlines():
             try:
                 d = json.loads(line)
-            except Exception:
-                continue
+            except json.JSONDecodeError:
+                continue      # 중단 시 쓰다 만 줄
             if d.get("event") == "slice":
                 rnd[(d["segment"], "start")] = d["round"]
                 rnd[(d["segment"], "end")] = d["round"]
@@ -622,7 +622,7 @@ def main() -> int:
     w("이 값이 이 프로젝트가 노릴 수 있는 개선 여지의 상한선이다.")
     w()
     ca: dict[tuple, float] = {}
-    for key, b in best.items():
+    for _key, b in best.items():
         c = cublas.get(key)
         if c and b.get("time_ms"):
             ca[key] = c / b["time_ms"]
@@ -770,7 +770,7 @@ def main() -> int:
         w("| 값 | n | 중앙값 | p90 | 최대 | **최적을 낸 횟수** |")
         w("|---|---:|---:|---:|---:|---:|")
         wins = Counter()
-        for key, b in best.items():
+        for _key, b in best.items():
             k = kern.get(b["kernel_id"])
             if k is None:
                 continue

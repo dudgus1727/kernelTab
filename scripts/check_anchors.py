@@ -80,8 +80,8 @@ def main() -> int:
             continue
         try:
             r = json.loads(line)
-        except Exception:
-            continue
+        except json.JSONDecodeError:
+            continue          # 쓰다 만 줄
         if not str(r.get("env_hash", "")).startswith(eh[:8]):
             continue
         rows.append(r)
@@ -113,7 +113,7 @@ def main() -> int:
                 continue
             per_slice[r["segment"]].setdefault(r["when"], []).append(r["time_ms"])
         d = []
-        for seg, w in per_slice.items():
+        for _seg, w in per_slice.items():
             if "start" in w and "end" in w:
                 a = statistics.median(w["start"])
                 b = statistics.median(w["end"])
@@ -206,8 +206,8 @@ def main() -> int:
                 r_of.setdefault(rd, []).append(r)
         if len(r_of) >= 2:
             first, last = min(r_of), max(r_of)
-            print(f"{'앵커':>46} {'형상':>6} {'R%d(ms)' % first:>10} "
-                  f"{'R%d(ms)' % last:>10} {'변화':>8}")
+            print(f"{'앵커':>46} {'형상':>6} {f'R{first}(ms)':>10} "
+                  f"{f'R{last}(ms)':>10} {'변화':>8}")
             worst = 0.0
             for key in order:
                 kid, M = key
@@ -274,8 +274,8 @@ def _round_of_segment() -> dict:
     for line in SWEEP.read_text().splitlines():
         try:
             r = json.loads(line)
-        except Exception:
-            continue
+        except json.JSONDecodeError:
+            continue          # 중단 시 쓰다 만 줄
         if r.get("event") == "slice":
             out[(r["segment"], "start")] = r["round"]
             out[(r["segment"], "end")] = r["round"]

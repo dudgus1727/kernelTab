@@ -241,8 +241,10 @@ def pynvml_info() -> dict:
             import importlib.metadata as md
 
             d["package_version"] = md.version("nvidia-ml-py")
-        except Exception:
-            pass
+        except md.PackageNotFoundError:
+            # 소스에서 직접 쓰는 경우 등. 버전 기록만 빠지고 측정에는
+            # 영향이 없다 — manifest 가 별도로 패키지 목록을 남긴다.
+            d["package_version"] = None
         pynvml.nvmlShutdown()
         return d
     except Exception as e:

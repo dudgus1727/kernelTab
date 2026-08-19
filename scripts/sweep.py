@@ -115,8 +115,8 @@ def resume_state(env_hash: str | None, n_seg: int) -> tuple[set[int], int]:
             continue
         try:
             r = json.loads(line)
-        except Exception:
-            continue
+        except json.JSONDecodeError:
+            continue          # 중단 시 쓰다 만 줄이 남을 수 있다
         if r.get("event") == "sweep_start":
             cur_env = r.get("env_hash")
             # 새 스윕이 시작됐으면 그 앞의 상태는 무시한다

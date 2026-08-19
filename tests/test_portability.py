@@ -20,11 +20,10 @@ class TestPathOverride:
     """수정 6 — 컨테이너는 results/ 와 build/artifacts/ 를 볼륨으로 마운트한다."""
 
     def _paths_in(self, env: dict):
-        code = ("import sys; sys.path.insert(0, %r)\n"
+        code = (f"import sys; sys.path.insert(0, {str(REPO)!r})\n"
                 "from build import paths\n"
                 "import json; print(json.dumps({'r': str(paths.RESULTS_DIR),"
-                "'a': str(paths.ARTIFACT_DIR), 'e': str(paths.ENV_JSON)}))"
-                % str(REPO))
+                "'a': str(paths.ARTIFACT_DIR), 'e': str(paths.ENV_JSON)}))")
         e = dict(os.environ)
         e.pop("KERNELTAB_RESULTS_DIR", None)
         e.pop("KERNELTAB_ARTIFACT_DIR", None)

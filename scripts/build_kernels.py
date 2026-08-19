@@ -65,8 +65,8 @@ def existing_ids() -> set[str]:
                 continue
             try:
                 ids.add(json.loads(line)["kernel_id"])
-            except Exception:
-                continue
+            except json.JSONDecodeError:
+                continue      # 쓰다 만 줄
     return ids
 
 

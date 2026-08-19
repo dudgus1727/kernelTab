@@ -136,7 +136,7 @@ class TestAssertNoAnswers:
             assert_no_answers(y)
 
     def test_passes_clean(self, table):
-        assert_no_answers(load_for_ranking(table)) is None
+        assert assert_no_answers(load_for_ranking(table)) is None
 
     def test_catches_manual_readparquet(self, table):
         """로더를 우회한 경우를 잡는 것이 이 함수의 존재 이유다."""

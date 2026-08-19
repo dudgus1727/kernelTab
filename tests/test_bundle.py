@@ -70,9 +70,9 @@ def two_bundles(tmp_path):
     """형상이 일부만 겹치는 두 GPU. 층 C 가 sm_count 에서 역산되기 때문이다."""
     common = [(1024, 4096, 4096), (4096, 4096, 4096)]
     a = _make(tmp_path, "rtx-a6000-sm_86-aaaa1111", "aaaa1111",
-              "NVIDIA RTX A6000", 84, common + [(384, 4096, 4096)])
+              "NVIDIA RTX A6000", 84, [*common, (384, 4096, 4096)])
     b = _make(tmp_path, "rtx-4090-sm_89-bbbb2222", "bbbb2222",
-              "NVIDIA GeForce RTX 4090", 128, common + [(512, 4096, 4096)])
+              "NVIDIA GeForce RTX 4090", 128, [*common, (512, 4096, 4096)])
     return tmp_path, a, b
 
 
@@ -103,7 +103,7 @@ class TestIntegrity:
         _, a, _ = two_bundles
         rows = _rows("aaaa1111", [(1, 1, 1)])
         pq.write_table(pa.Table.from_pylist(rows), a / "table.parquet")
-        with pytest.raises(BundleError, match="sha256 불일치|크기"):
+        with pytest.raises(BundleError, match=r"sha256 불일치|크기"):
             load_bundle(a)
 
     def test_detects_missing_file(self, two_bundles):

@@ -112,7 +112,7 @@ def main() -> int:
               f"후보 {len(cand)} 중 {len(pick)}개")
     else:
         pick = rng.sample(okrows, min(args.n, len(okrows)))
-        drift_kid = sorted({r["kernel_id"] for r in okrows})[0]
+        drift_kid = min({r["kernel_id"] for r in okrows})
 
     ctx = Ctx(paths.ARTIFACT_DIR / "libkt_ctx.so", 0)
     ctx.set_protocol(env)
@@ -195,7 +195,7 @@ def main() -> int:
         ctx.close()
 
     spreads = []
-    for key, v in samples.items():
+    for _key, v in samples.items():
         if len(v) < 2:
             continue
         med = statistics.median(v)
@@ -205,7 +205,7 @@ def main() -> int:
 
     # pass 별 편차 — 첫 회만 튀는지(cold) 전반적으로 흔들리는지 구분
     per_pass = {}
-    for key, v in samples.items():
+    for v in samples.values():
         for i, x in enumerate(v):
             per_pass.setdefault(i, []).append(
                 x / statistics.median(v) if statistics.median(v) else 1.0)

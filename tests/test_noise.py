@@ -5,6 +5,8 @@
 """
 from __future__ import annotations
 
+import itertools
+
 import pytest
 
 from core.noise import (
@@ -31,7 +33,7 @@ class TestModel:
     def test_monotone_decreasing(self):
         ts = [0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 20.0]
         v = [noise_floor(t) for t in ts]
-        assert all(a > b for a, b in zip(v, v[1:]))
+        assert all(a > b for a, b in itertools.pairwise(v))
 
     def test_floor_never_zero(self):
         """아무리 긴 커널도 상대 성분이 남는다."""

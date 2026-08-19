@@ -40,8 +40,8 @@ SHAPES = [
 ]
 
 # 스위즐만 다르고 나머지는 완전히 동일한 커널들
-BASE = dict(tile_m=128, tile_n=128, tile_k=32,
-            warp_m=64, warp_n=64, warp_k=32, stages=4)
+BASE = {"tile_m": 128, "tile_n": 128, "tile_k": 32,
+            "warp_m": 64, "warp_n": 64, "warp_k": 32, "stages": 4}
 VARIANTS = [("identity", 1), ("identity", 8), ("horizontal", 1)]
 
 

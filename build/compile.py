@@ -43,9 +43,7 @@ class BuildEnv:
         lib = paths.ARTIFACT_DIR / "lib"
         src.mkdir(parents=True, exist_ok=True)
         lib.mkdir(parents=True, exist_ok=True)
-        inc = tuple(paths.cutlass_includes(cutlass)) + (
-            f"-I{paths.REPO_ROOT / 'measure'}",
-        )
+        inc = (*tuple(paths.cutlass_includes(cutlass)), f"-I{paths.REPO_ROOT / 'measure'}")
         return BuildEnv(
             nvcc=env["cuda"]["nvcc_path"],
             arch_flag=env["nvcc_arch_flag"],
@@ -336,7 +334,11 @@ def _dlclose(handle) -> None:
             _libdl.dlclose.argtypes = [ctypes.c_void_p]
             _libdl.dlclose.restype = ctypes.c_int
         _libdl.dlclose(ctypes.c_void_p(handle))
-    except Exception:
+    except (OSError, AttributeError):
+        # dlclose 실패는 무해하다 — 이미 introspect 를 끝냈고 프로세스가
+        # 곧 끝난다. (예전에 argtypes 를 빠뜨려 핸들이 32비트로 잘려
+        # segfault 가 났었다. 그건 여기서 삼킬 문제가 아니라 argtypes 로
+        # 고쳤다 — docs/decisions.md 참조.)
         pass
 
 

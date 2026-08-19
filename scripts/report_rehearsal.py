@@ -201,7 +201,7 @@ def main() -> int:
                f"sk{b['runtime']['split_k']}{b['runtime']['split_k_mode'][:4]}")
         ratio = f"{cb / b['time_ms']:.3f}" if cb else "n/a"
         print(f"  {key!s:24s} {b['time_ms']:9.4f} "
-              f"{cb if cb else 0:10.4f} {ratio:>7s}  {cfg}")
+              f"{cb or 0:10.4f} {ratio:>7s}  {cfg}")
 
     # ---- split-K 가설 ----------------------------------------------------
     hr("split-K 값별 최고 성능 (84 = 2^2 x 3 x 7 가설)")
