@@ -32,6 +32,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from backends import get_backend  # noqa: E402
 from build import paths  # noqa: E402
+from core import records  # noqa: E402
 from core.hardware import hardware_from_env  # noqa: E402
 from core.config import alignments_for, enumerate_runtimes  # noqa: E402
 from core.shapes import all_shapes  # noqa: E402
@@ -393,18 +394,13 @@ def load_done(env_hash: str) -> set[tuple]:
     if not RESULTS.exists():
         return set()
     done = set()
-    for line in RESULTS.read_text().splitlines():
-        if not line.strip():
-            continue
+    for d in records.iter_records(RESULTS, env_hash):
         try:
-            d = json.loads(line)
-            if d.get("env_hash") != env_hash:
-                continue
             p, r = d["problem"], d["runtime"]
-            done.add((d["kernel_id"], p["M"], p["N"], p["K"],
-                      r["split_k"], r["split_k_mode"]))
-        except Exception:
+        except KeyError:
             continue
+        done.add((d["kernel_id"], p["M"], p["N"], p["K"],
+                  r["split_k"], r["split_k_mode"]))
     return done
 
 
@@ -1225,11 +1221,11 @@ def reproducibility(ctx, kernels, jobs, probe, env, launch_overhead_ms,
                     seed, regs_per_sm):
     rng = random.Random(seed + 1)
     pick = rng.sample(jobs, min(20, len(jobs)))
+    # ⚠️ **이 측정 조건의 줄만** 기준값으로 쓴다. 필터 없이 읽으면 클럭
+    #    미고정 리허설이나 폐기된 구간의 시간이 기준이 되어 재현성 숫자가
+    #    통째로 무의미해진다 (R-5, docs/decisions.md 13).
     first = {}
-    for line in RESULTS.read_text().splitlines():
-        if not line.strip():
-            continue
-        d = json.loads(line)
+    for d in records.iter_records(RESULTS, env["env_hash"]):
         if d["kernel_id"] == "cublas":
             continue
         p, r = d["problem"], d["runtime"]
@@ -1268,14 +1264,11 @@ def report(stats, repro, clock_locked):
                   f"{r['second_ms']:.4f} ms  {r['key'][0][:50]}")
 
     if DRIFT.exists():
-        ds = [json.loads(l) for l in DRIFT.read_text().splitlines() if l.strip()]
-        # ⚠️ **이 측정 조건의 줄만** 본다. drift.jsonl 은 append-only 라
-        #    클럭 미고정 리허설(1.45ms @1800MHz)과 폐기된 드리프트 구간이
-        #    같이 들어 있고, 필터하지 않으면 변동폭이 55% 로 나와 경고가
-        #    상시 울린다. 그러면 진짜 드리프트를 구분할 수 없다.
-        #    env_hash 는 조인 키가 아니라 격리 경계다 (docs/decisions.md 13).
+        # 이 측정 조건의 줄만 본다 (R-5). drift.jsonl 은 append-only 라
+        # 클럭 미고정 리허설과 폐기된 구간이 같이 들어 있고, 필터하지 않으면
+        # 변동폭이 55% 로 나와 경고가 상시 울린다.
         _eh = json.loads(paths.ENV_JSON.read_text())["env_hash"]
-        ds = [d for d in ds if str(d.get("env_hash", "")).startswith(_eh[:8])]
+        ds = records.load_records(DRIFT, _eh)
         if ds:
             ts = [d["time_ms"] for d in ds]
             mean = sum(ts) / len(ts)

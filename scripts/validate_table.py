@@ -111,6 +111,10 @@ def main() -> int:
     n_lines = n_sel = n_cublas = 0
 
     peak_flops = hw.peak_tflops_f16 * 1e12
+    # ⚠️ 여기는 **의도적으로** 전체를 읽는다. 이 검사기의 일 중 하나가
+    #    "파일에 조건이 몇 종 섞여 있는가" 를 보고하는 것이라, 필터하면
+    #    그 검사가 불가능해진다. 선택된 줄만 세는 것은 아래 h/env_hash 비교로
+    #    한다. (R-5 의 예외 — core.records.ALL 과 같은 취지)
     with RESULTS.open() as f:
         for line in f:
             line = line.strip()

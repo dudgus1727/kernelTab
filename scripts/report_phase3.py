@@ -29,6 +29,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from backends import get_backend  # noqa: E402
 from build import paths  # noqa: E402
+from core import records  # noqa: E402
 from core import features as F  # noqa: E402
 from core.hardware import hardware_from_env  # noqa: E402
 from core.types import KernelConfig, Problem, RuntimeConfig  # noqa: E402
@@ -46,18 +47,12 @@ THROTTLE_BITS = {
 
 # ---------------------------------------------------------------------------
 def iter_rows(env_hash: str):
-    """results.jsonl 을 스트리밍한다. 지정한 측정 조건의 줄만 넘긴다."""
-    with RESULTS.open() as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                d = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if d.get("env_hash", "").startswith(env_hash):
-                yield d
+    """results.jsonl 을 스트리밍한다. 지정한 측정 조건의 줄만 넘긴다.
+
+    구현이 `core.records` 하나로 모여 있다 — 같은 필터를 여러 곳에 복제하면
+    한 곳만 빠뜨려도 조용히 틀린다 (R-5).
+    """
+    return records.iter_records(RESULTS, env_hash)
 
 
 def load_kernels() -> dict:

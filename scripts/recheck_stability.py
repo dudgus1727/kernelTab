@@ -25,6 +25,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from build import paths  # noqa: E402
+from core import records  # noqa: E402
 from core.hardware import hardware_from_env  # noqa: E402
 from core.types import Hardware, KernelConfig, Problem  # noqa: E402
 
@@ -56,7 +57,8 @@ def main() -> int:
 
     kern = {r["kernel_id"]: r for r in
             (json.loads(l) for l in KERNELS.read_text().splitlines() if l.strip())}
-    res = [json.loads(l) for l in RESULTS.read_text().splitlines() if l.strip()]
+    # ⚠️ 이 측정 조건의 줄만. 조건이 섞이면 재측정 대조가 어긋난다 (R-5).
+    res = records.load_records(RESULTS, env["env_hash"])
     okrows = [r for r in res if r.get("status") == "ok" and r["kernel_id"] != "cublas"]
 
     rng = random.Random(env["shuffle_seed"] ^ 0xC0FFEE)
