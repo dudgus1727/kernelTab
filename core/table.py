@@ -27,14 +27,14 @@ if TYPE_CHECKING:  # pragma: no cover
 
 __all__ = [
     "ANSWER_COLS",
+    "KNOWN_FEATURE_COLS",
     "OUTCOME_COLS",
     "SAFE_META_COLS",
-    "KNOWN_FEATURE_COLS",
+    "AnswerLeakError",
+    "assert_no_answers",
     "classify_columns",
     "load_for_ranking",
     "load_for_scoring",
-    "assert_no_answers",
-    "AnswerLeakError",
 ]
 
 
@@ -160,7 +160,7 @@ def load_for_ranking(
     ok_only: bool = True,
     keep_outcomes: bool = False,
     unknown_columns: str = "warn",
-) -> "pd.DataFrame":
+) -> pd.DataFrame:
     """규칙 함수에 넘길 수 있는 형태. **정답 컬럼이 제거되어 있다.**
 
     Parameters
@@ -189,7 +189,7 @@ def load_for_scoring(
     path: str | Path,
     env_hash: str | None = None,
     ok_only: bool = True,
-) -> "pd.DataFrame":
+) -> pd.DataFrame:
     """채점용. 정답을 포함한다. **규칙 함수에 넘기면 안 된다.**
 
     조인 키(`kernel_id`, 형상, 런타임 config)와 정답만 남긴다. 피처를 함께

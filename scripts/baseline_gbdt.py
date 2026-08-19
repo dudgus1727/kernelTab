@@ -47,6 +47,7 @@ def main() -> int:
     import lightgbm as lgb
     import numpy as np
     import pyarrow.parquet as pq
+
     from build import paths
 
     ap = argparse.ArgumentParser()

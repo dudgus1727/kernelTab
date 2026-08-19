@@ -27,8 +27,13 @@ from __future__ import annotations
 import os
 import subprocess
 
-__all__ = ["DeviceNotFoundError", "list_devices", "index_of_uuid",
-           "resolve_device", "smi_target"]
+__all__ = [
+    "DeviceNotFoundError",
+    "index_of_uuid",
+    "list_devices",
+    "resolve_device",
+    "smi_target",
+]
 
 
 class DeviceNotFoundError(RuntimeError):

@@ -21,10 +21,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from backends import get_backend  # noqa: E402
-from build import paths  # noqa: E402
-from core.hardware import hardware_from_env  # noqa: E402
-from core.types import Hardware, Problem, RuntimeConfig  # noqa: E402
+from backends import get_backend
+from build import paths
+from core.hardware import hardware_from_env
+from core.types import Problem, RuntimeConfig
 
 RESULTS = paths.RESULTS_DIR / "results.jsonl"
 KERNELS = paths.RESULTS_DIR / "kernels.jsonl"
@@ -67,7 +67,7 @@ def main() -> int:
     print(f"측정 {len(meas)}줄 (+ cuBLAS {len(cublas)}줄), 커널 {len(kern)}개")
     hr("status 분포")
     for k, v in Counter(r.get("status") for r in meas).most_common():
-        print(f"  {str(k):24s} {v:6d}  ({100 * v / len(meas):5.1f}%)")
+        print(f"  {k!s:24s} {v:6d}  ({100 * v / len(meas):5.1f}%)")
 
     # ---- A. actual_split_k 검증 -----------------------------------------
     hr("A. actual_split_k (실측 grid.z) vs effective_split_k() 예측")
@@ -132,7 +132,7 @@ def main() -> int:
     for t in sorted(by_thr, key=lambda x: (x is None, x)):
         v = sorted(by_thr[t])
         n = len(v)
-        print(f"  {str(t):>8s} {n:6d} {v[n // 2]:8.3f} {v[int(n * 0.9)]:8.3f} "
+        print(f"  {t!s:>8s} {n:6d} {v[n // 2]:8.3f} {v[int(n * 0.9)]:8.3f} "
               f"{v[-1]:8.3f}")
 
     # ---- J. 스필 vs 비스필 -----------------------------------------------
@@ -166,7 +166,7 @@ def main() -> int:
                  if kern.get(r["kernel_id"])
                  and (kern[r["kernel_id"]]["ext"]["warp_m"],
                       kern[r["kernel_id"]]["ext"]["warp_n"]) == w)
-        print(f"    {str(w):12s} n={len(v):5d} median={v[len(v) // 2]:.3f} "
+        print(f"    {w!s:12s} n={len(v):5d} median={v[len(v) // 2]:.3f} "
               f"max={v[-1]:.3f}" + ("   <- 스필" if sp else ""))
 
     # ---- K. pipeline_kind ------------------------------------------------
@@ -179,7 +179,7 @@ def main() -> int:
     for pk in sorted(by_pk, key=str):
         v = sorted(by_pk[pk])
         n = len(v)
-        print(f"  {str(pk):12s} n={n:5d} median={v[n // 2]:.3f} "
+        print(f"  {pk!s:12s} n={n:5d} median={v[n // 2]:.3f} "
               f"p90={v[int(n * 0.9)]:.3f} max={v[-1]:.3f}")
 
     # ---- 형상별 최고 성능 vs cuBLAS --------------------------------------
@@ -200,7 +200,7 @@ def main() -> int:
                f"sw{e.get('swizzle_type', '')[:2]}{e.get('swizzle_n')} "
                f"sk{b['runtime']['split_k']}{b['runtime']['split_k_mode'][:4]}")
         ratio = f"{cb / b['time_ms']:.3f}" if cb else "n/a"
-        print(f"  {str(key):24s} {b['time_ms']:9.4f} "
+        print(f"  {key!s:24s} {b['time_ms']:9.4f} "
               f"{cb if cb else 0:10.4f} {ratio:>7s}  {cfg}")
 
     # ---- split-K 가설 ----------------------------------------------------
@@ -216,7 +216,7 @@ def main() -> int:
         best = min(min(v) for v in by_sk.values())
         parts = " ".join(
             f"{sk}:{best / min(v):.3f}" for sk, v in sorted(by_sk.items()))
-        print(f"  {str(key):24s} {parts}")
+        print(f"  {key!s:24s} {parts}")
     print("  (값 = 해당 split_k 의 최고 성능 / 전체 최고 성능, 1.0 이 최고)")
 
     # ---- 드리프트 --------------------------------------------------------
@@ -239,7 +239,7 @@ def main() -> int:
     # ---- 텔레메트리 ------------------------------------------------------
     hr("텔레메트리 / 스로틀링")
     sys.path.insert(0, str(REPO_ROOT / "scripts"))
-    from rehearse import analyze_telemetry  # noqa: E402
+    from rehearse import analyze_telemetry
 
     tel = analyze_telemetry()
     if tel:

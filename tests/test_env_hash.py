@@ -9,8 +9,12 @@ import copy
 
 import pytest
 
-from core.env_hash import (ENV_HASH_KEYS_V2, EXCLUDED_WITH_REASON,
-                           env_hash_v2, hash_inputs)
+from core.env_hash import (
+    ENV_HASH_KEYS_V2,
+    EXCLUDED_WITH_REASON,
+    env_hash_v2,
+    hash_inputs,
+)
 
 
 @pytest.fixture

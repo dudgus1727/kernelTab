@@ -27,12 +27,12 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from backends import get_backend  # noqa: E402
-from build import paths  # noqa: E402
-from core import records  # noqa: E402
-from core import features as F  # noqa: E402
-from core.hardware import hardware_from_env  # noqa: E402
-from core.types import KernelConfig, Problem, RuntimeConfig  # noqa: E402
+from backends import get_backend
+from build import paths
+from core import features as F
+from core import records
+from core.hardware import hardware_from_env
+from core.types import KernelConfig, Problem, RuntimeConfig
 
 RESULTS = paths.RESULTS_DIR / "results.jsonl"
 KERNELS = paths.RESULTS_DIR / "kernels.jsonl"
@@ -103,8 +103,8 @@ def _difficulty(shape_cfg):
 
 def _is_a888(key) -> bool:
     """이 형상이 alignment (8,8,8) 인가. 층 D(정렬 검증용)를 걸러낸다."""
-    from core.types import Problem as _P
     from core.config import alignments_for as _af
+    from core.types import Problem as _P
     M, N, K = key
     return _af(_P(M, N, K)) == (8, 8, 8)
 
@@ -450,7 +450,7 @@ def main() -> int:
         w(f"  - 메모리 클럭 {tel['mem_min']}~{tel['mem_max']} MHz (중앙값 {tel['mem_med']})")
         w(f"  - 온도 {tel['t_min']}~{tel['t_max']} °C, 전력 {tel['p_min']}~{tel['p_max']} W")
         if tel["throttle"]:
-            w(f"  - **스로틀 발생**: "
+            w("  - **스로틀 발생**: "
               + ", ".join(f"{k} {v}초 ({100 * v / tel['n']:.1f}%)"
                           for k, v in tel["throttle"].items()))
         else:
@@ -471,7 +471,7 @@ def main() -> int:
     if anc is None:
         w("`results/anchors.jsonl` 이 없다 — 세그먼트 방식으로 측정하지 않았다.")
     else:
-        w(f"| 앵커 | 형상 | 중앙(ms) | 세그먼트 | 변동폭 |")
+        w("| 앵커 | 형상 | 중앙(ms) | 세그먼트 | 변동폭 |")
         w("|---|---:|---:|---:|---:|")
         for kid, M, med, nseg, spread in anc["rows"]:
             w(f"| `{kid[-38:]}` | {M} | {med:.4f} | {nseg} | {spread:.2f}% |")

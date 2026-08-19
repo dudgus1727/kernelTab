@@ -24,14 +24,15 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from backends import get_backend  # noqa: E402
-from build import paths  # noqa: E402
-from core.config import alignment_combos, dtype_bytes, enumerate_kernels  # noqa: E402
-from core.hardware import (  # noqa: E402
-    detect_hardware, hardware_from_env, nvcc_arch_flag,
+from backends import get_backend
+from build import paths
+from core.config import alignment_combos, dtype_bytes, enumerate_kernels
+from core.hardware import (
+    detect_hardware,
+    hardware_from_env,
+    nvcc_arch_flag,
 )
-from core.shapes import all_shapes  # noqa: E402
-from core.types import Hardware  # noqa: E402
+from core.shapes import all_shapes
 
 MAIN = """
 #include <cstdio>

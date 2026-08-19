@@ -28,17 +28,17 @@ from core.types import Hardware
 
 __all__ = [
     "NVCC_ARCH",
-    "UnknownGpuError",
     "HardwareDetectionError",
-    "detect_hardware",
-    "nvcc_arch_flag",
-    "hardware_to_dict",
-    "device_uuid",
-    "peak_reference_mhz",
-    "bandwidth_reference_mhz",
+    "UnknownGpuError",
     "bandwidth_from_api",
-    "known_spec",
+    "bandwidth_reference_mhz",
+    "detect_hardware",
+    "device_uuid",
     "hardware_from_env",
+    "hardware_to_dict",
+    "known_spec",
+    "nvcc_arch_flag",
+    "peak_reference_mhz",
 ]
 
 # ---------------------------------------------------------------------------

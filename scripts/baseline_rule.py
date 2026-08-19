@@ -22,8 +22,12 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from build import paths  # noqa: E402
-from core.table import assert_no_answers, load_for_ranking, load_for_scoring  # noqa: E402
+from build import paths
+from core.table import (
+    assert_no_answers,
+    load_for_ranking,
+    load_for_scoring,
+)
 
 
 def geo(v):

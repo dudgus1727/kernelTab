@@ -12,7 +12,6 @@ kt_info() 만 CUDA 컨텍스트가 필요해서 별도 패스로 돌린다.
 from __future__ import annotations
 
 import ctypes
-import json
 import re
 import subprocess
 import tempfile
@@ -22,7 +21,7 @@ from pathlib import Path
 
 from build import paths
 
-__all__ = ["BuildEnv", "build_kernel", "introspect", "KtInfo"]
+__all__ = ["BuildEnv", "KtInfo", "build_kernel", "introspect"]
 
 
 # ---------------------------------------------------------------------------
@@ -38,7 +37,7 @@ class BuildEnv:
     include_args: tuple[str, ...]
 
     @staticmethod
-    def from_env_json(env: dict) -> "BuildEnv":
+    def from_env_json(env: dict) -> BuildEnv:
         cutlass = Path(env["cutlass"]["dir"])
         src = paths.ARTIFACT_DIR / "src"
         lib = paths.ARTIFACT_DIR / "lib"

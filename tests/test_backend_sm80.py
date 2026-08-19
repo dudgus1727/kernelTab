@@ -4,10 +4,11 @@
 각 제약마다 최소 한 개씩 통과/탈락 사례를 고정해 둔다. 제약을 건드렸을 때
 무엇이 달라지는지 즉시 드러나야 한다.
 """
-import pytest
 
 from backends.sm80 import (
-    SPLIT_K, epilogue_thread_map_ok, mainloop_smem_thread_map_ok,
+    SPLIT_K,
+    epilogue_thread_map_ok,
+    mainloop_smem_thread_map_ok,
     warp_k_options,
 )
 from core.types import Problem, RuntimeConfig

@@ -57,7 +57,7 @@ def preset_for(name: str) -> str:
 
 def extract(out_path: str, count: int) -> int:
     """휴리스틱에서 형상별 top-k 를 뽑는다. 격리된 venv 에서 돌린다."""
-    import nvMatmulHeuristics as nv  # noqa: E402
+    import nvMatmulHeuristics as nv
 
     sys.path.insert(0, str(REPO_ROOT))
     from build import paths
@@ -118,6 +118,7 @@ def _dist(a, b) -> float:
 def score(path: str) -> int:
     sys.path.insert(0, str(REPO_ROOT))
     import pyarrow.parquet as pq
+
     from build import paths
 
     env = json.loads(paths.ENV_JSON.read_text())

@@ -13,14 +13,20 @@ import pytest
 pytest.importorskip("pyarrow")
 pytest.importorskip("pandas")
 
-import pandas as pd  # noqa: E402
-import pyarrow as pa  # noqa: E402
-import pyarrow.parquet as pq  # noqa: E402
+import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 
-from core.table import (  # noqa: E402
-    ANSWER_COLS, KNOWN_FEATURE_COLS, OUTCOME_COLS, SAFE_META_COLS,
-    AnswerLeakError, assert_no_answers, classify_columns,
-    load_for_ranking, load_for_scoring,
+from core.table import (
+    ANSWER_COLS,
+    KNOWN_FEATURE_COLS,
+    OUTCOME_COLS,
+    SAFE_META_COLS,
+    AnswerLeakError,
+    assert_no_answers,
+    classify_columns,
+    load_for_ranking,
+    load_for_scoring,
 )
 
 

@@ -18,12 +18,13 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from backends import get_backend  # noqa: E402
-from backends.sm80 import (  # noqa: E402
-    epilogue_thread_map_ok, mainloop_smem_thread_map_ok,
+from backends import get_backend
+from backends.sm80 import (
+    epilogue_thread_map_ok,
+    mainloop_smem_thread_map_ok,
 )
-from core.types import KernelConfig  # noqa: E402
-from build import paths  # noqa: E402
+from build import paths
+from core.types import KernelConfig
 
 KERNELS = paths.RESULTS_DIR / "kernels.jsonl"
 

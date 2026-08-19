@@ -38,9 +38,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from build import paths  # noqa: E402
-from core.hardware import hardware_from_env  # noqa: E402
-from core.shapes import all_layers  # noqa: E402
+from build import paths
+from core.hardware import hardware_from_env
+from core.shapes import all_layers
 
 DATASETS = REPO_ROOT / "datasets"
 RESULTS = paths.RESULTS_DIR / "results.jsonl"
@@ -298,7 +298,7 @@ def github_release(bundle: dict, out: Path, dsdir: Path, bundle_id: str,
             if chk.exists():
                 assets.append(chk)
 
-    print(f"\n--- GitHub Release ---")
+    print("\n--- GitHub Release ---")
     print(f"릴리즈 노트: {notes}")
     if not assets:
         print("!! 올릴 파일이 없다. --archive --archive-raw 를 먼저 돌려라.")
@@ -403,7 +403,7 @@ def main() -> int:
     shutil.copy2(paths.ENV_JSON, out / "env.json")
     shutil.copy2(KERNELS, out / "kernels.jsonl")
 
-    from manifest import build as build_manifest  # noqa: E402
+    from manifest import build as build_manifest
     man = build_manifest()
     (out / "manifest.json").write_text(
         json.dumps(man, indent=2, ensure_ascii=False) + "\n")
@@ -559,7 +559,7 @@ CUTLASS (NVIDIA, BSD-3-Clause) 는 이 번들에 포함되지 않는다.
     rc = assert_single_env(out / "table.parquet", env_hash)
     if rc:
         return rc
-    from validate_table import validate_bundle  # noqa: E402
+    from validate_table import validate_bundle
     rc = validate_bundle(out)
     if rc:
         print("\n!! 번들 검사 실패 — 배포하지 않는다.")

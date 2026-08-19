@@ -19,10 +19,10 @@ import argparse
 import json
 import os
 import random
+import statistics
 import subprocess
 import sys
 import time
-import statistics
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,15 +30,17 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from backends import get_backend  # noqa: E402
-from build import paths  # noqa: E402
-from core import device  # noqa: E402
-from core import records  # noqa: E402
-from core.hardware import hardware_from_env  # noqa: E402
-from core.config import alignments_for, enumerate_runtimes  # noqa: E402
-from core.shapes import all_shapes  # noqa: E402
-from measure.runner import SOAK_DEFAULTS  # noqa: E402,F401
-from core.types import Hardware, KernelConfig, Problem, RuntimeConfig  # noqa: E402
+from backends import get_backend
+from build import paths
+from core import (
+    device,
+    records,
+)
+from core.config import alignments_for, enumerate_runtimes
+from core.hardware import hardware_from_env
+from core.shapes import all_shapes
+from core.types import KernelConfig, Problem, RuntimeConfig
+from measure.runner import SOAK_DEFAULTS  # noqa: F401
 
 RESULTS = paths.RESULTS_DIR / "results.jsonl"
 DRIFT = paths.RESULTS_DIR / "drift.jsonl"
@@ -482,8 +484,8 @@ def main() -> int:
     drift_period = env["drift_check_seconds"]
     clock_locked = env["clock_locked"]
 
-    from measure.gpu_state import NvmlProbe  # noqa: E402
-    from measure.runner import Ctx, Kernel, KtProblemC  # noqa: E402
+    from measure.gpu_state import NvmlProbe
+    from measure.runner import Ctx, Kernel
 
     # --- 빌드된 커널 로드 ---------------------------------------------------
     rows = [json.loads(l) for l in KERNELS.read_text().splitlines() if l.strip()]
@@ -500,7 +502,7 @@ def main() -> int:
         #      kernels.jsonl 은 append-only 라 과거 열거 공간에서 빌드된 것이
         #      남아 있다 (예: 계산이 틀리는 warp tile (64,128)). 측정 대상은
         #      항상 "지금의 is_valid_kernel 이 인정하는 집합" 이어야 한다.
-        from core.config import alignment_combos, enumerate_kernels  # noqa: E402
+        from core.config import alignment_combos, enumerate_kernels
 
         valid_ids = {backend.kernel_id(c) for c in
                      enumerate_kernels(hw, backend,

@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import random
 import statistics
 import sys
@@ -24,11 +23,13 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from build import paths  # noqa: E402
-from core import device  # noqa: E402
-from core import records  # noqa: E402
-from core.hardware import hardware_from_env  # noqa: E402
-from core.types import Hardware, KernelConfig, Problem  # noqa: E402
+from build import paths
+from core import (
+    device,
+    records,
+)
+from core.hardware import hardware_from_env
+from core.types import KernelConfig, Problem
 
 RESULTS = paths.RESULTS_DIR / "results.jsonl"
 KERNELS = paths.RESULTS_DIR / "kernels.jsonl"
@@ -56,8 +57,8 @@ def main() -> int:
     device.resolve_device(env)
     hw = hardware_from_env(env)
 
-    from measure.gpu_state import NvmlProbe  # noqa: E402
-    from measure.runner import Ctx, Kernel, KtProblemC  # noqa: E402
+    from measure.gpu_state import NvmlProbe
+    from measure.runner import Ctx, Kernel, KtProblemC
 
     kern = {r["kernel_id"]: r for r in
             (json.loads(l) for l in KERNELS.read_text().splitlines() if l.strip())}
@@ -68,13 +69,15 @@ def main() -> int:
     rng = random.Random(env["shuffle_seed"] ^ 0xC0FFEE)
     if args.shapes:
         # min_reps 를 낮춘 뒤 느린 형상에서도 재현성이 유지되는지 확인한다.
-        from backends import get_backend  # noqa: E402
-        from core.config import (  # noqa: E402
-            alignment_combos, alignments_for, enumerate_kernels,
+        from backends import get_backend
+        from core.config import (
+            alignment_combos,
+            alignments_for,
+            enumerate_kernels,
             enumerate_runtimes,
         )
-        from core.shapes import all_shapes  # noqa: E402
-        from core.types import RuntimeConfig  # noqa: F401,E402
+        from core.shapes import all_shapes
+        from core.types import RuntimeConfig  # noqa: F401
 
         backend = get_backend(hw.arch)
         valid = {backend.kernel_id(c) for c in

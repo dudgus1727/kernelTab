@@ -12,18 +12,17 @@ parallel 모드는 GEMM 이 부분합을 workspace 에 쓰고 별도 리덕션 �
 from __future__ import annotations
 
 import json
-import os
 import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from backends import get_backend  # noqa: E402
-from build import paths  # noqa: E402
-from core import device  # noqa: E402
-from core.hardware import hardware_from_env  # noqa: E402
-from core.types import Hardware, Problem, RuntimeConfig  # noqa: E402
+from backends import get_backend
+from build import paths
+from core import device
+from core.hardware import hardware_from_env
+from core.types import Problem, RuntimeConfig
 
 SHAPES = [Problem(1024, 1024, 4096), Problem(1024, 4096, 512),
           Problem(1024, 4096, 4100)]
@@ -38,7 +37,7 @@ def main() -> int:
     hw = hardware_from_env(env)
     backend = get_backend(hw.arch)
 
-    from measure.runner import Ctx, Kernel, KtProblemC  # noqa: E402
+    from measure.runner import Ctx, Kernel, KtProblemC
 
     rows = [json.loads(l) for l in
             (paths.RESULTS_DIR / "kernels.jsonl").read_text().splitlines() if l.strip()]
@@ -113,8 +112,8 @@ def main() -> int:
                     print(f"  {sk:8d} {mode:>9s} {gz:7d} {pred:5d} "
                           f"{m.time_ms:9.4f} {err:12.3e} {ws / 2**20:8.2f}"
                           f"{flag}{skip}")
-            print(f"\n  [split_k 별 serial vs parallel]  "
-                  f"부분합 저장은 양쪽 다 fp16 (serial 은 D 를 재읽기)")
+            print("\n  [split_k 별 serial vs parallel]  "
+                  "부분합 저장은 양쪽 다 fp16 (serial 은 D 를 재읽기)")
             print(f"    {'split_k':>8s} | {'serial ms':>10s} {'serial err':>11s}"
                   f" | {'par ms':>10s} {'par err':>11s}")
             for sk in sorted({key[0] for key in tbl}):

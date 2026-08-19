@@ -31,11 +31,18 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
+from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
-from typing import Any, Callable, Iterable, Iterator
+from typing import Any
 
-__all__ = ["ALL", "iter_records", "load_records", "aggregate_per_env",
-           "env_hashes", "EnvHashError"]
+__all__ = [
+    "ALL",
+    "EnvHashError",
+    "aggregate_per_env",
+    "env_hashes",
+    "iter_records",
+    "load_records",
+]
 
 #: 전체를 읽겠다는 **명시적** 표시. 실수로 전체를 읽는 일이 없도록
 #: 빈 문자열이나 None 은 허용하지 않는다.

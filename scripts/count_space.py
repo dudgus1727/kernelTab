@@ -19,27 +19,28 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from backends import get_backend  # noqa: E402
-from build import paths  # noqa: E402
-from core.config import (  # noqa: E402
+from backends import get_backend
+from build import paths
+from core.config import (
     alignment_combos,
     alignments_for,
     dtype_bytes,
     enumerate_kernels_with_funnel,
     enumerate_runtimes,
 )
-from core.features import (  # noqa: E402
+from core.features import (
     arith_intensity,
     is_memory_bound,
     mainloop_iters,
     ridge_point,
     waves,
 )
-from core.hardware import (  # noqa: E402
-    detect_hardware, hardware_from_env,
+from core.hardware import (
+    detect_hardware,
+    hardware_from_env,
 )
-from core.shapes import all_layers, all_shapes  # noqa: E402
-from core.types import Hardware, Problem  # noqa: E402
+from core.shapes import all_layers, all_shapes
+from core.types import Hardware, Problem
 
 
 def load_hw(device: int) -> Hardware:
@@ -138,7 +139,7 @@ def main() -> int:
         cnt = Counter(key(c) for c in one)
         print(f"\n  {label}:")
         for k, v in sorted(cnt.items(), key=lambda x: str(x[0])):
-            print(f"    {str(k):22s} {v:5d}")
+            print(f"    {k!s:22s} {v:5d}")
 
     # smem 분포
     smems = sorted(backend.smem_bytes(c, nb) for c in one)

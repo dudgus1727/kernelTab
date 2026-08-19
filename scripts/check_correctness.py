@@ -22,11 +22,11 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from build import paths  # noqa: E402
-from core import device  # noqa: E402
-from core.hardware import hardware_from_env  # noqa: E402
-from core.config import alignments_for  # noqa: E402
-from core.types import Hardware, Problem  # noqa: E402
+from build import paths
+from core import device
+from core.config import alignments_for
+from core.hardware import hardware_from_env
+from core.types import Problem
 
 OUT = paths.RESULTS_DIR / "correctness.jsonl"
 TOL = 5e-2
@@ -49,7 +49,7 @@ def main() -> int:
         dev, _ = device.resolve_device(env)
     hw = hardware_from_env(env)
 
-    from measure.runner import Ctx, Kernel, KtProblemC  # noqa: E402
+    from measure.runner import Ctx, Kernel, KtProblemC
 
     rows = [json.loads(l) for l in
             (paths.RESULTS_DIR / "kernels.jsonl").read_text().splitlines()
@@ -109,10 +109,10 @@ def main() -> int:
             if rec["status"] == "ok":
                 n_ok += 1
             else:
-                bad.append({**rec, **{"tile": r["tile"], "ext": r["ext"],
+                bad.append({**rec, "tile": r["tile"], "ext": r["ext"],
                                       "threads": r["threads"],
                                       "regs": r["regs_per_thread"],
-                                      "spill": r["spill_stores"]}})
+                                      "spill": r["spill_stores"]})
             if i % 250 == 0:
                 print(f"  {i}/{len(cand)}  정상 {n_ok}  이상 {len(bad)}", flush=True)
     ctx.close()

@@ -7,8 +7,14 @@ from __future__ import annotations
 
 import pytest
 
-from core.noise import (SIGMA_ABS_MS, SIGMA_REL, coefficients, noise_floor,
-                        noise_floor_ms, resolvable)
+from core.noise import (
+    SIGMA_ABS_MS,
+    SIGMA_REL,
+    coefficients,
+    noise_floor,
+    noise_floor_ms,
+    resolvable,
+)
 
 
 class TestModel:

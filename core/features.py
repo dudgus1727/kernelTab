@@ -18,19 +18,19 @@ from core.config import alignments_for, dtype_bytes
 from core.types import Hardware, KernelConfig, Problem, RuntimeConfig
 
 __all__ = [
-    "grid_tiles",
-    "waves",
-    "tail_waste",
-    "mainloop_iters",
     "arith_intensity",
-    "min_access_bytes",
-    "can_use_cp_async",
-    "ridge_point",
-    "is_memory_bound",
-    "flops",
     "bytes_moved",
+    "can_use_cp_async",
+    "flops",
+    "grid_tiles",
+    "is_memory_bound",
+    "mainloop_iters",
+    "min_access_bytes",
+    "ridge_point",
     "tail_m_frac",
     "tail_n_frac",
+    "tail_waste",
+    "waves",
 ]
 
 

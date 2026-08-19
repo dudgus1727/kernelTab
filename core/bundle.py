@@ -22,17 +22,23 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterable
+from typing import TYPE_CHECKING
 
 from core.table import AnswerLeakError, load_for_ranking, load_for_scoring
 
 if TYPE_CHECKING:  # pragma: no cover
     import pandas as pd
 
-__all__ = ["Bundle", "load_bundle", "load_bundles", "BundleError",
-           "resolve_bundle_path"]
+__all__ = [
+    "Bundle",
+    "BundleError",
+    "load_bundle",
+    "load_bundles",
+    "resolve_bundle_path",
+]
 
 
 class BundleError(RuntimeError):
@@ -120,12 +126,12 @@ class Bundle:
         return {tuple(s) for v in self.shape_layers().values() for s in v}
 
     # -- 로더 --------------------------------------------------------------
-    def ranking(self, **kw) -> "pd.DataFrame":
+    def ranking(self, **kw) -> pd.DataFrame:
         """규칙 입력. 정답 컬럼이 제거되어 있다."""
         return _tag(load_for_ranking(self.table_path,
                                      env_hash=self.env_hash[:16], **kw), self)
 
-    def scoring(self, **kw) -> "pd.DataFrame":
+    def scoring(self, **kw) -> pd.DataFrame:
         """채점용. 정답 포함. **규칙 함수에 넘기면 안 된다.**"""
         return _tag(load_for_scoring(self.table_path,
                                      env_hash=self.env_hash[:16], **kw), self)
@@ -173,7 +179,7 @@ def load_bundles(
     kind: str = "ranking",
     verify: bool = True,
     **kw,
-) -> "pd.DataFrame":
+) -> pd.DataFrame:
     """여러 번들을 하나의 표로 합친다.
 
     Parameters

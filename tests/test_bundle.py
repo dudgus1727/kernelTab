@@ -11,15 +11,18 @@ import pytest
 pytest.importorskip("pyarrow")
 pytest.importorskip("pandas")
 
-import pyarrow as pa  # noqa: E402
-import pyarrow.parquet as pq  # noqa: E402
+import pyarrow as pa
+import pyarrow.parquet as pq
 
-REPO = Path(__file__).resolve().parent.parent  # noqa: E402
+REPO = Path(__file__).resolve().parent.parent
 
-from core.bundle import (  # noqa: E402
-    BundleError, load_bundle, load_bundles, resolve_bundle_path,
+from core.bundle import (
+    BundleError,
+    load_bundle,
+    load_bundles,
+    resolve_bundle_path,
 )
-from core.table import ANSWER_COLS, AnswerLeakError  # noqa: E402
+from core.table import ANSWER_COLS
 
 
 def _rows(env_hash, shapes, n_cfg=3):

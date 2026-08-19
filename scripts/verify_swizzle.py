@@ -17,20 +17,18 @@
 from __future__ import annotations
 
 import json
-import os
-import subprocess
 import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from backends import get_backend  # noqa: E402
-from build import paths  # noqa: E402
-from core import device  # noqa: E402
-from core.hardware import hardware_from_env  # noqa: E402
-from build.compile import BuildEnv, build_ctx_so, build_kernel  # noqa: E402
-from core.types import Hardware, KernelConfig, Problem  # noqa: E402
+from backends import get_backend
+from build import paths
+from build.compile import BuildEnv, build_ctx_so, build_kernel
+from core import device
+from core.hardware import hardware_from_env
+from core.types import KernelConfig, Problem
 
 # 래스터 방향 차이가 드러나려면 타일 격자가 정사각이 아니어야 하고
 # 타일 수가 SM 수보다 충분히 많아야 한다.
@@ -58,7 +56,7 @@ def main() -> int:
     be = BuildEnv.from_env_json(env)
     build_ctx_so(env)
 
-    from measure.runner import Ctx, Kernel, KtProblemC  # noqa: E402
+    from measure.runner import Ctx, Kernel, KtProblemC
 
     cfgs = {}
     for swz, n in VARIANTS:
@@ -105,7 +103,7 @@ def main() -> int:
                 mark = "OK " if g == want else "!! "
                 if g != want:
                     ok = False
-                print(f"    {mark}{str(key):18s} grid={g}  기대={want}  ({note})")
+                print(f"    {mark}{key!s:18s} grid={g}  기대={want}  ({note})")
 
         # --- 1) 정확도 + 3) 성능 ----------------------------------------
         print("\n" + "=" * 72)
@@ -135,7 +133,7 @@ def main() -> int:
                 bad = "" if 0 <= err < 1e-3 else "   <-- 정확도 문제!"
                 if not (0 <= err < 1e-3):
                     ok = False
-                print(f"    {str(key):18s} {m.time_ms:.4f} ms  "
+                print(f"    {key!s:18s} {m.time_ms:.4f} ms  "
                       f"({100 * cub.time_ms / m.time_ms:5.1f}% of cuBLAS)  "
                       f"max_rel_err={err:.2e}{bad}")
             base = times.get(("identity", 1))

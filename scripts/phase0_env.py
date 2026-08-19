@@ -17,7 +17,6 @@ import json
 import os
 import platform
 import re
-import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -26,23 +25,27 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from build import paths  # noqa: E402
-from core.env_hash import env_hash_v2  # noqa: E402
-from core.hardware import (  # noqa: E402
+from build import paths
+from core.env_hash import env_hash_v2
+from core.hardware import (
     bandwidth_from_api,
     bandwidth_reference_mhz,
-    known_spec,
     detect_hardware,
-    peak_reference_mhz,
-    device_uuid,
     extra_device_info,
     hardware_to_dict,
+    known_spec,
     nvcc_arch_flag,
+    peak_reference_mhz,
 )
-from measure.runner import (  # noqa: E402
-    PROTOCOL_DEFAULTS, SEGMENT_DEFAULTS, SOAK_DEFAULTS)
-from measure.gpu_state import (  # noqa: E402
-    ClockLockResult, drift_check_seconds, try_lock_clocks,
+from measure.gpu_state import (
+    ClockLockResult,
+    drift_check_seconds,
+    try_lock_clocks,
+)
+from measure.runner import (
+    PROTOCOL_DEFAULTS,
+    SEGMENT_DEFAULTS,
+    SOAK_DEFAULTS,
 )
 
 
@@ -143,7 +146,7 @@ def cutlass_info(explicit: str | None, commit_override: str | None = None) -> di
             dep_hits.append(f"{rel}: MISSING")
             continue
         for i, line in enumerate(f.read_text(errors="replace").splitlines(), 1):
-            if re.search(r"deprecat", line, re.I):
+            if re.search(r"deprecat", line, re.IGNORECASE):
                 dep_hits.append(f"{rel}:{i}: {line.strip()[:120]}")
 
     detected = commit.strip() if rc == 0 else None
@@ -465,12 +468,12 @@ def main() -> int:
     peak_eff = hw.peak_tflops_f16
     if lock.locked and lock.mhz and peak_ref:
         peak_eff = round(hw.peak_tflops_f16 * lock.mhz / peak_ref, 3)
-        print(f"\n--- 실효 피크 (클럭 고정 보정) ---")
+        print("\n--- 실효 피크 (클럭 고정 보정) ---")
         print(f"  스펙 {hw.peak_tflops_f16} TFLOP/s @ {peak_ref} MHz")
         print(f"  실효 {peak_eff} TFLOP/s @ {lock.mhz} MHz")
-        print(f"  (ridge point 는 대역폭 보정 후 아래에서 최종 출력)")
+        print("  (ridge point 는 대역폭 보정 후 아래에서 최종 출력)")
     clk_state = clock_state(args.device)
-    print(f"\n--- 클럭 상태 ---")
+    print("\n--- 클럭 상태 ---")
     print(f"  SM {clk_state.get('sm_clock_mhz')} MHz "
           f"(최대 {clk_state.get('max_sm_mhz')})   "
           f"메모리 {clk_state.get('mem_clock_mhz')} MHz "
@@ -511,7 +514,7 @@ def main() -> int:
           f"워크로드는 P2 로 동작하므로 도달 불가능한 값이다.")
     bw_from_api = bw_eff
 
-    print(f"\n--- roofline ---")
+    print("\n--- roofline ---")
     print(f"  스펙 기준 ridge point "
           f"{hw.peak_tflops_f16 * 1e12 / (hw.bandwidth_gbps * 1e9):.1f} FLOP/byte")
     print(f"  실효 기준 ridge point {peak_eff * 1e12 / (bw_eff * 1e9):.1f} FLOP/byte"

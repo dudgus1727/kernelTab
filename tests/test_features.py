@@ -11,7 +11,6 @@ import pytest
 from core import features as F
 from core.types import KernelConfig, Problem, RuntimeConfig
 
-
 SK1 = RuntimeConfig(1, "serial")
 
 

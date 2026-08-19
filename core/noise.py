@@ -40,8 +40,14 @@
 
 from __future__ import annotations
 
-__all__ = ["SIGMA_ABS_MS", "SIGMA_REL", "noise_floor_ms", "noise_floor",
-           "coefficients", "resolvable"]
+__all__ = [
+    "SIGMA_ABS_MS",
+    "SIGMA_REL",
+    "coefficients",
+    "noise_floor",
+    "noise_floor_ms",
+    "resolvable",
+]
 
 #: 절대 지터 (ms). 커널 시간과 무관한 타이머/런치 성분.
 #: 앵커 중 t < 0.06 ms 조합들의 절대 표준편차 중앙값.

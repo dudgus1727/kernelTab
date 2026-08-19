@@ -4,13 +4,16 @@
 같은 M 이 다른 물리적 상황을 의미하기 때문이다. 그 역산이 실제로 hw 에
 반응하는지 확인하는 것이 이 파일의 핵심이다.
 """
-import pytest
 
 from core.shapes import (
-    all_layers, all_shapes, shapes_layer_a, shapes_layer_b, shapes_layer_c,
-    shapes_layer_d, shapes_layer_e,
+    all_layers,
+    all_shapes,
+    shapes_layer_a,
+    shapes_layer_b,
+    shapes_layer_c,
+    shapes_layer_d,
+    shapes_layer_e,
 )
-from core.types import Problem
 
 
 class TestLayerCounts:

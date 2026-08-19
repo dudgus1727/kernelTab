@@ -24,14 +24,13 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from backends import get_backend  # noqa: E402
-from build import paths  # noqa: E402
-from core import device  # noqa: E402
-from core.hardware import hardware_from_env  # noqa: E402
-from build.compile import BuildEnv, build_ctx_so, build_kernel, introspect  # noqa: E402
-from core.config import alignment_combos, dtype_bytes, enumerate_kernels  # noqa: E402
-from core.shapes import all_shapes  # noqa: E402
-from core.types import Hardware  # noqa: E402
+from backends import get_backend
+from build import paths
+from build.compile import BuildEnv, build_ctx_so, build_kernel
+from core import device
+from core.config import alignment_combos, dtype_bytes, enumerate_kernels
+from core.hardware import hardware_from_env
+from core.shapes import all_shapes
 
 KERNELS_JSONL = paths.RESULTS_DIR / "kernels.jsonl"
 
@@ -117,7 +116,7 @@ def main() -> int:
     be = BuildEnv.from_env_json(env)
     paths.ensure_dirs()
 
-    print(f"[ctx] libkt_ctx.so 빌드 중...")
+    print("[ctx] libkt_ctx.so 빌드 중...")
     ctx_so = build_ctx_so(env, force=args.force)
     print(f"[ctx] {ctx_so}")
 
@@ -232,7 +231,7 @@ def _report(rows, hw, backend, nb, fail_counter, elapsed):
         tot_warp = Counter((r["ext"]["warp_m"], r["ext"]["warp_n"]) for r in ok)
         print("  warp tile 별 스필 비율:")
         for k in sorted(tot_warp, key=lambda x: -by_warp.get(x, 0)):
-            print(f"    {str(k):12s} {by_warp.get(k, 0):5d}/{tot_warp[k]:5d} "
+            print(f"    {k!s:12s} {by_warp.get(k, 0):5d}/{tot_warp[k]:5d} "
                   f"= {100 * by_warp.get(k, 0) / tot_warp[k]:5.1f}%")
 
     mism_smem = [r for r in ok

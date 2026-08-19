@@ -10,17 +10,16 @@ nvidia-smi 는 (a) 클럭 고정 시도, (b) 백그라운드 텔레메트리 프
 
 from __future__ import annotations
 
-from collections import Counter
-
 import subprocess
+from collections import Counter
 from dataclasses import dataclass
 
 __all__ = [
     "ClockLockResult",
-    "try_lock_clocks",
-    "reset_clocks",
     "NvmlProbe",
     "drift_check_seconds",
+    "reset_clocks",
+    "try_lock_clocks",
 ]
 
 

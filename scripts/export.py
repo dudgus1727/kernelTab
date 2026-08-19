@@ -17,18 +17,17 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from dataclasses import replace
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from backends import get_backend  # noqa: E402
-from build import paths  # noqa: E402
-from core import records  # noqa: E402
-from core.hardware import hardware_from_env  # noqa: E402
-from core import features as F  # noqa: E402
-from core.types import Hardware, KernelConfig, Problem, RuntimeConfig  # noqa: E402
+from backends import get_backend
+from build import paths
+from core import features as F
+from core import records
+from core.hardware import hardware_from_env
+from core.types import Hardware, KernelConfig, Problem, RuntimeConfig
 
 RESULTS = paths.RESULTS_DIR / "results.jsonl"
 KERNELS = paths.RESULTS_DIR / "kernels.jsonl"

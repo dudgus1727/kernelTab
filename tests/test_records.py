@@ -11,8 +11,14 @@ import statistics
 
 import pytest
 
-from core.records import (ALL, EnvHashError, aggregate_per_env, env_hashes,
-                          iter_records, load_records)
+from core.records import (
+    ALL,
+    EnvHashError,
+    aggregate_per_env,
+    env_hashes,
+    iter_records,
+    load_records,
+)
 
 
 @pytest.fixture

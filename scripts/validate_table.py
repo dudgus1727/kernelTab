@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -27,15 +26,17 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from backends import get_backend  # noqa: E402
-from build import paths  # noqa: E402
-from core import features as F  # noqa: E402
-from core.config import (  # noqa: E402
-    alignment_combos, alignments_for, enumerate_kernels, enumerate_runtimes,
+from backends import get_backend
+from build import paths
+from core.config import (
+    alignment_combos,
+    alignments_for,
+    enumerate_kernels,
+    enumerate_runtimes,
 )
-from core.hardware import hardware_from_env  # noqa: E402
-from core.shapes import all_shapes  # noqa: E402
-from core.types import KernelConfig, Problem, RuntimeConfig  # noqa: E402
+from core.hardware import hardware_from_env
+from core.shapes import all_shapes
+from core.types import KernelConfig
 
 RESULTS = paths.RESULTS_DIR / "results.jsonl"
 KERNELS = paths.RESULTS_DIR / "kernels.jsonl"
@@ -379,7 +380,7 @@ def main() -> int:
     hr("8. status 요약")
     tot = sum(status.values())
     for k, v in status.most_common():
-        print(f"  {str(k):24s} {v:9,d}  {100 * v / max(tot, 1):6.2f}%")
+        print(f"  {k!s:24s} {v:9,d}  {100 * v / max(tot, 1):6.2f}%")
     ok_frac = status.get("ok", 0) / max(tot, 1)
     if ok_frac < 0.80:
         c.fail(f"ok 비율이 {100 * ok_frac:.1f}% 로 낮다")

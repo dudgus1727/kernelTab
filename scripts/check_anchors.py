@@ -53,7 +53,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from build import paths  # noqa: E402
+from build import paths
 
 ANCHORS = paths.RESULTS_DIR / "anchors.jsonl"
 SWEEP = paths.RESULTS_DIR / "sweep.jsonl"
@@ -155,8 +155,8 @@ def main() -> int:
               f"{spread:5.2f}% {s_between:5.2f}% "
               f"{(s_within if s_within is not None else float('nan')):5.2f}% "
               f"{rs:>6} {mark:>6}")
-    print(f"\n  폭=세그먼트 간 max-min, sB=세그먼트 간 표준편차, "
-          f"sW=측정 노이즈 표준편차")
+    print("\n  폭=세그먼트 간 max-min, sB=세그먼트 간 표준편차, "
+          "sW=측정 노이즈 표준편차")
     print(f"  판정: 비율(sB/sW) <= {RATIO_MAX} 또는 sB <= {args.tol}%  "
           f"(짧은 앵커 절반만)")
 

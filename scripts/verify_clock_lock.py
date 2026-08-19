@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import statistics
 import subprocess
 import sys
@@ -23,10 +22,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from build import paths  # noqa: E402
-from core import device  # noqa: E402
-from core.hardware import hardware_from_env  # noqa: E402
-from core.types import Hardware, Problem  # noqa: E402
+from build import paths
+from core import device
+from core.hardware import hardware_from_env
+from core.types import Problem
 
 TELE = paths.RESULTS_DIR / "telemetry_clocklock.csv"
 OUT = paths.RESULTS_DIR / "clock_lock_check.json"
@@ -86,7 +85,7 @@ def main() -> int:
     dev, _ = device.resolve_device(env)     # P-2: UUID 가 권위
     hw = hardware_from_env(env)
 
-    from measure.runner import Ctx, Kernel, KtProblemC  # noqa: E402
+    from measure.runner import Ctx, Kernel, KtProblemC
 
     rows = [json.loads(l) for l in
             (paths.RESULTS_DIR / "kernels.jsonl").read_text().splitlines() if l.strip()]
@@ -172,7 +171,7 @@ def main() -> int:
     print(f"  power.draw  min={min(pw):.1f} max={max(pw):.1f} "
           f"mean={statistics.mean(pw):.1f} W  (캡 300W)")
     print(f"  temp        시작={tp[0]} 최고={max(tp)} 마지막={tp[-1]} °C")
-    print(f"  throttle    ", end="")
+    print("  throttle    ", end="")
     if thr:
         print({k2: f"{v}s ({100 * v / n:.1f}%)" for k2, v in thr.most_common()})
     else:
