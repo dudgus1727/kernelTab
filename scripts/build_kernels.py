@@ -26,6 +26,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from backends import get_backend  # noqa: E402
 from build import paths  # noqa: E402
+from core import device  # noqa: E402
 from core.hardware import hardware_from_env  # noqa: E402
 from build.compile import BuildEnv, build_ctx_so, build_kernel, introspect  # noqa: E402
 from core.config import alignment_combos, dtype_bytes, enumerate_kernels  # noqa: E402
@@ -106,7 +107,10 @@ def main() -> int:
 
     env = load_env()
     # 어떤 CUDA 호출보다 먼저. Phase 0 이 고른 물리 GPU 에 고정한다.
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(env["device_index"])
+    # P-2: UUID 가 권위다. 저장된 인덱스를 그대로 쓰면 컨테이너나
+    #      CUDA_VISIBLE_DEVICES 가 설정된 환경에서 **다른 GPU 를 측정**한다.
+    #      이미 설정돼 있으면 존중하고, 없는 UUID 면 명확히 실패한다.
+    device.resolve_device(env)
     hw = hardware_from_env(env)
     backend = get_backend(hw.arch)
     nb = dtype_bytes("f16")

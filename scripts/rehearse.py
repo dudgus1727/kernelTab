@@ -32,6 +32,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from backends import get_backend  # noqa: E402
 from build import paths  # noqa: E402
+from core import device  # noqa: E402
 from core import records  # noqa: E402
 from core.hardware import hardware_from_env  # noqa: E402
 from core.config import alignments_for, enumerate_runtimes  # noqa: E402
@@ -260,16 +261,47 @@ def config_key(row: dict) -> tuple:
 # ---------------------------------------------------------------------------
 # 텔레메트리
 # ---------------------------------------------------------------------------
-def start_telemetry(device: int):
+def start_telemetry(target: str):
+    """`nvidia-smi` 를 1 초 간격으로 띄운다. `target` 은 **UUID** 다 (P-2).
+
+    ⚠️ 예전에는 `Popen` 이 실패해도 아무 일도 일어나지 않았다 — 빈 CSV 만
+    남고 측정은 그대로 진행됐다. 33 시간을 돌고 나서야 "텔레메트리가
+    비어 있네" 를 알게 된다. `docs/decisions.md` 14번의 "조용히 아무것도
+    안 하는 안전장치" 패턴이라 **실제로 줄이 쌓이는지 확인**한다.
+
+    인덱스가 아니라 UUID 로 지정한다. 컨테이너나 `CUDA_VISIBLE_DEVICES`
+    재배치 상황에서 인덱스는 **다른 GPU** 를 가리킨다.
+    """
     TELEMETRY.parent.mkdir(parents=True, exist_ok=True)
     f = TELEMETRY.open("w")
-    p = subprocess.Popen(
-        ["nvidia-smi", "-i", str(device),
-         "--query-gpu=timestamp,clocks.sm,clocks.mem,temperature.gpu,"
-         "power.draw,clocks_throttle_reasons.active",
-         "--format=csv", "-l", "1"],
-        stdout=f, stderr=subprocess.DEVNULL)
-    return p, f
+    cmd = ["nvidia-smi", "-i", str(target),
+           "--query-gpu=timestamp,clocks.sm,clocks.mem,temperature.gpu,"
+           "power.draw,clocks_throttle_reasons.active",
+           "--format=csv", "-l", "1"]
+    try:
+        p = subprocess.Popen(cmd, stdout=f, stderr=subprocess.PIPE)
+    except OSError as e:
+        f.close()
+        raise RuntimeError(
+            f"텔레메트리를 띄우지 못했다: {e}\n  {' '.join(cmd)}") from e
+
+    # 즉시 죽었는지 / 실제로 기록되는지 확인한다. 헤더 + 첫 줄이면 충분하다.
+    for _ in range(30):
+        time.sleep(0.2)
+        if p.poll() is not None:
+            err = (p.stderr.read() or b"").decode("utf-8", "replace").strip()
+            f.close()
+            raise RuntimeError(
+                f"텔레메트리가 즉시 종료됐다 (rc={p.returncode})\n"
+                f"  {' '.join(cmd)}\n  {err}\n"
+                "  -i 에 넘긴 GPU 를 이 기계에서 볼 수 없을 수 있다.")
+        if TELEMETRY.exists() and TELEMETRY.stat().st_size > 0:
+            return p, f
+    p.terminate()
+    f.close()
+    raise RuntimeError(
+        f"텔레메트리가 6초 동안 한 줄도 쓰지 않았다.\n  {' '.join(cmd)}\n"
+        "  빈 CSV 를 남긴 채 33시간을 돌면 조건 검증이 불가능해진다.")
 
 
 def analyze_telemetry() -> dict:
@@ -436,7 +468,10 @@ def main() -> int:
     args = ap.parse_args()
 
     env = json.loads(paths.ENV_JSON.read_text())
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(env["device_index"])
+    # P-2: UUID 가 권위다. 저장된 인덱스를 그대로 쓰면 컨테이너나
+    #      CUDA_VISIBLE_DEVICES 가 설정된 환경에서 **다른 GPU 를 측정**한다.
+    #      이미 설정돼 있으면 존중하고, 없는 UUID 면 명확히 실패한다.
+    device.resolve_device(env)
     hw = hardware_from_env(env)
     backend = get_backend(hw.arch)
     seed = env["shuffle_seed"]
@@ -588,12 +623,12 @@ def main() -> int:
     ctx.set_protocol(env)
     kernels: dict[str, Kernel] = {}
     for r in sample:
-        kernels[r["kernel_id"]] = Kernel(r["so_path"])
+        kernels[r["kernel_id"]] = Kernel(paths.kernel_so(r["kernel_id"]))
     # 앵커는 이 세그먼트에 속하지 않아도 열어야 한다. 개수가 작아(6개)
     # 모듈 압력에 실질적 영향이 없다.
     for r in anchors:
         if r["kernel_id"] not in kernels:
-            kernels[r["kernel_id"]] = Kernel(r["so_path"])
+            kernels[r["kernel_id"]] = Kernel(paths.kernel_so(r["kernel_id"]))
     probe = NvmlProbe(uuid=env["hardware_extra"]["uuid"], index=0)
 
     # 드리프트 감시 커널은 **모든 세그먼트에서 같아야** 한다. 세그먼트마다
@@ -607,7 +642,7 @@ def main() -> int:
         drift_kernel_id = picked[0]["kernel_id"]
     if drift_kernel_id not in kernels:
         drift_kernel_id = sample[0]["kernel_id"]
-    tele_proc, tele_file = start_telemetry(env["device_index"])
+    tele_proc, tele_file = start_telemetry(device.smi_target(env))
     print(f"[telemetry] {TELEMETRY} (1초 간격)")
     # --- D-1 열평형 소킹. 여기부터 시간을 잰다 (D-3 의 soak_elapsed_s) --------
     _soak_cfg = env.get("soak") or {}

@@ -27,6 +27,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from backends import get_backend  # noqa: E402
 from build import paths  # noqa: E402
+from core import device  # noqa: E402
 from core.hardware import hardware_from_env  # noqa: E402
 from build.compile import BuildEnv, build_ctx_so, build_kernel  # noqa: E402
 from core.types import Hardware, KernelConfig, Problem  # noqa: E402
@@ -48,7 +49,10 @@ VARIANTS = [("identity", 1), ("identity", 8), ("horizontal", 1)]
 
 def main() -> int:
     env = json.loads(paths.ENV_JSON.read_text())
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(env["device_index"])
+    # P-2: UUID 가 권위다. 저장된 인덱스를 그대로 쓰면 컨테이너나
+    #      CUDA_VISIBLE_DEVICES 가 설정된 환경에서 **다른 GPU 를 측정**한다.
+    #      이미 설정돼 있으면 존중하고, 없는 UUID 면 명확히 실패한다.
+    device.resolve_device(env)
     hw = hardware_from_env(env)
     backend = get_backend(hw.arch)
     be = BuildEnv.from_env_json(env)
@@ -76,7 +80,7 @@ def main() -> int:
             return 1
         print(f"  {backend.kernel_id(cfg)}  regs={r['regs_per_thread']} "
               f"smem={r['smem_dynamic']}")
-        libs[key] = Kernel(r["so_path"])
+        libs[key] = Kernel(paths.kernel_so(r["kernel_id"]))
 
     ctx = Ctx(paths.ARTIFACT_DIR / "libkt_ctx.so", 0)
     ctx.set_protocol(env)

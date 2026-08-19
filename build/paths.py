@@ -87,3 +87,16 @@ def cuda_bin(tool: str) -> Path:
 def ensure_dirs() -> None:
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def kernel_so(kernel_id: str) -> Path:
+    """커널 `.so` 의 위치. **`kernels.jsonl` 의 `so_path` 를 쓰지 마라** (P-1).
+
+    `so_path` 는 빌드한 기계의 **절대 경로**다. 컨테이너 안에서는 그 경로가
+    존재하지 않고, 저장소를 옮기거나 볼륨 마운트 지점이 다르면 그대로 깨진다.
+    `kernel_id` 에서 조립하면 어디서 읽든 맞는다.
+
+    기존 `kernels.jsonl` 7,490 줄과 **100 % 일치**함을 확인했다 (불일치 0).
+    옛 줄의 `so_path` 는 남아 있어도 읽는 쪽이 무시한다.
+    """
+    return ARTIFACT_DIR / "lib" / f"{kernel_id}.so"

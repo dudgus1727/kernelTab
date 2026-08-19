@@ -23,6 +23,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from build import paths  # noqa: E402
+from core import device  # noqa: E402
 from core.hardware import hardware_from_env  # noqa: E402
 from core.config import alignments_for  # noqa: E402
 from core.types import Hardware, Problem  # noqa: E402
@@ -40,8 +41,12 @@ def main() -> int:
     args = ap.parse_args()
 
     env = json.loads(paths.ENV_JSON.read_text())
-    dev = args.device if args.device is not None else env["device_index"]
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(dev)
+    # P-2: --device 를 명시하면 그것을 쓰되(진단용), 아니면 UUID 로 찾는다.
+    if args.device is not None:
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(args.device)
+        dev = args.device
+    else:
+        dev, _ = device.resolve_device(env)
     hw = hardware_from_env(env)
 
     from measure.runner import Ctx, Kernel, KtProblemC  # noqa: E402
@@ -74,7 +79,7 @@ def main() -> int:
         for i, r in enumerate(cand, 1):
             rec = {"kernel_id": r["kernel_id"]}
             try:
-                k = Kernel(r["so_path"])
+                k = Kernel(paths.kernel_so(r["kernel_id"]))
                 can = k.can_implement(kp)
                 if can != 0:
                     rec.update(status="not_implementable",

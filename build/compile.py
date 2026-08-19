@@ -224,7 +224,10 @@ def build_kernel(cfg, backend, be: BuildEnv, force: bool = False) -> dict:
     # 캐싱은 kernels.jsonl 수준에서 한다 (이미 기록된 kernel_id 는 애초에
     # 여기까지 오지 않는다). .so 만 있고 기록이 없으면 ptxas 정보를 얻을 수
     # 없으므로 반쪽짜리 행을 남기지 말고 다시 컴파일한다.
-    row: dict = {"kernel_id": kid, "so_path": str(so)}
+    # ⛔ so_path 는 기록하지 않는다 (P-1). 빌드한 기계의 **절대 경로**라
+    #    컨테이너 안이나 다른 저장소 위치에서는 존재하지 않는다.
+    #    읽는 쪽은 kernel_id 에서 `paths.kernel_so()` 로 조립한다.
+    row: dict = {"kernel_id": kid}
     cmd = [
         be.nvcc, "-std=c++17", f"-arch={be.arch_flag}", "-O3",
         "-shared", "-Xcompiler", "-fPIC",

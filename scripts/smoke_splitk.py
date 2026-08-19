@@ -21,6 +21,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from backends import get_backend  # noqa: E402
 from build import paths  # noqa: E402
+from core import device  # noqa: E402
 from core.hardware import hardware_from_env  # noqa: E402
 from core.types import Hardware, Problem, RuntimeConfig  # noqa: E402
 
@@ -30,7 +31,10 @@ SHAPES = [Problem(1024, 1024, 4096), Problem(1024, 4096, 512),
 
 def main() -> int:
     env = json.loads(paths.ENV_JSON.read_text())
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(env["device_index"])
+    # P-2: UUID 가 권위다. 저장된 인덱스를 그대로 쓰면 컨테이너나
+    #      CUDA_VISIBLE_DEVICES 가 설정된 환경에서 **다른 GPU 를 측정**한다.
+    #      이미 설정돼 있으면 존중하고, 없는 UUID 면 명확히 실패한다.
+    device.resolve_device(env)
     hw = hardware_from_env(env)
     backend = get_backend(hw.arch)
 
@@ -60,7 +64,7 @@ def main() -> int:
             if krow is None:
                 print(f"({p.M},{p.N},{p.K}) align={al}: 해당 커널 없음")
                 continue
-            k = Kernel(krow["so_path"])
+            k = Kernel(paths.kernel_so(krow["kernel_id"]))
             ctx.prepare_problem(p.M, p.N, p.K)
             _, cub = ctx.measure_cublas()
             print(f"\n({p.M},{p.N},{p.K})  align={al}  kernel={krow['kernel_id']}")

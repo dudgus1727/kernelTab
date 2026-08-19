@@ -201,6 +201,17 @@ python3 scripts/rehearse.py --all --dry-run
 
 ---
 
+> ## ✅ P-1 완료 (2026-08-19)
+>
+> `build/paths.kernel_so(kernel_id)` 로 조립한다. 기존 `kernels.jsonl`
+> **7,490 줄과 100 % 일치** 확인(불일치 0), `build_status=ok` 7,330 개의
+> `.so` 가 전부 그 위치에 있다. `build/compile.py` 가 `so_path` 를 더 이상
+> 기록하지 않는다.
+>
+> 읽는 쪽 6 곳 교체: `rehearse`(2), `recheck_stability`, `verify_clock_lock`,
+> `check_correctness`, `smoke_splitk`, `verify_swizzle`.
+> `tests/test_paths.py` 가 AST 로 **`so_path` 를 읽는 곳이 남아 있는지** 검사한다.
+
 ## 2. P-1 — `so_path` 절대 경로 제거
 
 ### 무엇을 바꾸는가
@@ -250,6 +261,26 @@ print('dlopen ok')"
 `git revert`. 데이터 변경 없음.
 
 ---
+
+> ## ✅ P-2 완료 (2026-08-19)
+>
+> `core/device.py` — UUID 가 권위, 인덱스는 매번 역조회.
+>
+> 검증:
+> ```
+> (a) nvidia-smi -i <UUID>          -> 3, GPU-93284c84-..., NVIDIA RTX A6000
+> (b) 역조회 일치                    -> env.json UUID == 보이는 GPU UUID  ✓
+> (c) CUDA_VISIBLE_DEVICES 존중      -> 미리 설정한 3 을 안 건드림
+> (c-2) 틀린 GPU 를 가리키면 거부     -> DeviceNotFoundError ✓
+> (d) 텔레메트리                     -> 2초에 14줄, 없는 GPU 면 rc=6 로 즉시 실패 ✓
+> ```
+>
+> **(b) 와 (c-2) 가 "다른 GPU 를 측정하지 않는다" 의 검증이다.** 없는 UUID 나
+> 어긋난 `CUDA_VISIBLE_DEVICES` 에서 **조용히 0 으로 폴백하지 않는다**.
+>
+> 텔레메트리도 함께 고쳤다(수정 9). 예전에는 `Popen` 이 실패해도 아무 일이
+> 없어 빈 CSV 만 남았다 — 33시간을 돌고 나서야 알게 된다. 이제 실제로 줄이
+> 쌓이는지 확인하고, 안 쌓이면 명확히 실패한다.
 
 ## 3. P-2 — GPU 선택을 UUID 기반으로
 

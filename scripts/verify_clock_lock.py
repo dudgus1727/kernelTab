@@ -24,6 +24,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from build import paths  # noqa: E402
+from core import device  # noqa: E402
 from core.hardware import hardware_from_env  # noqa: E402
 from core.types import Hardware, Problem  # noqa: E402
 
@@ -82,8 +83,7 @@ def main() -> int:
     args = ap.parse_args()
 
     env = json.loads(paths.ENV_JSON.read_text())
-    dev = env["device_index"]
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(dev)
+    dev, _ = device.resolve_device(env)     # P-2: UUID 가 권위
     hw = hardware_from_env(env)
 
     from measure.runner import Ctx, Kernel, KtProblemC  # noqa: E402
@@ -113,7 +113,7 @@ def main() -> int:
 
     ctx = Ctx(paths.ARTIFACT_DIR / "libkt_ctx.so", 0)
     ctx.set_protocol(env)
-    k = Kernel(krow["so_path"])
+    k = Kernel(paths.kernel_so(krow["kernel_id"]))
     ctx.prepare_problem(LOAD_SHAPE.M, LOAD_SHAPE.N, LOAD_SHAPE.K)
     kp = KtProblemC(LOAD_SHAPE.M, LOAD_SHAPE.N, LOAD_SHAPE.K, 1, 0)
     bufs = ctx.buffers(k.workspace_bytes(kp), False)

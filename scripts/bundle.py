@@ -73,6 +73,45 @@ def human(n: int) -> str:
     return str(n)
 
 
+def _render_corrections(items: list) -> str:
+    """정정 이력을 릴리즈 노트에 싣는다.
+
+    이미 받아간 사람이 **자기 사본이 구버전인지** 알 수 있어야 한다.
+    그래서 구 sha256 을 반드시 함께 적는다.
+    """
+    if not items:
+        return ""
+    out = ["", "---", ""]
+    for c in items:
+        out.append(f"## ⚠️ 정정 ({c.get('date', '')})")
+        out.append("")
+        out.append(c.get("what", ""))
+        out.append("")
+        aff = c.get("affected") or {}
+        if aff:
+            out.append("| env_hash | 행 수 |")
+            out.append("|---|---:|")
+            for k, v in sorted(aff.items(), key=lambda kv: -kv[1]):
+                out.append(f"| `{k}` | {v:,} |")
+            out.append("")
+        if c.get("impact"):
+            out.append(f"**영향:** {c['impact']}")
+            out.append("")
+        prev = c.get("prev_sha256") or {}
+        if prev:
+            out.append("체크섬으로 사본을 구분할 수 있다 (구 = 정정 전):")
+            out.append("")
+            out.append("| 파일 | 구 sha256 |")
+            out.append("|---|---|")
+            for k, v in prev.items():
+                out.append(f"| `{k}` | `{v[:32]}...` |")
+            out.append("")
+        if c.get("fix"):
+            out.append(f"**재발 방지:** {c['fix']}")
+            out.append("")
+    return "\n".join(out)
+
+
 def _load_corrections() -> list:
     """`results/bundle_corrections.json` 이 있으면 그대로 싣는다."""
     f = paths.RESULTS_DIR / "bundle_corrections.json"
@@ -157,6 +196,7 @@ def release_notes(b: dict) -> str:
     재현이 가능하다.
     """
     m = b.get("manifest") or {}
+    corr = _render_corrections(b.get("corrections") or [])
     return f"""\
 # kerneltab 측정 표 — {b['gpu_name']} (`{b['bundle_id']}`)
 
@@ -227,7 +267,7 @@ y = b.scoring()    # 채점용 (정답 포함)
 
 측정 표: **CC BY 4.0** — 인용 시 위 측정 조건을 함께 밝힐 것.
 생성 도구(kerneltab): Apache-2.0. CUTLASS(NVIDIA, BSD-3)는 포함되지 않는다.
-"""
+{corr}"""
 
 
 def github_release(bundle: dict, out: Path, dsdir: Path, bundle_id: str,
@@ -244,7 +284,8 @@ def github_release(bundle: dict, out: Path, dsdir: Path, bundle_id: str,
         return 5
 
     notes = out / "RELEASE.md"
-    notes.write_text(release_notes(bundle))
+    if not notes.exists():          # 보통 main() 이 아카이브 전에 써 둔다
+        notes.write_text(release_notes(bundle))
 
     assets = []
     for pat in (f"{bundle_id}.tar.zst", f"{bundle_id}.tar.gz",
@@ -427,7 +468,10 @@ CUTLASS (NVIDIA, BSD-3-Clause) 는 이 번들에 포함되지 않는다.
 
     files = {}
     for f in sorted(out.iterdir()):
-        if f.name == "BUNDLE.json" or f.is_dir():
+        # BUNDLE.json 은 체크섬을 담는 파일이라 자기를 못 담는다.
+        # RELEASE.md 는 BUNDLE.json 에서 결정적으로 생성되는 **사람용 노트**라
+        # 데이터가 아니다 (내용은 BUNDLE.json 이 보증한다).
+        if f.name in ("BUNDLE.json", "RELEASE.md") or f.is_dir():
             continue
         files[f.name] = {"bytes": f.stat().st_size, "sha256": sha256(f)}
 
@@ -505,6 +549,10 @@ CUTLASS (NVIDIA, BSD-3-Clause) 는 이 번들에 포함되지 않는다.
         print(f"\n  !! table.parquet 이 {human(tsize)} 로 500MB 를 넘는다.")
         print("     배포 방법을 다시 논의해야 한다. 컬럼 dtype 최적화")
         print("     (문자열 -> dictionary, float64 -> float32) 로 크게 줄일 수 있다.")
+
+    # RELEASE.md 는 **아카이브 전에** 쓴다. github_release() 안에서 쓰면
+    # tar 안에는 낡은 사본이 들어간다.
+    (out / "RELEASE.md").write_text(release_notes(bundle))
 
     # 배포 경계 게이트 — 아카이브 직전. validate_table --bundle 과 같은
     # 검사를 부른다 (구현이 둘로 갈리면 한쪽만 고치게 된다).
