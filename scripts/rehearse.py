@@ -465,6 +465,9 @@ def main() -> int:
                          "진행률이 어긋난다 — 작업 수로 배분하는 쪽이 맞다")
     ap.add_argument("--list-segments", action="store_true",
                     help="세그먼트 분할만 출력하고 끝낸다")
+    ap.add_argument("--json", action="store_true",
+                    help="--list-segments 결과를 기계용 JSON 으로도 낸다 "
+                         "(`JSON {...}` 한 줄). sweep.py 가 이것만 쓴다")
     args = ap.parse_args()
 
     env = json.loads(paths.ENV_JSON.read_text())
@@ -568,6 +571,24 @@ def main() -> int:
                         enumerate_runtimes(backend, _p, _cfg))
             for _s in sorted(_cnt):
                 print(f"SEGJOBS {_s} {_cnt[_s]}")
+            if args.json:
+                # R-2: 기계용 인터페이스. sweep.py 는 **이것만** 쓴다.
+                # 사람용 출력을 파싱하면 문구를 다듬는 순간 33시간 스윕의
+                # 진입점이 깨진다.
+                import json as _json
+                _payload = {
+                    "n_segments": n_seg,
+                    "n_jobs": sum(_cnt.values()),
+                    "segment_kernels": seg_size,
+                    "jobs_per_segment": {str(k): v for k, v in sorted(_cnt.items())},
+                    "anchors": [r["kernel_id"] for r in anchors],
+                    # 조건이 어긋난 채 스윕이 시작되는 것을 막는다.
+                    # v2 는 조건 자체, 구 해시는 **재개 키**다. 어느 쪽이
+                    # 달라도 데이터가 갈라진다 (P-3).
+                    "env_hash": env["env_hash"],
+                    "env_hash_v2": env.get("env_hash_v2"),
+                }
+                print("JSON " + _json.dumps(_payload, ensure_ascii=False))
             print(f"앵커 {len(anchors)}개: "
                   + ", ".join(r["kernel_id"] for r in anchors))
             # 여기서 끝내지 않는다 — sweep.py 는 세그먼트 수와 **전체 작업 수**

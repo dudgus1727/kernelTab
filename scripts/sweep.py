@@ -57,27 +57,85 @@ def log(rec: dict) -> None:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
 
-def n_segments(seg_kernels: int) -> tuple[int, int, dict]:
+def segment_plan(seg_kernels: int, env: dict) -> dict:
+    """`rehearse.py --list-segments --json` 만 쓴다 (R-2).
+
+    예전에는 사람용 출력("세그먼트 13개 x ...", "작업 수: 980,915")을
+    파싱했다. 문구를 다듬는 순간 33시간 스윕의 진입점이 깨진다.
+    `SystemExit` 으로 죽으니 조용히 틀리지는 않지만 고칠 이유는 충분하다.
+
+    그리고 **`env_hash` 가 어긋나면 거부한다.** sweep 과 rehearse 가 서로
+    다른 `env.json` 을 보고 있으면 조건이 다른 데이터가 섞인다.
+    """
     out = subprocess.run(
-        [sys.executable, str(REHEARSE), "--all", "--list-segments",
+        [sys.executable, str(REHEARSE), "--all", "--list-segments", "--json",
          "--segment-kernels", str(seg_kernels)],
         capture_output=True, text=True, cwd=REPO_ROOT)
     if out.returncode != 0:
         print(out.stdout + out.stderr)
         raise SystemExit("세그먼트 목록을 얻지 못했다")
-    n_seg = n_jobs = None
-    per_seg = {}
+    payload = None
     for line in out.stdout.splitlines():
-        if line.startswith("세그먼트 ") and n_seg is None:
-            n_seg = int(line.split()[1].rstrip("개"))
-        if line.startswith("SEGJOBS "):
-            _, i, c = line.split()
-            per_seg[int(i)] = int(c)
-        if line.startswith("작업 수:"):
-            n_jobs = int(line.split(":")[1].split()[0].replace(",", ""))
-    if n_seg is None or n_jobs is None or not per_seg:
-        raise SystemExit("세그먼트/작업 수를 파싱하지 못했다:\n" + out.stdout)
-    return n_seg, n_jobs, per_seg
+        if line.startswith("JSON "):
+            payload = json.loads(line[5:])
+    if payload is None:
+        raise SystemExit(
+            "rehearse.py 가 JSON 을 내지 않았다 (--json 을 지원하는지 확인).\n"
+            + out.stdout[-2000:])
+
+    # 조건 일치 확인. v2 는 조건 자체, 구 해시는 재개 키다 (P-3).
+    for key, mine in (("env_hash", env.get("env_hash")),
+                      ("env_hash_v2", env.get("env_hash_v2"))):
+        theirs = payload.get(key)
+        if mine and theirs and mine != theirs:
+            raise SystemExit(
+                f"!! {key} 가 어긋난다. 스윕을 시작하지 않는다.\n"
+                f"     sweep.py 가 읽은 env.json: {str(mine)[:16]}\n"
+                f"     rehearse.py 가 읽은 것    : {str(theirs)[:16]}\n"
+                "   측정 도중 env.json 이 바뀌었을 수 있다. 조건이 다른\n"
+                "   데이터가 같은 파일에 섞이면 되돌릴 수 없다.")
+    payload["jobs_per_segment"] = {int(k): v
+                                   for k, v in payload["jobs_per_segment"].items()}
+    return payload
+
+
+def resume_state(env_hash: str | None, n_seg: int) -> tuple[set[int], int]:
+    """`sweep.jsonl` 에서 (완료 세그먼트, 다음 라운드) 를 복원한다 (R-3).
+
+    **다른 `env_hash` 의 항목은 무시한다** — 이전 캠페인의 로그가 같은
+    파일에 남아 있다 (R-5 와 같은 원칙).
+    """
+    if not SWEEP_LOG_OK():
+        return set(), 0
+    done: set[int] = set()
+    last_round = -1
+    cur_env = None
+    for line in LOG.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            r = json.loads(line)
+        except Exception:
+            continue
+        if r.get("event") == "sweep_start":
+            cur_env = r.get("env_hash")
+            # 새 스윕이 시작됐으면 그 앞의 상태는 무시한다
+            if env_hash and cur_env and not str(cur_env).startswith(env_hash[:8]):
+                continue
+            done, last_round = set(), -1
+            continue
+        if r.get("event") != "slice":
+            continue
+        if env_hash and cur_env and not str(cur_env).startswith(env_hash[:8]):
+            continue
+        last_round = max(last_round, int(r.get("round", 0)))
+        if r.get("rc") == RC_DONE:
+            done.add(int(r["segment"]))
+    return done, max(last_round, 0)
+
+
+def SWEEP_LOG_OK() -> bool:
+    return LOG.exists()
 
 
 def main() -> int:
@@ -104,7 +162,9 @@ def main() -> int:
     slice_s = args.slice_seconds or seg_cfg.get("seconds", 2700)
     seed = env["shuffle_seed"]
 
-    n_seg, n_jobs, per_seg = n_segments(seg_kernels)
+    plan = segment_plan(seg_kernels, env)
+    n_seg, n_jobs = plan["n_segments"], plan["n_jobs"]
+    per_seg = plan["jobs_per_segment"]
     # 진행 배분은 **작업 수**로 한다. 프로토콜이 시간 예산으로 반복 수를
     # 정하므로 커널 속도가 상쇄되어 작업당 벽시계 편차가 6.6 % 뿐이다.
     #
@@ -132,8 +192,15 @@ def main() -> int:
          "slice_seconds": slice_s, "target_rounds": args.target_rounds,
          "env_hash": env["env_hash"], "pid": os.getpid()})
 
-    done: set[int] = set()
-    rnd = 0
+    # R-3: 중단 후 재시작하면 상태를 복원한다. 안 하면
+    #   * 이미 끝난 세그먼트도 매 라운드 프로세스를 띄웠다 즉시 종료
+    #     (재개 파싱 6초 x 13개 = 라운드당 78초 낭비)
+    #   * 셔플 시드가 seed^(rnd+1) 이라 **라운드 0 의 순서가 반복**된다
+    #   * sweep.jsonl 의 라운드 번호가 겹쳐 사후 분석이 헷갈린다
+    # 데이터 정확성 문제는 아니다 — 측정된 작업은 건너뛴다.
+    done, rnd = resume_state(env.get("env_hash"), n_seg)
+    if done or rnd:
+        print(f"재개: 라운드 {rnd} 부터, 완료 세그먼트 {len(done)}/{n_seg}")
     t0 = time.time()
     while len(done) < n_seg:
         if args.max_rounds and rnd >= args.max_rounds:

@@ -150,6 +150,20 @@ pytest 훅 선택은 자유(`pytest_collection_modifyitems`,
 
 ---
 
+> ### ✅ R-2 / R-3 완료 (2026-08-19)
+>
+> `rehearse.py --list-segments --json` -> `JSON {...}` 한 줄. sweep 은 이것만
+> 쓴다. **`env_hash` 와 `env_hash_v2` 를 둘 다 비교하고 어긋나면 거부**한다 —
+> v2 는 조건 자체, 구 해시는 재개 키라 어느 쪽이 달라도 데이터가 갈라진다
+> (P-3 로 정의가 바뀌었으므로 v2 기준 비교가 핵심이다).
+>
+> R-3 은 `sweep.jsonl` 에서 (완료 세그먼트, 다음 라운드) 를 복원한다.
+> **다른 `env_hash` 의 항목은 무시**한다 (R-5 와 같은 원칙). 실제 로그로
+> 확인: 완료 13/13, 다음 라운드 7. 쓰다 만 줄도 견딘다.
+>
+> `tests/test_sweep.py` 9개. 사람용 출력을 파싱하는 코드가 남아 있으면
+> 실패한다.
+
 ## R-2. `sweep.py` 가 사람용 stdout 을 파싱한다
 
 ```python
