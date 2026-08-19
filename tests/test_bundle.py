@@ -4,6 +4,7 @@
 **손상 감지**와 **공통 형상 필터**가 실제로 동작하는지가 핵심이다.
 """
 import json
+from pathlib import Path
 
 import pytest
 
@@ -12,6 +13,8 @@ pytest.importorskip("pandas")
 
 import pyarrow as pa  # noqa: E402
 import pyarrow.parquet as pq  # noqa: E402
+
+REPO = Path(__file__).resolve().parent.parent  # noqa: E402
 
 from core.bundle import (  # noqa: E402
     BundleError, load_bundle, load_bundles, resolve_bundle_path,
@@ -207,3 +210,91 @@ def test_bundle_script_separates_tool_and_data_license():
     assert '"license": "CC-BY-4.0"' in src
     assert '"tool_license": "Apache-2.0"' in src
     assert 'LICENSE.txt' in src           # 번들 안에 라이선스 파일을 쓴다
+
+
+# ---------------------------------------------------------------------------
+# 배포 경계 — 여러 조건이 섞인 표는 번들이 되면 안 된다
+# ---------------------------------------------------------------------------
+#
+# 실제로 사고가 났다. `results/table.parquet` 은 작업 파일이라 여러 조건을
+# 담는데(조건 간 비교/드리프트 분석용), bundle.py 가 그것을 **그대로 복사**해서
+# 폐기한 드리프트 데이터 226,145행이 공개 릴리즈에 실렸다.
+# BUNDLE.json 의 n_rows 는 필터한 값이라 980,915 로 맞았고, 그래서 아무도
+# 못 알아챘다 — 통계와 파일이 어긋난 것이다.
+
+
+def _mixed_bundle(tmp_path, bundle_id="gpu-sm_86-aaaa1111"):
+    """두 조건이 섞인 표를 가진 번들을 만든다."""
+    import hashlib
+
+    d = tmp_path / bundle_id
+    d.mkdir(parents=True)
+    rows = _rows("aaaa1111", [(512, 512, 512)]) + _rows("bbbb2222", [(512, 512, 512)])
+    pq.write_table(pa.Table.from_pylist(rows), d / "table.parquet")
+    (d / "env.json").write_text(json.dumps({"env_hash": "aaaa1111"}))
+    (d / "kernels.jsonl").write_text("")
+    (d / "manifest.json").write_text("{}")
+    files = {}
+    for f in sorted(d.iterdir()):
+        files[f.name] = {"bytes": f.stat().st_size,
+                         "sha256": hashlib.sha256(f.read_bytes()).hexdigest()}
+    (d / "BUNDLE.json").write_text(json.dumps({
+        "bundle_id": bundle_id, "env_hash": "aaaa1111",
+        "gpu_name": "G", "arch": "sm_86", "sm_count": 84,
+        # ★ 통계는 필터한 값. 파일은 안 걸렀다 — 이 불일치가 버그의 서명이다
+        "n_rows": len([r for r in rows if r["env_hash"].startswith("aaaa1111")]),
+        "files": files, "shape_layers": {},
+    }))
+    return d
+
+
+def test_validate_bundle_rejects_mixed_env(tmp_path):
+    """★ 이번 버그를 잡는 검사. 섞인 표로 번들을 만들려 하면 실패해야 한다."""
+    import sys
+    sys.path.insert(0, str(REPO / "scripts"))
+    from validate_table import validate_bundle
+
+    assert validate_bundle(_mixed_bundle(tmp_path)) != 0
+
+
+def test_validate_bundle_detects_n_rows_mismatch(tmp_path):
+    """n_rows 와 실제 행 수의 불일치 — 이 검사만 있었어도 잡혔다."""
+    import sys
+    sys.path.insert(0, str(REPO / "scripts"))
+    from validate_table import validate_bundle
+
+    d = _mixed_bundle(tmp_path, "gpu-sm_86-cccc3333")
+    info = json.loads((d / "BUNDLE.json").read_text())
+    # 조건은 하나만 남기되 n_rows 를 틀리게 둔다
+    t = pq.read_table(d / "table.parquet")
+    import pyarrow.compute as pc
+    t = t.filter(pc.starts_with(pc.cast(t.column("env_hash"), "string"), "aaaa1111"))
+    pq.write_table(t, d / "table.parquet")
+    info["n_rows"] = t.num_rows + 999
+    (d / "BUNDLE.json").write_text(json.dumps(info))
+    assert validate_bundle(d) != 0
+
+
+def test_validate_bundle_accepts_single_env(tmp_path):
+    import hashlib
+    import sys
+    sys.path.insert(0, str(REPO / "scripts"))
+    from validate_table import validate_bundle
+
+    d = tmp_path / "gpu-sm_86-dddd4444"
+    d.mkdir(parents=True)
+    rows = _rows("dddd4444", [(512, 512, 512)])
+    pq.write_table(pa.Table.from_pylist(rows), d / "table.parquet")
+    (d / "env.json").write_text(json.dumps({"env_hash": "dddd4444"}))
+    (d / "kernels.jsonl").write_text("")
+    (d / "manifest.json").write_text("{}")
+    files = {}
+    for f in sorted(d.iterdir()):
+        files[f.name] = {"bytes": f.stat().st_size,
+                         "sha256": hashlib.sha256(f.read_bytes()).hexdigest()}
+    (d / "BUNDLE.json").write_text(json.dumps({
+        "bundle_id": "gpu-sm_86-dddd4444", "env_hash": "dddd4444",
+        "gpu_name": "G", "arch": "sm_86", "sm_count": 84,
+        "n_rows": len(rows), "files": files, "shape_layers": {},
+    }))
+    assert validate_bundle(d) == 0

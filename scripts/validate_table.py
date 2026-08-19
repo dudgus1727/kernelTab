@@ -72,8 +72,83 @@ def hr(t: str) -> None:
     print("=" * 74)
 
 
+def validate_bundle(bundle_dir: Path) -> int:
+    """번들 무결성 — **배포 경계 검사** (`--bundle`).
+
+    `validate_table.py` 본체는 `results/` 를 본다. 이건 **배포되는 것**을 본다.
+    둘은 다르다. 실제로 표는 통과했는데 번들에 폐기 데이터가 실렸다.
+
+    검사:
+      1. `table.parquet` 의 `env_hash` 가 단일인가
+      2. `BUNDLE.json` 의 `n_rows` 와 **실제 행 수**가 일치하는가  <- 핵심
+      3. 각 파일의 sha256 이 `BUNDLE.json` 과 맞는가
+      4. 해석에 필요한 파일이 다 있는가
+
+    2번이 이번 버그를 잡는 검사다. `n_rows` 는 필터한 값이었고 파일은
+    안 걸렀기 때문에 어긋났는데, 그 불일치를 봤으면 바로 잡혔다.
+    """
+    import hashlib
+
+    import pyarrow.parquet as pq
+
+    d = Path(bundle_dir)
+    print(f"번들 검사 — {d}")
+    bj = d / "BUNDLE.json"
+    if not bj.exists():
+        print("  BUNDLE.json 이 없다")
+        return 2
+    info = json.loads(bj.read_text())
+    eh = str(info.get("env_hash") or "")
+    fails = []
+
+    for req in ("table.parquet", "env.json", "kernels.jsonl", "manifest.json"):
+        if not (d / req).exists():
+            fails.append(f"{req} 이 없다 (이 파일 없이는 표를 해석할 수 없다)")
+
+    tp = d / "table.parquet"
+    if tp.exists():
+        t = pq.read_table(tp, columns=["env_hash"])
+        seen: dict[str, int] = {}
+        for x in t.column("env_hash").to_pylist():
+            k = str(x)[:8]
+            seen[k] = seen.get(k, 0) + 1
+        print(f"  table.parquet {t.num_rows:,}행, env_hash {len(seen)}종")
+        for k, v in sorted(seen.items(), key=lambda kv: -kv[1]):
+            mark = "" if eh.startswith(k) else "   <- 다른 조건"
+            print(f"    {k}  {v:>9,}행{mark}")
+        if len(seen) != 1 or not any(eh.startswith(k) for k in seen):
+            fails.append(f"env_hash 가 단일이 아니다 ({len(seen)}종). "
+                         "배포되는 표는 단일 조건이어야 한다")
+        # ★ 이번 버그를 잡는 검사
+        want = info.get("n_rows")
+        if want is not None and want != t.num_rows:
+            fails.append(f"BUNDLE.json 의 n_rows({want:,}) 와 실제 행 수"
+                         f"({t.num_rows:,}) 가 다르다 — 통계만 필터하고 "
+                         "파일은 안 걸렀다는 뜻이다")
+
+    for name, meta in (info.get("files") or {}).items():
+        f = d / name
+        if not f.exists():
+            fails.append(f"{name}: 파일 없음")
+            continue
+        h = hashlib.sha256(f.read_bytes()).hexdigest()
+        if h != meta.get("sha256"):
+            fails.append(f"{name}: sha256 불일치")
+
+    print()
+    if fails:
+        print(f"!! 실패 {len(fails)}건")
+        for f_ in fails:
+            print(f"   - {f_}")
+        return 5
+    print("통과: 단일 조건, 행 수 일치, 체크섬 일치")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--bundle", metavar="DIR",
+                    help="번들 디렉토리를 검사한다 (배포 경계 검사)")
     ap.add_argument("--env-hash", default=None)
     ap.add_argument("--list-missing", type=int, default=20)
     ap.add_argument("--list-bad", type=int, default=20)
@@ -82,6 +157,9 @@ def main() -> int:
                          "subset: 실제로 측정된 형상 안에서만 본다 (리허설 등 "
                          "부분 측정 데이터 점검용)")
     args = ap.parse_args()
+
+    if args.bundle:
+        return validate_bundle(Path(args.bundle))
 
     if not RESULTS.exists() or not KERNELS.exists():
         print("results.jsonl 또는 kernels.jsonl 이 없다.")

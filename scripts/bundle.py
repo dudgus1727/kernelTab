@@ -73,6 +73,47 @@ def human(n: int) -> str:
     return str(n)
 
 
+def _load_corrections() -> list:
+    """`results/bundle_corrections.json` 이 있으면 그대로 싣는다."""
+    f = paths.RESULTS_DIR / "bundle_corrections.json"
+    if not f.exists():
+        return []
+    try:
+        return json.loads(f.read_text())
+    except Exception:
+        return []
+
+
+def assert_single_env(parquet_path: Path, expected: str) -> int:
+    """번들에 들어갈 표가 **단일 측정 조건**인지 확인한다.
+
+    ⚠️ 이 검사가 없어서 실제로 사고가 났다. `results/table.parquet` 은
+    작업 파일이라 여러 조건을 담는데(조건 간 비교/드리프트 분석에 쓴다),
+    `bundle.py` 가 그것을 **그대로 복사**해서 폐기한 드리프트 데이터
+    226,145행이 공개 릴리즈에 실렸다. `BUNDLE.json` 의 `n_rows` 는
+    필터한 값이라 980,915 로 맞았고, 그래서 아무도 못 알아챘다.
+
+    앞의 다섯 사례(`docs/decisions.md` 13번)와 성격이 다르다 — 코드 안에서
+    집계가 오염된 것이 아니라 **파일이 배포 경계를 넘어갔다.**
+    `core.records` 로 강제한 층에서는 안 잡힌다.
+    """
+    import pyarrow.parquet as pq
+
+    t = pq.read_table(parquet_path, columns=["env_hash"])
+    seen: dict[str, int] = {}
+    for x in t.column("env_hash").to_pylist():
+        k = str(x)[:8]
+        seen[k] = seen.get(k, 0) + 1
+    bad = {k: v for k, v in seen.items() if not expected.startswith(k)}
+    if bad:
+        print(f"\n!! {parquet_path.name} 에 다른 측정 조건이 섞여 있다.")
+        for k, v in sorted(bad.items(), key=lambda kv: -kv[1]):
+            print(f"     {k}  {v:,}행")
+        print("   배포되는 표는 단일 조건이어야 한다. 번들을 만들지 않는다.")
+        return 6
+    return 0
+
+
 def _noise_coefficients() -> dict:
     """앵커에서 잰 노이즈 바닥 계수. 없으면 core.noise 의 기본값."""
     from core import noise
@@ -309,7 +350,15 @@ def main() -> int:
     out.mkdir(parents=True, exist_ok=True)
 
     # --- 파일 복사 ---------------------------------------------------------
-    shutil.copy2(TABLE, out / "table.parquet")
+    # table.parquet 은 **이 조건의 행만** 넣는다. 원본은 작업 파일이라
+    # 여러 조건을 담는다 — 그대로 복사하면 폐기한 데이터가 배포된다.
+    import pyarrow.compute as pc
+    import pyarrow.parquet as pq
+    _t = pq.read_table(TABLE)
+    _keep = pc.starts_with(pc.cast(_t.column("env_hash"), "string"), env_hash[:8])
+    _t = _t.filter(_keep)
+    pq.write_table(_t, out / "table.parquet", compression="zstd")
+    print(f"  table.parquet: {_t.num_rows:,}행 (원본에서 이 조건만 추림)")
     shutil.copy2(paths.ENV_JSON, out / "env.json")
     shutil.copy2(KERNELS, out / "kernels.jsonl")
 
@@ -414,6 +463,10 @@ CUTLASS (NVIDIA, BSD-3-Clause) 는 이 번들에 포함되지 않는다.
         "bandwidth_gbps_effective": env.get("bandwidth_gbps_effective"),
         "ridge_point": round(hw.peak_tflops_f16 * 1e12 / (hw.bandwidth_gbps * 1e9), 3),
         "protocol": env.get("protocol"),
+        # 정정 이력. 번들이 코드와 분리되어 유통되므로 **파일 자체가
+        # 이력을 들고 다녀야** 한다. 이미 받아간 사람이 자기 사본이
+        # 구버전인지 확인할 수 있어야 한다.
+        "corrections": _load_corrections(),
         # 측정 노이즈 바닥. 소비 쪽이 재계산 없이 정답 허용치를 정할 수
         # 있어야 한다. 형상마다 다르므로 고정 1% 를 쓰면 안 된다.
         "noise_floor": _noise_coefficients(),
@@ -452,6 +505,17 @@ CUTLASS (NVIDIA, BSD-3-Clause) 는 이 번들에 포함되지 않는다.
         print(f"\n  !! table.parquet 이 {human(tsize)} 로 500MB 를 넘는다.")
         print("     배포 방법을 다시 논의해야 한다. 컬럼 dtype 최적화")
         print("     (문자열 -> dictionary, float64 -> float32) 로 크게 줄일 수 있다.")
+
+    # 배포 경계 게이트 — 아카이브 직전. validate_table --bundle 과 같은
+    # 검사를 부른다 (구현이 둘로 갈리면 한쪽만 고치게 된다).
+    rc = assert_single_env(out / "table.parquet", env_hash)
+    if rc:
+        return rc
+    from validate_table import validate_bundle  # noqa: E402
+    rc = validate_bundle(out)
+    if rc:
+        print("\n!! 번들 검사 실패 — 배포하지 않는다.")
+        return rc
 
     # --- C-3: 압축 ----------------------------------------------------------
     if args.archive:
