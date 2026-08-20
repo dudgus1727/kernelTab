@@ -1005,6 +1005,11 @@ def measure_one(ctx, kern, krow, p: Problem, rc: RuntimeConfig, probe, env,
             time_ms=m.time_ms, time_std_ms=m.time_std_ms,
             time_min_ms=m.time_min_ms, time_max_ms=m.time_max_ms,
             n_reps=m.n_reps, outlier_frac=round(m.outlier_frac, 4),
+            # 예비/워밍업 회계. 시간 예산으로 바꿨으므로 **실제로 몇 번
+            # 돌았는지** 남긴다 — 없으면 "워밍업이 조용히 0 이 됐다" 를
+            # 사후에 확인할 수 없다.
+            n_probe=m.n_probe, n_warmup=m.n_warmup,
+            overhead_ms=round(m.overhead_ms, 4),
         )
     finally:
         kern.release(handle)

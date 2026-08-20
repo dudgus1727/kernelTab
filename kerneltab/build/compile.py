@@ -345,9 +345,16 @@ def _dlclose(handle) -> None:
 def build_ctx_so(env: dict, force: bool = False) -> Path:
     """libkt_ctx.so 를 한 번 빌드한다 (측정 프로토콜 + cuBLAS + 리덕션)."""
     be = BuildEnv.from_env_json(env)
-    src = paths.PKG_ROOT / "measure" / "kt_ctx.cu"
+    mdir = paths.PKG_ROOT / "measure"
+    src = mdir / "kt_ctx.cu"
     so = paths.ARTIFACT_DIR / "libkt_ctx.so"
-    if so.exists() and not force and so.stat().st_mtime > src.stat().st_mtime:
+    # ⚠️ `.cu` 하나만 보면 안 된다. `kt_abi.h` 만 고치면 mtime 비교를
+    #    통과해 **옛 .so 가 그대로 남는다.** 그러면 ctypes 가 조용히 붙고
+    #    새 구조체 필드가 전부 0 이 된다 — 실제로 밟았다.
+    #    (Ctx 가 시작할 때 ABI 버전을 대조해 한 번 더 막는다.)
+    deps = sorted(mdir.glob("*.cu")) + sorted(mdir.glob("*.h"))
+    newest = max((f.stat().st_mtime for f in deps), default=src.stat().st_mtime)
+    if so.exists() and not force and so.stat().st_mtime > newest:
         return so
     cmd = [
         be.nvcc, "-std=c++17", f"-arch={be.arch_flag}", "-O3",

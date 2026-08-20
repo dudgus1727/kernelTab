@@ -9,6 +9,9 @@ from __future__ import annotations
 import ctypes
 from pathlib import Path
 
+#: `kt_abi.h` 의 KT_ABI_VERSION 과 같아야 한다. 구조체를 고칠 때 함께 올린다.
+KT_ABI_VERSION = 2
+
 __all__ = [
     "DEFAULT_PROTOCOL",
     "PROTOCOL_DEFAULTS",
@@ -49,6 +52,12 @@ class KtProtocolC(ctypes.Structure):
         ("warmup_frac", ctypes.c_double),
         ("min_warmup", ctypes.c_int),
         ("iqr_k", ctypes.c_double),
+        # ⚠️ 필드 순서와 타입이 kt_abi.h 의 KtProtocol 과 **정확히** 같아야
+        #    한다. 어긋나면 조용히 쓰레기 값이 들어간다 — 예외가 안 난다.
+        #    tests/test_protocol.py 가 sizeof 와 offset 을 고정한다.
+        ("probe_budget_ms", ctypes.c_double),
+        ("warmup_budget_ms", ctypes.c_double),
+        ("warmup_reps_floor", ctypes.c_int),
     ]
 
 
@@ -61,16 +70,14 @@ class KtMeasureC(ctypes.Structure):
         ("n_reps", ctypes.c_int),
         ("n_kept", ctypes.c_int),
         ("outlier_frac", ctypes.c_double),
+        # kt_abi.h 의 KtMeasure 와 순서·타입이 정확히 같아야 한다.
+        ("n_probe", ctypes.c_int),
+        ("n_warmup", ctypes.c_int),
+        ("overhead_ms", ctypes.c_double),
     ]
 
 
-#: 측정 프로토콜 기본값. 총 20ms 목표, 최소 3ms 보장, 반복 5~1000회.
-#: 실제 값은 env.json 의 `protocol` 에서 읽는다 (측정 조건의 일부이므로
-#: env_hash 에 포함되어야 한다). protocol_from_env() 를 쓸 것.
-DEFAULT_PROTOCOL = KtProtocolC(
-    target_ms=20.0, min_total_ms=3.0, min_reps_floor=5, min_reps_cap=30,
-    max_reps=1000, warmup_frac=0.2, min_warmup=10, iqr_k=1.5,
-)
+
 
 #: 열평형 소킹 파라미터. **측정 조건의 일부이므로 env.json 에 기록되어
 #: env_hash 에 반영된다.** 소킹 없이 잰 데이터와 소킹 후 데이터는 서로 다른
@@ -104,7 +111,15 @@ PROTOCOL_DEFAULTS = {
     "target_ms": 20.0, "min_total_ms": 3.0, "min_reps_floor": 5,
     "min_reps_cap": 30, "max_reps": 1000, "warmup_frac": 0.2,
     "min_warmup": 10, "iqr_k": 1.5,
+    # 시간 예산 — **상한**이다. 하한은 위 min_warmup/warmup_frac 이 그대로
+    # 유지되므로 짧은 커널은 영향이 없다 (docs/next_campaign.md 5절).
+    "probe_budget_ms": 5.0, "warmup_budget_ms": 20.0, "warmup_reps_floor": 3,
 }
+
+#: 측정 프로토콜 기본값. 총 20ms 목표, 최소 3ms 보장, 반복 5~1000회.
+#: 실제 값은 env.json 의 `protocol` 에서 읽는다 (측정 조건의 일부이므로
+#: env_hash 에 포함되어야 한다). protocol_from_env() 를 쓸 것.
+DEFAULT_PROTOCOL = KtProtocolC(**PROTOCOL_DEFAULTS)
 
 
 def protocol_from_env(env: dict) -> KtProtocolC:
@@ -147,11 +162,50 @@ class Ctx:
         L.kt_ctx_last_error.argtypes = [ctypes.c_void_p]
         L.kt_ctx_last_error.restype = ctypes.c_char_p
 
+        self._check_abi(so_path)
+
         self.h = L.kt_ctx_create(device)
         if not self.h:
             raise RuntimeError("kt_ctx_create 실패 (GPU 사용 가능한지 확인)")
         self._mnk: tuple[int, int, int] | None = None
         self.proto = DEFAULT_PROTOCOL
+
+    #: `kt_abi.h` 의 KtAbiStruct 와 같은 순서.
+    _ABI_STRUCTS = ((0, KtProblemC), (1, KtBuffersC),
+                    (2, KtProtocolC), (3, KtMeasureC))
+
+    def _check_abi(self, so_path) -> None:
+        """`.so` 가 지금 헤더로 빌드된 것인지 확인한다.
+
+        ⛔ 이것이 없으면 **옛 `.so` 가 조용히 붙는다.** ctypes 는 심볼만
+        맞으면 되고, 구조체가 커진 만큼은 그냥 0 으로 남는다. 실제로
+        워밍업 시간 예산을 넣고 `n_warmup` 이 전부 0 으로 나왔는데 원인이
+        볼륨에 캐싱된 옛 `.so` 였다. 아무 오류도 나지 않았다.
+        """
+        L = self.lib
+        if not hasattr(L, "kt_abi_version"):
+            raise RuntimeError(
+                f"{so_path} 에 kt_abi_version 이 없다 — **옛 빌드**다.\n"
+                "  이 상태로 돌리면 새 프로토콜 필드가 조용히 무시된다.\n"
+                "  지우고 다시 빌드하라: rm <artifacts>/libkt_ctx.so")
+        L.kt_abi_version.restype = ctypes.c_int
+        L.kt_abi_sizeof.argtypes = [ctypes.c_int]
+        L.kt_abi_sizeof.restype = ctypes.c_int
+        got = L.kt_abi_version()
+        if got != KT_ABI_VERSION:
+            raise RuntimeError(
+                f"{so_path} 의 ABI 버전이 {got}, 코드는 {KT_ABI_VERSION} 이다.\n"
+                "  구조체가 바뀌었는데 .so 가 옛 것이다. 다시 빌드하라.")
+        bad = []
+        for which, pytype in self._ABI_STRUCTS:
+            c_size = L.kt_abi_sizeof(which)
+            py_size = ctypes.sizeof(pytype)
+            if c_size != py_size:
+                bad.append(f"{pytype.__name__}: .so {c_size} vs python {py_size}")
+        if bad:
+            raise RuntimeError(
+                "구조체 크기가 어긋난다 — 필드가 밀려 **쓰레기 값**이 들어간다.\n"
+                "  " + "\n  ".join(bad))
 
     def set_protocol(self, env: dict) -> None:
         """env.json 의 protocol 을 이 컨텍스트의 기본값으로 삼는다."""

@@ -354,6 +354,61 @@ def sanity_check_example(cutlass_root: Path, arch_flag: str) -> dict:
     }
 
 
+def segments_cfg(args, cuda: dict, cutlass: dict, gpu_name: str) -> dict:
+    """세그먼트 설정. **`drift_profile.json` 의 권장값을 자동으로 쓴다.**
+
+    G-4(드리프트 3값)에서 나온 권장 크기를 사람이 손으로 옮겨 적게 하면
+    안 옮긴다. 실제로 A6000/12.4 의 500 을 CUDA 13.3 에 그대로 쓸 뻔했고,
+    그러면 문턱(962)의 52 % 가 되어 여유가 사라진다.
+
+    ⚠️ **툴체인이 같은 프로파일만 쓴다.** 드리프트 3값은 GPU 만이 아니라
+    CUDA/드라이버/CUTLASS 마다 달라진다. `env_hash` 로 대조할 수는 없다 —
+    `segments` 자체가 해시 입력이라 순환이다. 그래서 툴체인 식별자만 본다.
+    """
+    cfg = dict(SEGMENT_DEFAULTS)
+    if args.segment_kernels:
+        cfg["kernels"] = args.segment_kernels
+        print(f"[segments] 커널 {cfg['kernels']} (CLI 지정)")
+        return cfg
+
+    f = paths.RESULTS_DIR / "drift_profile.json"
+    if not f.exists():
+        print(f"[segments] 커널 {cfg['kernels']} (기본값)")
+        print(f"  ⚠️ {f} 가 없다. 새 환경이라면 `measure_drift.py` 를 먼저")
+        print("     돌려라 (docs/new_environment_checklist.md G-4).")
+        return cfg
+    try:
+        d = json.loads(f.read_text())
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"[segments] 커널 {cfg['kernels']} (기본값) — 프로파일 읽기 실패: {e!r}")
+        return cfg
+
+    want = _toolchain_id_from_profile(d)
+    have = (cuda.get("nvcc_version"), cutlass.get("commit"), gpu_name,
+            cuda.get("driver_user_mode"))
+    rec = d.get("recommended_segment_kernels")
+    if want != have:
+        print(f"[segments] 커널 {cfg['kernels']} (기본값)")
+        print("  ⚠️ drift_profile.json 이 **다른 툴체인**에서 나왔다. 무시한다.")
+        print(f"     프로파일: {want}")
+        print(f"     현재    : {have}")
+        print("     이 환경에서 measure_drift.py 를 다시 돌려라.")
+        return cfg
+    if not rec:
+        print(f"[segments] 커널 {cfg['kernels']} (기본값) — 프로파일에 권장값 없음")
+        print("  ⚠️ 문턱을 못 찾은 프로파일이다. 드리프트가 없다고 단정하지 마라.")
+        return cfg
+    cfg["kernels"] = int(rec)
+    print(f"[segments] 커널 {cfg['kernels']} <- drift_profile.json "
+          f"(문턱 {d.get('threshold_kernels')} 의 40%)")
+    return cfg
+
+
+def _toolchain_id_from_profile(d: dict) -> tuple:
+    return (d.get("cuda"), d.get("cutlass_commit"), d.get("gpu"),
+            d.get("driver_user_mode"))
+
+
 def _safe_manifest() -> dict | None:
     """`scripts/manifest.py` 로 코드/의존성 버전을 모은다.
 
@@ -403,6 +458,9 @@ def main() -> int:
                     help="관리자가 이미 nvidia-smi -lgc 로 고정해 둔 경우 그 값. "
                          "부하 테스트(scripts/verify_clock_lock.py)로 유지되는 것을 "
                          "확인한 뒤에만 쓸 것.")
+    ap.add_argument("--segment-kernels", type=int, default=None,
+                    help="세그먼트당 커널 수. 생략하면 results/drift_profile.json "
+                         "의 권장값(문턱의 40%%)을 쓴다")
     ap.add_argument("--seed", type=int, default=None, help="측정 순서 셔플 시드")
     ap.add_argument("--skip-example", action="store_true")
     args = ap.parse_args()
@@ -626,7 +684,7 @@ def main() -> int:
         "soak": SOAK_DEFAULTS,
         # 드리프트 대책. 이 값이 바뀌면 측정 조건이 바뀐 것이므로 env_hash 도
         # 바뀌어야 한다 — 다른 세그먼트 크기로 잰 데이터는 섞으면 안 된다.
-        "segments": SEGMENT_DEFAULTS,
+        "segments": segments_cfg(args, cuda, cutlass, hw.name),
         # 수정 8: 코드/CUTLASS/패키지 버전을 env.json 에 기록한다.
         # **해시 키에는 안 들어간다** (P-3) — manifest_hash 는 소스
         # tree_hash 를 포함해서 한 글자만 고쳐도 값이 바뀌고, 그러면

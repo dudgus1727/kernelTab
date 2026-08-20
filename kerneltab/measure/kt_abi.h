@@ -66,6 +66,19 @@ typedef struct KtProtocol {
   double warmup_frac;    // 0.2
   int min_warmup;        // 10
   double iqr_k;          // 1.5
+  // --- 시간 예산 (2026-08-20 추가) ---------------------------------------
+  // 예비 실행과 워밍업은 **반복 수**로 정해져 있었다. 느린 커널에서는 그것이
+  // 측정 자체보다 오래 걸린다 — 캠페인 886,471 작업에서 오버헤드가 GPU
+  // 시간의 **68.2%** 였다 (예비 54,401s vs 측정 25,362s).
+  //
+  // 아래 둘은 **상한**이다. 하한(min_warmup/warmup_frac)은 그대로 두므로
+  // 짧은 커널의 워밍업은 전혀 줄지 않는다 — 캐시/클럭 상태가 중요한 쪽은
+  // 거기다. 느린 꼬리만 깎는다.
+  //
+  // 0 이면 그 상한을 쓰지 않는다 (옛 동작과 동일).
+  double probe_budget_ms;   // 예비 실행 시간 상한 (기본 5)
+  double warmup_budget_ms;  // 워밍업 시간 상한   (기본 20)
+  int warmup_reps_floor;    // 상한을 씌워도 이만큼은 돈다 (기본 3)
 } KtProtocol;
 
 // 반복 수 결정 규칙 (kt_ctx.cu):
@@ -83,9 +96,36 @@ typedef struct KtMeasure {
   int n_reps;
   int n_kept;
   double outlier_frac;
+  // --- 오버헤드 회계 (2026-08-20 추가) ------------------------------------
+  // 예비/워밍업을 시간 예산으로 바꿨으므로 **실제로 몇 번 돌았는지** 남긴다.
+  // 남기지 않으면 "워밍업이 조용히 0 이 됐다" 를 알 수 없다 — 실제로
+  // WARMUP_SECONDS 가 정의만 되고 안 쓰여 워밍업이 통째로 사라진 적이 있고,
+  // 그때 로그는 "워밍업만 한다" 를 찍고 있었다.
+  int n_probe;         // 예비 실행 횟수
+  int n_warmup;        // 워밍업 횟수
+  double overhead_ms;  // 예비 + 워밍업에 실제로 쓴 시간
 } KtMeasure;
 
+// ---- ABI 핸드셰이크 -------------------------------------------------------
+// `libkt_ctx.so` 는 **볼륨에 캐싱되는 빌드 산출물**이다. 헤더를 고쳐도 옛
+// .so 가 남아 있으면 ctypes 는 아무 오류 없이 붙고, 새 필드는 **조용히 0** 이
+// 된다. 실제로 밟았다 — 워밍업 시간 예산을 넣었는데 `n_warmup` 이 전부 0 으로
+// 나왔고, 원인은 옛 .so 였다.
+//
+// 구조체를 고칠 때마다 KT_ABI_VERSION 을 올린다. Ctx 가 시작할 때 대조해서
+// 다르면 **거부한다** (docs/decisions.md 14).
+#define KT_ABI_VERSION 2
+
+enum KtAbiStruct {
+  KT_ABI_PROBLEM = 0,
+  KT_ABI_BUFFERS = 1,
+  KT_ABI_PROTOCOL = 2,
+  KT_ABI_MEASURE = 3,
+};
+
 // ---- libkt_ctx.so ---------------------------------------------------------
+int kt_abi_version(void);
+int kt_abi_sizeof(int which);   // KtAbiStruct -> sizeof, 모르면 -1
 void *kt_ctx_create(int device);
 void kt_ctx_destroy(void *ctx);
 

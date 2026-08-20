@@ -382,7 +382,17 @@ static int measure_impl(Ctx *c, KtLaunchFn fn, void *handle, int reduce_slices,
   };
 
   // 1) 짧은 예비 실행으로 1회 소요 시간을 추정한다.
-  const int probe = std::max(3, proto->min_warmup);
+  //
+  //    예전에는 무조건 max(3, min_warmup) = 10 회였다. 491 ms 짜리 커널이면
+  //    **추정에만 4.9 초**다. 그래서 먼저 3 회만 돌려 재고, 그것이
+  //    probe_budget_ms 보다 짧을 때만 표본을 늘린다.
+  //
+  //    3 회를 하한으로 두는 이유: 1 회째는 디바이스 모듈 로드가 섞이므로
+  //    (docs/measurement_drift.md) 그 값으로 n_reps 를 정하면 안 된다.
+  const int probe_floor = 3;
+  const int probe_max = std::max(probe_floor, proto->min_warmup);
+  int probe = probe_floor;
+  float probe_ms = 0;
   CK(c, cudaEventRecord(c->ev_a));
   for (int i = 0; i < probe; ++i) {
     int st = one(nullptr);
@@ -393,8 +403,32 @@ static int measure_impl(Ctx *c, KtLaunchFn fn, void *handle, int reduce_slices,
   }
   CK(c, cudaEventRecord(c->ev_b));
   CK(c, cudaEventSynchronize(c->ev_b));
-  float probe_ms = 0;
   CK(c, cudaEventElapsedTime(&probe_ms, c->ev_a, c->ev_b));
+
+  if (proto->probe_budget_ms > 0 && probe_ms < proto->probe_budget_ms
+      && probe < probe_max) {
+    // 시간이 남으면 표본을 늘려 추정을 다듬는다. 짧은 커널은 예전과 같은
+    // 횟수까지 간다.
+    double per = double(probe_ms) / double(probe);
+    int want = per > 0 ? int(proto->probe_budget_ms / per) : probe_max;
+    int extra = std::min(probe_max, std::max(probe, want)) - probe;
+    if (extra > 0) {
+      CK(c, cudaEventRecord(c->ev_a));
+      for (int i = 0; i < extra; ++i) {
+        int st = one(nullptr);
+        if (st != 0) {
+          c->err = "launch failed (probe2), status " + std::to_string(st);
+          return st ? st : -1;
+        }
+      }
+      CK(c, cudaEventRecord(c->ev_b));
+      CK(c, cudaEventSynchronize(c->ev_b));
+      float more = 0;
+      CK(c, cudaEventElapsedTime(&more, c->ev_a, c->ev_b));
+      probe_ms += more;
+      probe += extra;
+    }
+  }
   cudaError_t le = cudaGetLastError();
   if (le != cudaSuccess) {
     c->err = std::string("probe launch: ") + cudaGetErrorString(le);
@@ -418,8 +452,23 @@ static int measure_impl(Ctx *c, KtLaunchFn fn, void *handle, int reduce_slices,
   }
   n_reps = std::max(min_reps, std::min(proto->max_reps, n_reps));
 
-  // 3) 워밍업: 본 측정 반복 수의 warmup_frac 또는 최소 min_warmup
+  // 3) 워밍업: 본 측정 반복 수의 warmup_frac 또는 최소 min_warmup.
+  //    여기에 **시간 상한**을 씌운다 (warmup_budget_ms). 상한이지 하한이
+  //    아니므로 짧은 커널은 전혀 줄지 않는다 — 캐시/클럭 상태가 중요한
+  //    쪽은 거기이고, 낭비는 전부 느린 꼬리에 있었다.
+  //
+  //    ⚠️ 프로세스 시작 시의 워밍업(rehearse.py, 20 초)과 다른 것이다.
+  //    그쪽은 메모리 클럭 램프업용이고 여기는 작업당 캐시 워밍업이다.
+  //    그쪽 하한은 건드리지 않는다.
   int warm = std::max(proto->min_warmup, int(proto->warmup_frac * n_reps));
+  if (proto->warmup_budget_ms > 0 && per_ms > 0) {
+    int by_time = int(proto->warmup_budget_ms / per_ms);
+    int floor_reps = std::max(1, proto->warmup_reps_floor);
+    warm = std::min(warm, std::max(floor_reps, by_time));
+  }
+  out->n_probe = probe;
+  out->n_warmup = warm;
+  out->overhead_ms = double(probe_ms) + double(warm) * per_ms;
   for (int i = 0; i < warm; ++i) {
     if (one(nullptr) != 0) {
       c->err = "launch failed (warmup)";
@@ -469,3 +518,15 @@ int kt_ctx_measure_cublas(void *ctxp, const KtProtocol *proto,
 }
 
 }  // extern "C"
+
+extern "C" int kt_abi_version(void) { return KT_ABI_VERSION; }
+
+extern "C" int kt_abi_sizeof(int which) {
+  switch (which) {
+    case KT_ABI_PROBLEM:  return int(sizeof(KtProblem));
+    case KT_ABI_BUFFERS:  return int(sizeof(KtBuffers));
+    case KT_ABI_PROTOCOL: return int(sizeof(KtProtocol));
+    case KT_ABI_MEASURE:  return int(sizeof(KtMeasure));
+    default: return -1;
+  }
+}
