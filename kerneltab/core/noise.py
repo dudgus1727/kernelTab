@@ -50,6 +50,7 @@ __all__ = [
     "noise_floor",
     "noise_floor_ms",
     "resolvable",
+    "sigma_rel",
     "tick_ms_observed",
     "tick_pct",
 ]
@@ -84,7 +85,14 @@ PROVENANCE = {
 def coefficients() -> dict:
     """`BUNDLE.json` 에 실어 소비 쪽이 재계산 없이 쓰게 한다."""
     return {"sigma_abs_ms": SIGMA_ABS_MS, "sigma_rel": SIGMA_REL,
-            "model": "sigma_rel(t) = sigma_abs_ms / t + sigma_rel",
+            "tick_ms": EVENT_TICK_MS,
+            "model": "noise_floor(t) = max(sigma_abs_ms/t + sigma_rel, "
+                     "tick_ms/t)",
+            "model_note": (
+                "tick_ms 는 CUDA 이벤트 타이머의 양자다. 이보다 작은 차이는 "
+                "분해할 수 없다 — 같은 눈금에 떨어진 두 config 는 시간이 "
+                "문자 그대로 동일하게 기록된다. 14us 에서 통계 노이즈는 "
+                "2.7% 인데 눈금은 7.3% 라 분해능이 지배한다 (경계 ~1.5ms)."),
             **PROVENANCE}
 
 
@@ -103,14 +111,44 @@ def tick_ms_observed(values) -> float | None:
     return min(gaps) if gaps else None
 
 
-def noise_floor(time_ms: float) -> float:
-    """이 정도 시간의 커널을 반복 측정했을 때의 **상대** 표준편차 (0~1).
+def sigma_rel(time_ms: float) -> float:
+    """**통계적** 노이즈 모델만. 앵커의 반복 측정에서 적합했다.
 
-    두 config 의 시간 차이가 이것보다 작으면 **구분할 수 없다.**
+    관측된 산포와 비교할 때는 이것을 쓴다 (`core/anchors.py` 의 `모델` 열).
+    "두 값을 구분할 수 있는가" 에는 `noise_floor()` 를 써라 — 거기에는
+    타이머 분해능이 더 들어간다.
     """
     if not time_ms or time_ms <= 0:
         return SIGMA_REL
     return SIGMA_ABS_MS / time_ms + SIGMA_REL
+
+
+def noise_floor(time_ms: float) -> float:
+    """두 측정값을 **구분할 수 있는 최소 상대 차이** (0~1).
+
+    통계적 노이즈와 **타이머 분해능** 중 큰 쪽이다.
+
+        noise_floor(t) = max( sigma_rel(t),  tick_pct(t) )
+
+    ⚠️ **분해능 항이 없으면 짧은 커널에서 모델이 과소평가한다.** 14 us 에서
+    `sigma_rel` 은 2.7 % 인데 눈금 하나는 **7.3 %** 다. 같은 눈금에 떨어진
+    두 config 는 시간이 **문자 그대로 동일**하게 기록되므로, 2.7 % 기준으로
+    "구분된다" 고 판정하면 없는 순위를 만든다.
+
+    | t | `sigma_rel` | `tick_pct` | 지배하는 쪽 |
+    |---|---|---|---|
+    | 14 us | 2.7 % | **7.3 %** | 분해능 |
+    | 56 us | 0.71 % | **1.8 %** | 분해능 |
+    | 0.5 ms | 0.12 % | **0.20 %** | 분해능 |
+    | 1.5 ms | 0.069 % | 0.068 % | 비슷 |
+    | 4 ms | **0.053 %** | 0.026 % | 통계 |
+
+    경계는 약 1.5 ms 다. 그보다 짧으면 **분해능이 지배한다.**
+    """
+    if not time_ms or time_ms <= 0:
+        # 분해능 항은 t 로 나누므로 의미가 없다. 옛 계약대로 상대 성분만.
+        return SIGMA_REL
+    return max(sigma_rel(time_ms), tick_pct(time_ms))
 
 
 def noise_floor_ms(time_ms: float) -> float:

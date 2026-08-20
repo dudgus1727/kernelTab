@@ -26,10 +26,34 @@ class TestModel:
         assert noise_floor(0.015) > 20 * noise_floor(3.0)
 
     def test_matches_measured_anchors(self):
-        """앵커 실측과 자릿수가 맞는가 (33시간 x 312회)."""
+        """앵커 실측과 자릿수가 맞는가 (33시간 x 312회).
+
+        ⚠️ **통계 모델(`sigma_rel`)로 비교한다.** `noise_floor` 에는
+        타이머 분해능이 더 들어가 있어서 짧은 커널에서 훨씬 크다 — 관측된
+        산포와 비교할 값이 아니다.
+        """
+        from kerneltab.core.noise import sigma_rel
         # 0.0143 ms -> 실측 2.93%,  2.9164 ms -> 실측 0.018%
-        assert 0.015 < noise_floor(0.0143) < 0.045
-        assert 0.0003 < noise_floor(2.9164) < 0.0015
+        assert 0.015 < sigma_rel(0.0143) < 0.045
+        assert 0.0003 < sigma_rel(2.9164) < 0.0015
+
+    def test_짧은_커널에서는_분해능이_지배한다(self):
+        """★ 통계 모델만 쓰면 **과소평가**한다.
+
+        14 us 에서 sigma_rel 은 2.7 % 인데 눈금 하나는 7.3 % 다. 같은 눈금에
+        떨어진 두 config 는 시간이 **문자 그대로 동일**하게 기록되므로
+        2.7 % 기준으로 "구분된다" 고 하면 없는 순위를 만든다.
+        """
+        from kerneltab.core.noise import sigma_rel, tick_pct
+        t = 0.0143
+        assert tick_pct(t) > sigma_rel(t)
+        assert noise_floor(t) == pytest.approx(tick_pct(t))
+
+    def test_긴_커널에서는_통계가_지배한다(self):
+        from kerneltab.core.noise import sigma_rel, tick_pct
+        t = 4.0
+        assert sigma_rel(t) > tick_pct(t)
+        assert noise_floor(t) == pytest.approx(sigma_rel(t))
 
     def test_monotone_decreasing(self):
         ts = [0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 20.0]

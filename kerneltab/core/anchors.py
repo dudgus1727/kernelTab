@@ -329,7 +329,7 @@ def analyze(rows: list[dict], rnd: list[int | None], env_hash: str,
         judged = i < n_judged
         rep.stats.append(AnchorStat(k[0], k[1], overall, len(med),
                                     max(vals) - min(vals), s_b, s_w,
-                                    noise1[k], 100 * noise_model.noise_floor(overall),
+                                    noise1[k], 100 * noise_model.sigma_rel(overall),
                                     ratio, judged, ok))
         if judged and not ok:
             rep.failures.append(
