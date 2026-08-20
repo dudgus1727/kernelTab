@@ -197,9 +197,44 @@ def main() -> int:
                           else None),
         agg=lambda ts: _st.median(ts) / min(ts),
         min_n=5)          # 표본이 적으면 중앙값이 의미 없다
+    # --- 형상 분해능 -------------------------------------------------------
+    # distinct_time_frac = 서로 다른 시간값 수 / 후보 수
+    #
+    # 난이도와 **다른 축**이다.
+    #   난이도 낮음          실제로 성능이 비슷하다        (물리)
+    #   distinct 비율 낮음   측정이 구분을 못 한다          (계측)
+    #
+    # CUDA 이벤트 타이머는 양자화돼 있고(core/noise.py 의 EVENT_TICK_MS),
+    # 짧은 형상에서는 여러 config 가 **같은 눈금에 떨어져 시간이 문자
+    # 그대로 동일**하게 기록된다. 실측: (1,12288,4096) 은 후보 12,213 개에
+    # 서로 다른 값이 **1,638 개**뿐이다 (0.134).
+    #
+    # 이 값이 낮으면 그 형상에서 순위를 다투는 것이 무의미하다 — 규칙을
+    # 채점할 때 그 형상의 가중치를 낮추거나 따로 보고해야 한다.
+    #
+    # ⛔ 정답에서 유도된 값이므로 ANSWER_COLS 다. 규칙 입력에는 안 나온다.
+    _distinct = _per_env(
+        rows,
+        key_fn=lambda r: (r["M"], r["N"], r["K"]),
+        val_fn=lambda r: (round(r["time_ms"], 9)
+                          if r.get("status") == "ok" and r.get("time_ms")
+                          else None),
+        agg=lambda ts: len(set(ts)) / len(ts),
+        min_n=5)
+    _ndist = _per_env(
+        rows,
+        key_fn=lambda r: (r["M"], r["N"], r["K"]),
+        val_fn=lambda r: (round(r["time_ms"], 9)
+                          if r.get("status") == "ok" and r.get("time_ms")
+                          else None),
+        agg=lambda ts: len(set(ts)),
+        min_n=5)
+
     for r in rows:
-        r["difficulty"] = _diff.get(
-            (str(r.get("env_hash") or ""), r["M"], r["N"], r["K"]))
+        k = (str(r.get("env_hash") or ""), r["M"], r["N"], r["K"])
+        r["difficulty"] = _diff.get(k)
+        r["distinct_time_frac"] = _distinct.get(k)
+        r["n_distinct_times"] = _ndist.get(k)
     if _diff:
         _cur = [v for k, v in _diff.items()
                 if k[0] and k[0] == env.get("env_hash")]

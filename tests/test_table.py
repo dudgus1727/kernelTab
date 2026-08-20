@@ -68,6 +68,11 @@ def _rows(env_hash="aaaa1111", n_shapes=3, n_cfg=5):
                 # 형상 난이도 = 중앙값/최적. 정답에서 유도된 값이라
                 # ANSWER_COLS 에 있다 (규칙에 노출되면 안 된다).
                 "difficulty": 1.8,
+                # 형상 분해능 = 서로 다른 시간값 / 후보 수. 난이도와 다른
+                # 축이다 — 난이도는 물리, 이것은 계측이다. 낮으면 그
+                # 형상에서 순위를 다투는 것이 무의미하다.
+                "distinct_time_frac": 0.134,
+                "n_distinct_times": 1638,
             })
     return out
 
