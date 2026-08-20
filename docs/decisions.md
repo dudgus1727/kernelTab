@@ -361,6 +361,42 @@ except Exception:
 같은 커밋에서 잡혔을 것이다. 실제로 이 프로젝트에서 전수 검사가 통했던
 사례가 이미 있었다 — `MEM_CLOCK_MIN_FRAC` 미구현을 AST 검사로 찾았다.
 
+### 아홉 번째 — **패키지 안팎을 헷갈린 경로** 세 건
+
+패키지 이전(`core/` → `kerneltab/core/`) 뒤 "이 디렉토리가 패키지 안인가
+밖인가" 를 틀린 곳이 셋 나왔다. 전부 같은 클래스인데 **드러난 시점이 전부
+달랐다.**
+
+| 무엇 | 어떻게 드러났나 |
+|---|---|
+| `hwspec/` | 이전 중에 잡았다 (의식하고 있었다) |
+| `build/launch_probe.cu` | **컨테이너에서 `detect` 가 죽었다** |
+| `datasets/` | **릴리즈 번들을 실제로 열어 보고서야** |
+
+셋째가 가장 아슬아슬했다. 호스트에서 312 개 테스트가 통과하고 있었고,
+`datasets/` 는 코드가 평소에 안 건드리는 경로라 아무 데서도 안 보였다.
+**소비 프로젝트(kernelRule)가 첫 번째로 밟았을 버그다.**
+
+세 가지로 대응했다.
+
+1. **구분을 한 곳에 적었다.** `paths.PACKAGE_INTERNAL` / `PACKAGE_EXTERNAL`
+   과 그 이유를 `core/paths.py` 상단 표에.
+2. **검사로 강제했다.** `tests/test_paths.py::TestPackageBoundary` 가
+   `PKG_ROOT / "<패키지 밖 이름>"` 과 그 반대를 AST/정규식으로 잡고,
+   경로 결정이 `paths.py` 밖에 있으면 실패한다.
+3. **결정 지점을 하나로 모았다.** `datasets/` 루트를 `core/bundle.py` 와
+   `scripts/bundle.py` 가 **각자** 정하고 있었다 — 그래서 한쪽만 어긋났다.
+
+그리고 `paths.py` 를 `build/` 에서 `core/` 로 옮겼다. 이름이 "빌드 경로" 인데
+`RESULTS_DIR` / `HWSPEC_DIR` / `datasets_dirs()` 를 들고 있었다.
+**"datasets 루트를 어디서 정하나" 를 찾는 사람이 `build/` 를 뒤지지 않는다** —
+이 사고의 뿌리가 기능이 아니라 **발견 가능성**이었기 때문에 이름을 고쳤다.
+덤으로 `core → build` 레이어링 역전도 사라졌다.
+
+> ⚠️ 실행 비용은 없었다. `build/__init__.py` 가 비어 있어서 무거운 것이
+> 딸려오지도 않았다. **비용이 없다고 안 고치면 안 되는 종류가 있다** —
+> 사람이 못 찾는 구조가 그것이다.
+
 ### 여덟 번째 — 술어 하나가 **일곱 곳**에 복사돼 있었다
 
 `launchable` (= `regs_per_thread * threads <= regs_per_sm`) 판정이 일곱 곳에

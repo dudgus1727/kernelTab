@@ -38,11 +38,13 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from kerneltab.build import paths
+from kerneltab.core import paths
 from kerneltab.core.hardware import hardware_from_env
 from kerneltab.core.shapes import all_layers
 
-DATASETS = REPO_ROOT / "datasets"
+#: 번들을 놓을 곳. **경로 결정은 paths 하나에만 있다** — 예전에는
+#: core/bundle.py 와 여기가 각자 정했다.
+DATASETS = paths.DATASETS_DIR
 RESULTS = paths.RESULTS_DIR / "results.jsonl"
 KERNELS = paths.RESULTS_DIR / "kernels.jsonl"
 TABLE = paths.RESULTS_DIR / "table.parquet"

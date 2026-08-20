@@ -58,10 +58,10 @@ NVCC_ARCH = {
     "sm_100": "sm_100a",
 }
 
-# hwspec/ 은 패키지 밖의 데이터 디렉토리다. build.paths 가 저장소 루트와
+# hwspec/ 은 패키지 밖의 데이터 디렉토리다. core.paths 가 저장소 루트와
 # 환경변수(KERNELTAB_HWSPEC_DIR)를 함께 본다 — 여기서 경로를 다시 조립하면
 # 같은 규칙이 두 곳에 생긴다 (decisions 13).
-from kerneltab.build.paths import HWSPEC_DIR
+from kerneltab.core.paths import HWSPEC_DIR
 
 HWSPEC_PATH = HWSPEC_DIR / "known.json"
 

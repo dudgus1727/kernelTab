@@ -1,4 +1,21 @@
-"""경로 해석 (CUTLASS, CUDA, 산출물 디렉토리).
+"""경로 해석 — **어느 디렉토리가 어디에 있는지 정하는 유일한 곳.**
+
+## 왜 `build/` 가 아니라 `core/` 인가
+
+원래 `kerneltab/build/paths.py` 였다. 이름이 "빌드 경로" 를 뜻하는데 실제로는
+`RESULTS_DIR`, `HWSPEC_DIR`, `datasets_dirs()` 처럼 빌드와 무관한 것을 전부
+들고 있었다. **"datasets 루트를 어디서 정하나" 를 찾는 사람이 `build/` 를
+뒤지지 않는다.**
+
+그것이 실제로 사고를 냈다. 패키지 이전 뒤 `core/bundle.py` 가
+`PKG_ROOT/datasets` 를 보고 있어서 릴리즈 번들을 못 찾았는데, 경로 결정이
+두 곳(`core/bundle.py`, `scripts/bundle.py`)에 나뉘어 있어서 한쪽만
+어긋난 것이 **번들을 실제로 열어 보고서야** 드러났다.
+
+덤으로 레이어링도 맞는다 — 예전에는 `core/hardware.py` 가
+`build.paths` 를 import 해서 core -> build 역전이 있었다.
+
+## 경로 해석 (CUTLASS, CUDA, 산출물 디렉토리)
 
 컨테이너/로컬 어디서든 동작해야 하므로 경로를 코드에 박지 않고
 환경변수 -> 관례적 위치 순으로 탐색한다. 최종 결정된 값은 Phase 0 에서
@@ -53,6 +70,55 @@ ENV_JSON = RESULTS_DIR / "env.json"
 #: 없음). `KERNELTAB_HWSPEC_DIR` 로 덮어쓸 수 있다 — editable 설치가 아니면
 #: 저장소 루트가 없을 수 있기 때문이다.
 HWSPEC_DIR = _dir_from_env("KERNELTAB_HWSPEC_DIR", REPO_ROOT / "hwspec")
+
+
+def datasets_dirs() -> list[Path]:
+    """배포 번들을 찾을 루트들. 앞에서부터 본다.
+
+    `KERNELTAB_DATASETS` 는 `os.pathsep` 로 **여러 개**를 줄 수 있다 —
+    로컬 캠페인과 내려받은 릴리즈를 함께 두는 경우가 있어서다. 그래서
+    `_dir_from_env`(하나짜리)를 쓰지 않는다.
+
+    ⚠️ 이 함수가 유일한 결정 지점이다. 예전에는 `core/bundle.py` 와
+    `scripts/bundle.py` 가 **각자** 정했고, 패키지 이전 뒤 전자가
+    `PKG_ROOT/datasets` 를 보는 바람에 릴리즈 번들을 못 찾았다.
+    """
+    out: list[Path] = []
+    envv = os.environ.get("KERNELTAB_DATASETS")
+    if envv:
+        out += [Path(x).expanduser() for x in envv.split(os.pathsep) if x]
+    out.append(REPO_ROOT / "datasets")
+    cwd = Path.cwd() / "datasets"
+    if cwd not in out:
+        out.append(cwd)
+    return out
+
+
+#: 새로 만드는 번들을 놓을 곳 (읽기는 `datasets_dirs()` 전부를 본다).
+DATASETS_DIR = datasets_dirs()[0]
+
+
+# ---------------------------------------------------------------------------
+# 무엇이 패키지 **안**이고 무엇이 **밖**인가 — 한 곳에 적는다
+# ---------------------------------------------------------------------------
+# 패키지 이전 뒤 이 구분을 틀린 곳이 세 군데 나왔다
+# (`launch_probe.cu`, `hwspec/`, `datasets/`). 전부 "안/밖" 을 헷갈린 것이다.
+#
+#   패키지 안 (PKG_ROOT 기준, pip 이 함께 설치한다)
+#     kerneltab/core, backends, build, measure     코드
+#     kerneltab/measure/*.cu, *.h                  런타임에 nvcc 로 컴파일
+#     kerneltab/build/launch_probe.cu              런타임에 nvcc 로 컴파일
+#
+#   패키지 밖 (REPO_ROOT 기준, 환경변수로 덮어쓸 수 있다)
+#     hwspec/      GPU 스펙 데이터   KERNELTAB_HWSPEC_DIR
+#     results/     측정 산출물       KERNELTAB_RESULTS_DIR
+#     artifacts/   커널 .so 7.4GB    KERNELTAB_ARTIFACT_DIR
+#     datasets/    배포 번들         KERNELTAB_DATASETS (복수 가능)
+#     docs/, docker/, rules/, scripts/, tests/     코드에서 경로로 안 쓴다
+#
+# `tests/test_paths.py` 가 이 구분을 강제한다.
+PACKAGE_INTERNAL = ("core", "backends", "build", "measure")
+PACKAGE_EXTERNAL = ("hwspec", "results", "artifacts", "datasets")
 
 
 class PathError(RuntimeError):

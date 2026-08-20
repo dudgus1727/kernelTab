@@ -23,9 +23,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from kerneltab.build import paths
 from kerneltab.core import (
     device,
+    paths,
     records,
 )
 from kerneltab.core import kernels as kernels_mod

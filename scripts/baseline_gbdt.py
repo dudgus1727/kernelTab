@@ -48,7 +48,7 @@ def main() -> int:
     import numpy as np
     import pyarrow.parquet as pq
 
-    from kerneltab.build import paths
+    from kerneltab.core import paths
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--split", choices=("block", "kfold"), default="block")

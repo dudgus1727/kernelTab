@@ -23,7 +23,7 @@ from kerneltab.backends.sm80 import (
     epilogue_thread_map_ok,
     mainloop_smem_thread_map_ok,
 )
-from kerneltab.build import paths
+from kerneltab.core import paths
 from kerneltab.core.types import KernelConfig
 
 KERNELS = paths.RESULTS_DIR / "kernels.jsonl"

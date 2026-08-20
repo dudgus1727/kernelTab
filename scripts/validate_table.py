@@ -29,8 +29,8 @@ sys.path.insert(0, str(REPO_ROOT))
 import itertools
 
 from kerneltab.backends import get_backend
-from kerneltab.build import paths
 from kerneltab.core import kernels as kernels_mod
+from kerneltab.core import paths
 from kerneltab.core.config import (
     alignment_combos,
     alignments_for,

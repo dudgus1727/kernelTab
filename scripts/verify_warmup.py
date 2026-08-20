@@ -56,9 +56,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from kerneltab.build import paths
 from kerneltab.build.compile import build_ctx_so
-from kerneltab.core import device, noise, records
+from kerneltab.core import device, noise, paths, records
 from kerneltab.core import kernels as kernels_mod
 from kerneltab.core.hardware import hardware_from_env
 from kerneltab.measure.runner import (

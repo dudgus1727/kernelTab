@@ -24,9 +24,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from kerneltab.backends import get_backend
-from kerneltab.build import paths
 from kerneltab.build.compile import BuildEnv, build_ctx_so, build_kernel
-from kerneltab.core import device
+from kerneltab.core import device, paths
 from kerneltab.core.hardware import hardware_from_env
 from kerneltab.core.types import KernelConfig, Problem
 

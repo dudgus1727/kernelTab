@@ -249,7 +249,7 @@ def assign_rounds(rows: list[dict],
 def load(env_hash: str, results_dir: str | Path | None = None
          ) -> tuple[list[dict], list[int | None], str, int]:
     """`(앵커 줄, 라운드, 라운드 출처, 슬라이스 수)`."""
-    from kerneltab.build import paths
+    from kerneltab.core import paths
     d = Path(results_dir) if results_dir else paths.RESULTS_DIR
     rows = records.load_records(d / "anchors.jsonl", env_hash)
     sl = slice_intervals(d / "sweep.jsonl", env_hash)

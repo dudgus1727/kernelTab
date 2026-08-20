@@ -31,7 +31,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from kerneltab.build import paths
+from kerneltab.core import paths
 
 HEARTBEAT = paths.RESULTS_DIR / "heartbeat.json"
 

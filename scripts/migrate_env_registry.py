@@ -25,7 +25,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from kerneltab.build import paths
+from kerneltab.core import paths
 from kerneltab.core.env_hash import (
     ENV_HASH_DEF_VERSION,
     env_hash_v2,

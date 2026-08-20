@@ -41,8 +41,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from kerneltab.build import paths
-from kerneltab.core import anchors, records
+from kerneltab.core import anchors, paths, records
 
 #: **같은 앵커**를 기준선과 비교할 때의 배수.
 WITHIN_SLICE_WORSE = 2.0

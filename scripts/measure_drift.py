@@ -55,9 +55,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from kerneltab.build import paths
 from kerneltab.build.compile import build_ctx_so
-from kerneltab.core import device, noise, records
+from kerneltab.core import device, noise, paths, records
 from kerneltab.measure.gpu_state import NvmlProbe
 from kerneltab.measure.runner import Ctx, Kernel, KtProblemC
 

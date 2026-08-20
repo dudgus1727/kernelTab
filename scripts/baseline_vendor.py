@@ -60,7 +60,7 @@ def extract(out_path: str, count: int) -> int:
     import nvMatmulHeuristics as nv
 
     sys.path.insert(0, str(REPO_ROOT))
-    from kerneltab.build import paths
+    from kerneltab.core import paths
     from kerneltab.core.hardware import hardware_from_env
     from kerneltab.core.shapes import all_shapes
 
@@ -119,7 +119,7 @@ def score(path: str) -> int:
     sys.path.insert(0, str(REPO_ROOT))
     import pyarrow.parquet as pq
 
-    from kerneltab.build import paths
+    from kerneltab.core import paths
 
     env = json.loads(paths.ENV_JSON.read_text())
     eh = env["env_hash"]

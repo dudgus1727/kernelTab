@@ -19,7 +19,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from kerneltab.build import paths
+from kerneltab.core import paths
 
 __all__ = ["BuildEnv", "KtInfo", "build_kernel", "introspect"]
 

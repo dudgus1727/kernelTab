@@ -28,7 +28,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from kerneltab.build import paths
+from kerneltab.core import paths
 
 #: 매니페스트 해시에 들어가는 키. **재현성에 영향을 주는 것만** 넣는다.
 #: 시각/호스트명/가용 메모리처럼 실행마다 변하는 값은 절대 넣지 않는다

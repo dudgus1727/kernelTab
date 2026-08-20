@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from kerneltab.build import paths
+from kerneltab.core import paths
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -193,3 +193,99 @@ def test_datasets_는_저장소_루트에서_찾는다():
     except BundleError as e:
         pytest.fail(f"저장소 루트의 번들을 못 찾는다: {e}")
     assert got == (d / names[0]).resolve()
+
+
+class TestPackageBoundary:
+    """★ 무엇이 패키지 **안**이고 무엇이 **밖**인가.
+
+    패키지 이전 뒤 이 구분을 틀린 곳이 **세 군데** 나왔다. 전부 같은
+    클래스이고, 전부 "실행해 보고서야" 알았다.
+
+    | 무엇 | 어떻게 드러났나 |
+    |---|---|
+    | `build/launch_probe.cu` | 컨테이너에서 `detect` 가 죽었다 |
+    | `hwspec/` | 이전 중에 잡았다 |
+    | `datasets/` | **릴리즈 번들을 열어 보고서야** 알았다 |
+
+    마지막이 가장 아슬아슬했다 — 소비 프로젝트(kernelRule)가 첫 번째로
+    밟았을 버그다. 그래서 검사로 고정한다.
+    """
+
+    def test_패키지_밖_디렉토리를_PKG_ROOT_로_찾지_않는다(self):
+        """`PKG_ROOT / "<패키지 밖 이름>"` 은 항상 틀렸다."""
+        import re
+
+        from kerneltab.core.paths import PACKAGE_EXTERNAL
+        pat = re.compile(
+            r'PKG_ROOT\s*/\s*["\'](' + "|".join(PACKAGE_EXTERNAL) + r')["\']')
+        offenders = []
+        for f in sorted((REPO / "kerneltab").rglob("*.py")):
+            for i, line in enumerate(f.read_text().splitlines(), 1):
+                if pat.search(line):
+                    offenders.append(f"{f.relative_to(REPO)}:{i}: {line.strip()}")
+        assert not offenders, (
+            "패키지 **밖** 디렉토리를 PKG_ROOT 기준으로 찾는다. "
+            "REPO_ROOT 또는 paths 의 상수를 써라:\n  " + "\n  ".join(offenders))
+
+    def test_패키지_안_파일을_REPO_ROOT_로_찾지_않는다(self):
+        """반대 방향. `REPO_ROOT / "measure"` 같은 것."""
+        import re
+
+        from kerneltab.core.paths import PACKAGE_INTERNAL
+        pat = re.compile(
+            r'REPO_ROOT\s*/\s*["\'](' + "|".join(PACKAGE_INTERNAL) + r')["\']')
+        offenders = []
+        for d in ("kerneltab", "scripts"):
+            for f in sorted((REPO / d).rglob("*.py")):
+                for i, line in enumerate(f.read_text().splitlines(), 1):
+                    if pat.search(line):
+                        offenders.append(
+                            f"{f.relative_to(REPO)}:{i}: {line.strip()}")
+        assert not offenders, (
+            "패키지 **안** 을 REPO_ROOT 기준으로 찾는다. paths.PKG_ROOT 를 "
+            "써라:\n  " + "\n  ".join(offenders))
+
+    def test_패키지_밖_경로_결정이_paths_에만_있다(self):
+        """디렉토리 이름을 코드에 박는 곳이 `paths.py` 말고 없어야 한다.
+
+        `datasets/` 루트를 `core/bundle.py` 와 `scripts/bundle.py` 가 **각자**
+        정하고 있었고, 그래서 한쪽만 이전 뒤 어긋났다.
+        """
+        import re
+
+        from kerneltab.core.paths import PACKAGE_EXTERNAL
+        pat = re.compile(r'/\s*["\'](' + "|".join(PACKAGE_EXTERNAL) + r')["\']')
+        offenders = []
+        for f in sorted((REPO / "kerneltab").rglob("*.py")):
+            if f.name == "paths.py":
+                continue
+            for i, line in enumerate(f.read_text().splitlines(), 1):
+                if line.lstrip().startswith("#"):
+                    continue
+                if pat.search(line):
+                    offenders.append(f"{f.relative_to(REPO)}:{i}: {line.strip()}")
+        assert not offenders, (
+            "패키지 밖 데이터 디렉토리 경로를 직접 조립한다. "
+            "kerneltab/core/paths.py 의 상수를 써라:\n  " + "\n  ".join(offenders))
+
+    def test_실제_디렉토리들이_기대한_쪽에_있다(self):
+        from kerneltab.core.paths import (
+            PACKAGE_EXTERNAL,
+            PACKAGE_INTERNAL,
+            PKG_ROOT,
+            REPO_ROOT,
+        )
+        for name in PACKAGE_INTERNAL:
+            assert (PKG_ROOT / name).is_dir(), f"{name} 이 패키지 안에 없다"
+        for name in PACKAGE_EXTERNAL:
+            d = REPO_ROOT / name
+            if d.exists():
+                assert not (PKG_ROOT / name).exists(), (
+                    f"{name} 이 패키지 **안팎에 둘 다** 있다 — 어느 쪽을 "
+                    "읽는지 알 수 없다")
+
+    def test_datasets_결정이_한_곳이다(self):
+        from kerneltab.core import paths
+        roots = paths.datasets_dirs()
+        assert roots and roots[-1] is not None
+        assert paths.DATASETS_DIR == roots[0]

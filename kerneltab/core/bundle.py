@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import warnings
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -74,13 +73,8 @@ def resolve_bundle_path(ref: str | Path) -> Path:
     p = Path(ref)
     if (p / "BUNDLE.json").exists():
         return p.resolve()
-    roots = []
-    envv = os.environ.get("KERNELTAB_DATASETS")
-    if envv:
-        roots += [Path(x) for x in envv.split(os.pathsep) if x]
-    from kerneltab.build import paths as _paths
-    roots.append(_paths.REPO_ROOT / "datasets")
-    roots.append(Path.cwd() / "datasets")
+    from kerneltab.core import paths as _paths
+    roots = _paths.datasets_dirs()
     for r in roots:
         cand = r / str(ref)
         if (cand / "BUNDLE.json").exists():

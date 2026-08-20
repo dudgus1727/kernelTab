@@ -30,7 +30,7 @@ class TestPathOverride:
 
     def _paths_in(self, env: dict):
         code = (f"import sys; sys.path.insert(0, {str(REPO)!r})\n"
-                "from kerneltab.build import paths\n"
+                "from kerneltab.core import paths\n"
                 "import json; print(json.dumps({'r': str(paths.RESULTS_DIR),"
                 "'a': str(paths.ARTIFACT_DIR), 'e': str(paths.ENV_JSON)}))")
         e = dict(os.environ)
@@ -147,7 +147,7 @@ class TestCutlassCommitInjection:
         assert i["commit_source"] == "injected"
 
     def test_real_repo_reports_git(self):
-        from kerneltab.build import paths
+        from kerneltab.core import paths
         try:
             root = paths.cutlass_dir(None)
         except Exception:
@@ -191,7 +191,7 @@ class TestManifestInEnv:
 
     def test_실제_env_json_에도_성립한다(self):
         """있으면 실제 데이터로도 확인한다 (합성 env 가 현실과 다를 수 있다)."""
-        from kerneltab.build import paths
+        from kerneltab.core import paths
         from kerneltab.core.env_hash import env_hash_v2
         f = paths.RESULTS_DIR / "env.json"
         if not f.exists():
