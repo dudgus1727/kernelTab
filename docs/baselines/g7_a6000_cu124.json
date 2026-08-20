@@ -1,0 +1,59 @@
+{
+ "env_hash": "c63710df",
+ "checks": [
+  {
+   "name": "1. 세그먼트 간 편차 (sB/sW)",
+   "ok": true,
+   "detail": "짧은 앵커 최대 변동폭 1.81%"
+  },
+  {
+   "name": "2. 라운드 간 절대값 추이",
+   "ok": true,
+   "detail": "R0->R7 최대 0.63% (바닥 1.00%)"
+  },
+  {
+   "name": "3. 슬라이스 start->end",
+   "ok": true,
+   "detail": "최대 3.02% (64x64_w32x32x64_st6_swid4_a228@512), 허용 4.00% [기준선 없음 — 절대값]"
+  },
+  {
+   "name": "4. 워밍업 하한",
+   "ok": false,
+   "detail": "n_warmup 이 기록된 줄이 없다 — **검사 못 함**"
+  },
+  {
+   "name": "5. 재현성",
+   "ok": false,
+   "detail": "재측정 기록이 없다 — **검사 못 함**"
+  }
+ ],
+ "within_slice": [
+  [
+   "sm86_tb128x64x32_w64x32x32_st6_swid8_a882",
+   512,
+   -0.3348207252791391
+  ],
+  [
+   "sm86_tb64x64x64_w32x32x64_st6_swid4_a228",
+   512,
+   -3.0208321585693088
+  ],
+  [
+   "sm86_tb128x64x32_w16x64x32_st2_swid1_a448",
+   512,
+   0.0
+  ],
+  [
+   "sm86_tb128x128x64_w32x32x64_st2_swid4_a888",
+   512,
+   0.0
+  ]
+ ],
+ "worst_short_pct": 1.8125029331204967,
+ "abs_worst_pct": 0.6250047748473042,
+ "abs_floor_pct": 1.0,
+ "warmup_min": null,
+ "repro_max": null,
+ "ok": false,
+ "_note": "A6000 / CUDA 12.4 캠페인(c63710df)의 G-7 값. **기준선으로만** 쓴다 — 슬라이스 내 이동(within_slice)을 새 환경과 비교하기 위한 것이다. 4·5번이 실패인 이유는 그 캠페인이 n_warmup 기록 이전이고 repro.jsonl 의 env_hash 가 다르기 때문이지, 그 캠페인이 나빠서가 아니다."
+}
