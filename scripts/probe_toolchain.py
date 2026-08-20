@@ -54,12 +54,12 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from backends import get_backend
-from build import paths
-from build.compile import BuildEnv, build_kernel
-from core.config import alignment_combos, enumerate_kernels
-from core.hardware import hardware_from_env
-from core.shapes import all_shapes
+from kerneltab.backends import get_backend
+from kerneltab.build import paths
+from kerneltab.build.compile import BuildEnv, build_kernel
+from kerneltab.core.config import alignment_combos, enumerate_kernels
+from kerneltab.core.hardware import hardware_from_env
+from kerneltab.core.shapes import all_shapes
 
 #: 대조에서 "달라졌다" 로 볼 레지스터 차이. ptxas 는 마이너 버전 사이에서도
 #: 1~2개는 흔들리므로 그것까지 회귀로 부르면 신호가 묻힌다.

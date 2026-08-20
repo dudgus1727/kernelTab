@@ -6,8 +6,13 @@ alignment 는 탐색 축이 아니라 (형상, 레이아웃)에서 유도되는 
 """
 import pytest
 
-from core.config import DTYPE_BYTES, alignment_combos, alignments_for, dtype_bytes
-from core.types import Problem
+from kerneltab.core.config import (
+    DTYPE_BYTES,
+    alignment_combos,
+    alignments_for,
+    dtype_bytes,
+)
+from kerneltab.core.types import Problem
 
 
 class TestAlignmentsFor:
@@ -61,7 +66,7 @@ class TestAlignmentCombos:
         assert combos == [(4, 4, 8), (8, 8, 8)]
 
     def test_layer_d_yields_five_distinct(self):
-        from core.shapes import shapes_layer_d
+        from kerneltab.core.shapes import shapes_layer_d
         assert len(alignment_combos(shapes_layer_d())) == 5
 
 

@@ -11,18 +11,28 @@ import os
 import shutil
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+#: 패키지 루트 (`kerneltab/`). **C++ 소스가 여기 있다** — `measure/*.cu`,
+#: `*.h` 는 런타임에 nvcc 로 컴파일되므로 설치된 위치를 따라가야 한다.
+PKG_ROOT = Path(__file__).resolve().parent.parent
+
+#: 저장소 루트. 산출물(`results/`, `artifacts/`)과 데이터(`hwspec/`)가 여기
+#: 있다. **패키지 밖**이다 — 7.4 GB 짜리 산출물이 패키지 안에 있으면
+#: `pip install` 이 그것까지 가져가려 하고, 컨테이너 볼륨 마운트 지점으로도
+#: 부적절하다.
+REPO_ROOT = PKG_ROOT.parent
 
 
 def _dir_from_env(var: str, default: Path) -> Path:
     """환경변수로 덮어쓸 수 있는 디렉토리 (수정 6).
 
-    컨테이너에서는 `results/` 와 `build/artifacts/` 를 **볼륨으로 마운트**한다.
+    컨테이너에서는 `results/` 와 `artifacts/` 를 **볼륨으로 마운트**한다.
     이미지 안 경로와 호스트 경로가 다르므로 코드에 박으면 안 된다.
 
-    ⚠️ **기본값은 반드시 현재 경로여야 한다.** 바꾸면 기존 산출물
-    (98 만 줄, 7.4 GB 커널)을 못 찾는다. 환경변수를 안 주면 지금과 똑같이
-    동작한다.
+    ⚠️ **기본값을 바꾸려면 디렉토리를 함께 옮겨야 한다.** 바꾸기만 하면 기존
+    산출물(98 만 줄, 7.4 GB 커널)을 못 찾는다. 실제로 패키지 이전에서
+    `build/artifacts` -> `artifacts` 로 한 번 옮겼고, 그때 디렉토리 이동과
+    기본값 변경과 `tests/test_portability.py` 의 단언을 **같은 커밋에서**
+    바꿨다. 셋 중 하나만 바꾸면 조용히 깨진다.
     """
     v = os.environ.get(var)
     return Path(v).expanduser().resolve() if v else default
@@ -33,10 +43,16 @@ RESULTS_DIR = _dir_from_env("KERNELTAB_RESULTS_DIR", REPO_ROOT / "results")
 
 #: 빌드 산출물(커널 .so 7.4 GB). `KERNELTAB_ARTIFACT_DIR` 로 덮어쓴다.
 #: 아키텍처마다 다르므로 이미지에 굽지 않고 볼륨에 캐싱한다.
+#: 패키지 **밖**이다 (`artifacts/`, 예전 `build/artifacts/` 아님).
 ARTIFACT_DIR = _dir_from_env("KERNELTAB_ARTIFACT_DIR",
-                             REPO_ROOT / "build" / "artifacts")
+                             REPO_ROOT / "artifacts")
 
 ENV_JSON = RESULTS_DIR / "env.json"
+
+#: GPU 스펙 데이터. 패키지가 아니라 **데이터 디렉토리**다 (`__init__.py`
+#: 없음). `KERNELTAB_HWSPEC_DIR` 로 덮어쓸 수 있다 — editable 설치가 아니면
+#: 저장소 루트가 없을 수 있기 때문이다.
+HWSPEC_DIR = _dir_from_env("KERNELTAB_HWSPEC_DIR", REPO_ROOT / "hwspec")
 
 
 class PathError(RuntimeError):

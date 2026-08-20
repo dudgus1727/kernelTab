@@ -9,7 +9,7 @@ from __future__ import annotations
 import ast
 import pathlib
 
-from core import kernels
+from kerneltab.core import kernels
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 REGS_PER_SM = 65536
@@ -73,8 +73,8 @@ def test_인라인_복사본이_다시_생기지_않는다():
     """
     offenders = []
     for p in list((REPO / "scripts").glob("*.py")) + \
-            list((REPO / "core").glob("*.py")) + \
-            list((REPO / "measure").glob("*.py")):
+            list((REPO / "kerneltab" / "core").glob("*.py")) + \
+            list((REPO / "kerneltab" / "measure").glob("*.py")):
         if p.name == "kernels.py":
             continue
         tree = ast.parse(p.read_text())
@@ -96,4 +96,4 @@ def test_인라인_복사본이_다시_생기지_않는다():
                 offenders.append(f"{p.relative_to(REPO)}:{node.lineno}")
     assert not offenders, (
         "런치 가능성 판정이 다시 인라인으로 복사됐다. "
-        f"core.kernels.launchable() 을 써라: {offenders}")
+        f"kerneltab.core.kernels.launchable() 을 써라: {offenders}")

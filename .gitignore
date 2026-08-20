@@ -1,6 +1,6 @@
 # 측정 산출물 — 절대 커밋하지 않는다.
 results/
-build/artifacts/
+artifacts/
 
 # 컴파일 산출물
 *.cubin

@@ -16,13 +16,13 @@ import pyarrow.parquet as pq
 
 REPO = Path(__file__).resolve().parent.parent
 
-from core.bundle import (
+from kerneltab.core.bundle import (
     BundleError,
     load_bundle,
     load_bundles,
     resolve_bundle_path,
 )
-from core.table import ANSWER_COLS
+from kerneltab.core.table import ANSWER_COLS
 
 
 def _rows(env_hash, shapes, n_cfg=3):

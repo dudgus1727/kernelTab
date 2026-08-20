@@ -17,7 +17,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from core.table import (
+from kerneltab.core.table import (
     ANSWER_COLS,
     KNOWN_FEATURE_COLS,
     OUTCOME_COLS,

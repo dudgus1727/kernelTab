@@ -5,13 +5,13 @@
 무엇이 달라지는지 즉시 드러나야 한다.
 """
 
-from backends.sm80 import (
+from kerneltab.backends.sm80 import (
     SPLIT_K,
     epilogue_thread_map_ok,
     mainloop_smem_thread_map_ok,
     warp_k_options,
 )
-from core.types import Problem, RuntimeConfig
+from kerneltab.core.types import Problem, RuntimeConfig
 
 
 def why(backend, cfg, hw, nb=2):
@@ -218,7 +218,7 @@ class TestNoHardcodedHardware:
     """★ hw 를 바꾸면 결과가 달라져야 한다. 84/101376 이 박혀 있으면 안 된다."""
 
     def test_enumeration_reacts_to_hw(self, backend, hw_a6000, hw_other):
-        from core.config import enumerate_kernels
+        from kerneltab.core.config import enumerate_kernels
         a = len(enumerate_kernels(hw_a6000, backend, [(8, 8, 8)]))
         b = len(enumerate_kernels(hw_other, backend, [(8, 8, 8)]))
         assert a != b, "smem_per_block 을 바꿔도 유효 커널 수가 같다 — 하드코딩 의심"

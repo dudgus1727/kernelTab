@@ -46,7 +46,7 @@ def _fake_pynvml(fail: set[str]):
 def probe_factory(monkeypatch):
     def make(fail=frozenset(), uuid=None):
         monkeypatch.setitem(sys.modules, "pynvml", _fake_pynvml(set(fail)))
-        from measure.gpu_state import NvmlProbe
+        from kerneltab.measure.gpu_state import NvmlProbe
         return NvmlProbe(uuid=uuid)
     return make
 
@@ -95,7 +95,7 @@ class TestUuidStrictness:
             raise FakeNVMLError("no such uuid")
         m.nvmlDeviceGetHandleByUUID = boom
         monkeypatch.setitem(sys.modules, "pynvml", m)
-        from measure.gpu_state import NvmlProbe
+        from kerneltab.measure.gpu_state import NvmlProbe
         with pytest.raises(RuntimeError) as e:
             NvmlProbe(uuid="GPU-없음")
         assert "폴백하지 않는다" in str(e.value)

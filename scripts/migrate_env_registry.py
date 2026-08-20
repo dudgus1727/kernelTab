@@ -25,9 +25,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from build import paths
-from core.env_hash import env_hash_v2, hash_inputs
-from core.records import ALL, iter_records
+from kerneltab.build import paths
+from kerneltab.core.env_hash import env_hash_v2, hash_inputs
+from kerneltab.core.records import ALL, iter_records
 
 REGISTRY = paths.RESULTS_DIR / "env_registry.jsonl"
 

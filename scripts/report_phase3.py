@@ -27,13 +27,13 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from backends import get_backend
-from build import paths
-from core import anchors as A
-from core import features as F
-from core import records
-from core.hardware import hardware_from_env
-from core.types import KernelConfig, Problem, RuntimeConfig
+from kerneltab.backends import get_backend
+from kerneltab.build import paths
+from kerneltab.core import anchors as A
+from kerneltab.core import features as F
+from kerneltab.core import records
+from kerneltab.core.hardware import hardware_from_env
+from kerneltab.core.types import KernelConfig, Problem, RuntimeConfig
 
 RESULTS = paths.RESULTS_DIR / "results.jsonl"
 KERNELS = paths.RESULTS_DIR / "kernels.jsonl"
@@ -104,15 +104,15 @@ def _difficulty(shape_cfg):
 
 def _is_a888(key) -> bool:
     """이 형상이 alignment (8,8,8) 인가. 층 D(정렬 검증용)를 걸러낸다."""
-    from core.config import alignments_for as _af
-    from core.types import Problem as _P
+    from kerneltab.core.config import alignments_for as _af
+    from kerneltab.core.types import Problem as _P
     M, N, K = key
     return _af(_P(M, N, K)) == (8, 8, 8)
 
 
 def _layer_difficulty(diff, hw):
     """[(층 이름, 형상 수, 난이도 중앙/최소/최대, 난이도>2 개수)]"""
-    from core.shapes import all_layers
+    from kerneltab.core.shapes import all_layers
     dmap = {k: d for k, d, _ in diff}
     out = []
     for name, probs in all_layers(hw).items():
@@ -248,7 +248,7 @@ def _anchor_report(env_hash: str):
     못 달성했다고 대책이 실패한 것도 아니다. 리포트 쪽이 틀렸는데, 사람이
     읽는 것은 리포트라 틀린 답이 더 널리 읽혔다.
     """
-    from core import anchors
+    from kerneltab.core import anchors
     rows, rnd, src, n_sl = anchors.load(env_hash)
     if not rows:
         return None

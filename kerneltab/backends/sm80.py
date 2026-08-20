@@ -36,7 +36,7 @@ from __future__ import annotations
 
 from math import ceil
 
-from core.types import Hardware, KernelConfig, Problem, RuntimeConfig, Sm80Ext
+from kerneltab.core.types import Hardware, KernelConfig, Problem, RuntimeConfig, Sm80Ext
 
 # ---------------------------------------------------------------------------
 # 탐색 축
@@ -388,7 +388,7 @@ class Sm80Backend:
     def is_valid_runtime(
         self, rc: RuntimeConfig, p: Problem, cfg: KernelConfig
     ) -> bool:
-        from core.config import alignments_for
+        from kerneltab.core.config import alignments_for
 
         # 슬라이스 하나가 최소한 K 타일 하나는 담아야 한다.
         if rc.split_k * cfg.tile_k > p.K:

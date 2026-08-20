@@ -8,7 +8,7 @@
 그래서 두 개의 로더를 제공한다. 소비 프로젝트가 이 둘만 쓰면 **실수로 정답을
 노출할 수 없다.**
 
-    from core.table import load_for_ranking, load_for_scoring
+    from kerneltab.core.table import load_for_ranking, load_for_scoring
 
     X = load_for_ranking("results/table.parquet")   # 규칙 함수에 넘겨도 되는 것
     y = load_for_scoring("results/table.parquet")   # 채점만 하는 쪽이 보는 것
@@ -215,7 +215,7 @@ def answer_set(df, tol: float | None = None):
 
     `tol` 을 명시하면 그 값을 쓴다. 왜 노이즈 바닥이 아닌지 근거를 남길 것.
     """
-    from core.noise import noise_floor
+    from kerneltab.core.noise import noise_floor
 
     t = df["time_ms"]
     best = t.min()
@@ -227,7 +227,7 @@ def answer_set(df, tol: float | None = None):
 
 def answer_tolerance(best_time_ms: float, tol: float | None = None) -> float:
     """`answer_set` 이 쓰는 허용치. 리포트/문서에서 인용하려고 분리했다."""
-    from core.noise import noise_floor
+    from kerneltab.core.noise import noise_floor
 
     return 2.0 * noise_floor(best_time_ms) if tol is None else tol
 
@@ -241,5 +241,5 @@ def assert_no_answers(df, where: str = "규칙 입력") -> None:
     if bad:
         raise AnswerLeakError(
             f"{where} 에 정답 컬럼이 섞였다: {bad}\n"
-            "  core.table.load_for_ranking() 을 쓰거나 이 컬럼들을 drop 하라."
+            "  kerneltab.core.table.load_for_ranking() 을 쓰거나 이 컬럼들을 drop 하라."
         )

@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from core import device
+from kerneltab.core import device
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -51,7 +51,7 @@ class TestResolveDevice:
     def test_respects_preset_visible_devices(self, fake_devices, monkeypatch):
         """호출자가 좁혀 놓은 것을 스크립트가 되돌리면 안 된다."""
         monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1")
-        monkeypatch.setattr("core.hardware.device_uuid", lambda i=0: "GPU-bbbb")
+        monkeypatch.setattr("kerneltab.core.hardware.device_uuid", lambda i=0: "GPU-bbbb")
         idx, uuid = device.resolve_device(
             {"hardware_extra": {"uuid": "GPU-bbbb"}})
         assert idx == 0                       # 보이는 것 중 0 번
@@ -61,7 +61,7 @@ class TestResolveDevice:
     def test_preset_pointing_at_wrong_gpu_raises(self, fake_devices, monkeypatch):
         """★ 미리 설정된 값이 **다른 GPU** 를 가리키면 측정하면 안 된다."""
         monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0")
-        monkeypatch.setattr("core.hardware.device_uuid", lambda i=0: "GPU-aaaa")
+        monkeypatch.setattr("kerneltab.core.hardware.device_uuid", lambda i=0: "GPU-aaaa")
         with pytest.raises(device.DeviceNotFoundError) as e:
             device.resolve_device({"hardware_extra": {"uuid": "GPU-cccc"}})
         assert "다른 GPU" in str(e.value)

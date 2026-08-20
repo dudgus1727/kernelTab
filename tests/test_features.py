@@ -8,8 +8,8 @@ import math
 
 import pytest
 
-from core import features as F
-from core.types import KernelConfig, Problem, RuntimeConfig
+from kerneltab.core import features as F
+from kerneltab.core.types import KernelConfig, Problem, RuntimeConfig
 
 SK1 = RuntimeConfig(1, "serial")
 
@@ -157,16 +157,35 @@ class TestNoExtDependency:
         assert isinstance(F.can_use_cp_async(p), bool)
 
     def test_features_module_does_not_import_backends(self):
-        """core 가 backends 에 런타임 의존하면 레이어링이 뒤집힌 것이다."""
+        """core 가 backends 에 런타임 의존하면 레이어링이 뒤집힌 것이다.
+
+        ⚠️ 패키지 이전에서 이 검사가 **조용히 무력화될 뻔했다.** import 가
+        `from backends...` 에서 `from kerneltab.backends...` 로 바뀌면서
+        `module.split(".")[0]` 이 `"kerneltab"` 을 돌려주기 시작했고,
+        `"backends" not in imported` 는 항상 참이 된다. 최상위 이름에
+        의존하는 검사는 네임스페이스 이전에 전부 이렇게 된다.
+        그래서 `kerneltab.` 접두사를 벗겨낸 뒤 비교한다.
+        """
         import ast
         import pathlib
-        src = pathlib.Path(__file__).resolve().parent.parent / "core" / "features.py"
+
+        def top(name: str) -> str:
+            parts = name.split(".")
+            if parts[0] == "kerneltab":
+                parts = parts[1:]
+            return parts[0] if parts else ""
+
+        src = (pathlib.Path(__file__).resolve().parent.parent
+               / "kerneltab" / "core" / "features.py")
         tree = ast.parse(src.read_text())
         imported = set()
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom) and node.module:
-                imported.add(node.module.split(".")[0])
+                imported.add(top(node.module))
             elif isinstance(node, ast.Import):
-                imported.update(a.name.split(".")[0] for a in node.names)
+                imported.update(top(a.name) for a in node.names)
+        # 검사가 실제로 무언가를 보고 있는지부터 확인한다 (빈 집합이면 통과가
+        # 통과가 아니다).
+        assert imported, "import 를 하나도 못 읽었다 — 검사가 죽어 있다"
         assert "backends" not in imported, (
-            "core/features.py 가 backends 를 import 한다 — 레이어링 역전")
+            "kerneltab/core/features.py 가 backends 를 import 한다 — 레이어링 역전")

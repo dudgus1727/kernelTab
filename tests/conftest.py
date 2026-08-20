@@ -34,8 +34,8 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from backends import get_backend
-from core.types import Hardware, KernelConfig
+from kerneltab.backends import get_backend
+from kerneltab.core.types import Hardware, KernelConfig
 
 #: 이 모듈들이 안 돌면 **실패**다. 정답 누출 방지를 검증하는 것들이라
 #: 조용히 스킵되면 "누출 방지 검증됨" 을 거짓으로 믿게 된다.

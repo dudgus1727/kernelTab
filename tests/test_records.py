@@ -11,7 +11,7 @@ import statistics
 
 import pytest
 
-from core.records import (
+from kerneltab.core.records import (
     ALL,
     EnvHashError,
     aggregate_per_env,

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from build import paths
+from kerneltab.build import paths
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -28,7 +28,16 @@ class TestAssembly:
         assert paths.ARTIFACT_DIR in p.parents
 
     def test_matches_recorded_so_path_when_present(self):
-        """옛 줄의 `so_path` 와 조립 결과가 일치해야 마이그레이션이 안전하다."""
+        """옛 줄의 `so_path` 와 **파일명 부분**이 일치해야 한다.
+
+        ⚠️ 절대 경로 전체를 비교하지 않는다. 패키지 이전에서 산출물을
+        `build/artifacts/` -> `artifacts/` 로 **의도적으로 옮겼기 때문**이다.
+        옛 줄에 박힌 절대 경로는 그 이동으로 전부 무효가 됐고, 그것이 바로
+        P-1 이 `so_path` 기록을 없앤 이유다.
+
+        불변인 것은 `lib/<kernel_id>.so` 라는 **상대 구조**다. 이것이
+        깨지면 조립 규칙이 바뀐 것이므로 옛 산출물을 못 찾는다.
+        """
         f = paths.RESULTS_DIR / "kernels.jsonl"
         if not f.exists():
             pytest.skip("kernels.jsonl 이 없다")
@@ -43,7 +52,8 @@ class TestAssembly:
                 if not old:
                     continue
                 n += 1
-                if Path(old) != paths.kernel_so(r["kernel_id"]):
+                new = paths.kernel_so(r["kernel_id"])
+                if Path(old).parts[-2:] != new.parts[-2:]:
                     bad += 1
         if n == 0:
             pytest.skip("so_path 가 기록된 줄이 없다 (이미 제거됨)")
@@ -53,7 +63,7 @@ class TestAssembly:
 class TestNoAbsolutePathInRecords:
     def test_compile_does_not_record_so_path(self):
         """새로 빌드하는 줄에는 `so_path` 가 없어야 한다."""
-        src = (REPO / "build" / "compile.py").read_text()
+        src = (REPO / "kerneltab" / "build" / "compile.py").read_text()
         assert '"so_path": str(so)' not in src
         assert '"kernel_id": kid}' in src or '"kernel_id": kid,' in src
 

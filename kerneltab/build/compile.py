@@ -1,8 +1,8 @@
 """커널 생성 -> 컴파일 -> ptxas/SASS 정적 분석.
 
 커널 하나당 산출물:
-  build/artifacts/src/<kernel_id>.cu     생성된 CUTLASS 인스턴스화
-  build/artifacts/lib/<kernel_id>.so     dlopen 가능한 커널
+  artifacts/src/<kernel_id>.cu         생성된 CUTLASS 인스턴스화
+  artifacts/lib/<kernel_id>.so         dlopen 가능한 커널
   results/kernels.jsonl 의 한 줄          자원 사용량 + 정적 분석 결과
 
 정적 분석은 전부 "실행 불필요" 한 것들이다 (ncu 같은 프로파일러를 쓰지 않는다).
@@ -19,7 +19,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from build import paths
+from kerneltab.build import paths
 
 __all__ = ["BuildEnv", "KtInfo", "build_kernel", "introspect"]
 
@@ -43,7 +43,7 @@ class BuildEnv:
         lib = paths.ARTIFACT_DIR / "lib"
         src.mkdir(parents=True, exist_ok=True)
         lib.mkdir(parents=True, exist_ok=True)
-        inc = (*tuple(paths.cutlass_includes(cutlass)), f"-I{paths.REPO_ROOT / 'measure'}")
+        inc = (*tuple(paths.cutlass_includes(cutlass)), f"-I{paths.PKG_ROOT / 'measure'}")
         return BuildEnv(
             nvcc=env["cuda"]["nvcc_path"],
             arch_flag=env["nvcc_arch_flag"],
@@ -345,14 +345,14 @@ def _dlclose(handle) -> None:
 def build_ctx_so(env: dict, force: bool = False) -> Path:
     """libkt_ctx.so 를 한 번 빌드한다 (측정 프로토콜 + cuBLAS + 리덕션)."""
     be = BuildEnv.from_env_json(env)
-    src = paths.REPO_ROOT / "measure" / "kt_ctx.cu"
+    src = paths.PKG_ROOT / "measure" / "kt_ctx.cu"
     so = paths.ARTIFACT_DIR / "libkt_ctx.so"
     if so.exists() and not force and so.stat().st_mtime > src.stat().st_mtime:
         return so
     cmd = [
         be.nvcc, "-std=c++17", f"-arch={be.arch_flag}", "-O3",
         "-shared", "-Xcompiler", "-fPIC",
-        f"-I{paths.REPO_ROOT / 'measure'}",
+        f"-I{paths.PKG_ROOT / 'measure'}",
         str(src), "-o", str(so), "-lcublas",
     ]
     p = subprocess.run(cmd, capture_output=True, text=True)

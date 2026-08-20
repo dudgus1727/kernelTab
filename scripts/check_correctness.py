@@ -22,12 +22,12 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from build import paths
-from core import device
-from core import kernels as kernels_mod
-from core.config import alignments_for
-from core.hardware import hardware_from_env
-from core.types import Problem
+from kerneltab.build import paths
+from kerneltab.core import device
+from kerneltab.core import kernels as kernels_mod
+from kerneltab.core.config import alignments_for
+from kerneltab.core.hardware import hardware_from_env
+from kerneltab.core.types import Problem
 
 OUT = paths.RESULTS_DIR / "correctness.jsonl"
 TOL = 5e-2
@@ -50,7 +50,7 @@ def main() -> int:
         dev, _ = device.resolve_device(env)
     hw = hardware_from_env(env)
 
-    from measure.runner import Ctx, Kernel, KtProblemC
+    from kerneltab.measure.runner import Ctx, Kernel, KtProblemC
 
     rows = [json.loads(l) for l in
             (paths.RESULTS_DIR / "kernels.jsonl").read_text().splitlines()

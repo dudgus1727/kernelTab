@@ -5,7 +5,7 @@
 `env.json` 이 없으면 유효 ridge point 를 모르고 `is_memory_bound` 가 전부
 틀린다.
 
-    from core.bundle import load_bundle, load_bundles
+    from kerneltab.core.bundle import load_bundle, load_bundles
 
     b = load_bundle("rtx-a6000-sm_86-<env_hash8>")
     X = b.ranking()          # 규칙 입력 (정답 제거됨)
@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from core.table import AnswerLeakError, load_for_ranking, load_for_scoring
+from kerneltab.core.table import AnswerLeakError, load_for_ranking, load_for_scoring
 
 if TYPE_CHECKING:  # pragma: no cover
     import pandas as pd
@@ -233,7 +233,7 @@ def load_bundles(
     out = pd.concat(frames, ignore_index=True, sort=False)
     # 합친 뒤에도 정답이 없어야 한다 (ranking 인 경우)
     if kind == "ranking":
-        from core.table import ANSWER_COLS
+        from kerneltab.core.table import ANSWER_COLS
         leaked = [c for c in ANSWER_COLS if c in out.columns]
         if leaked:
             raise AnswerLeakError(f"번들 결합 후 정답 컬럼이 남았다: {leaked}")

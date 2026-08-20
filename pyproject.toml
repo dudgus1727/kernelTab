@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kerneltab"
-version = "0.1.0"
+version = "0.2.0"
 description = "CUTLASS GEMM (형상 x config) -> 성능 표 측정 하네스"
 requires-python = ">=3.10"
 license = "Apache-2.0"
@@ -38,18 +38,24 @@ test = ["pytest>=8"]
 plots = ["matplotlib>=3.7"]
 dev = ["ruff", "vermin", "uv"]
 
-[tool.setuptools]
-# ⚠️ 이 상태로 `pip install` 하지 마라. `build` 는 PyPI 에 실제로 존재하는
-#    패키지(`python -m build`)이며, 충돌하면 ImportError 가 아니라 **다른
-#    모듈이 조용히 import 된다.** `core` / `measure` 도 흔한 이름이라 소비
-#    프로젝트와 부딪힌다.
-#    docs/packaging.md 의 `kerneltab.*` 네임스페이스 이전을 먼저 적용할 것.
-#    (이전은 디렉토리 이동을 포함하므로 P-1(so_path) 수정 이후에 해야 한다)
-packages = ["core", "backends", "build", "measure"]
-# hwspec/ 은 데이터 디렉토리이며 Python 패키지가 아니다 (__init__.py 없음).
+[tool.setuptools.packages.find]
+# `kerneltab.*` 하나만 내보낸다. 예전에는 `core` / `build` / `measure` 가
+# 최상위였는데, `build` 는 PyPI 에 실제로 존재하는 패키지(`python -m build`)
+# 이고 나머지도 흔한 이름이다. 충돌하면 ImportError 가 아니라 **다른 모듈이
+# 조용히 import 된다** — 가장 나쁜 실패 방식이다 (docs/packaging.md).
+include = ["kerneltab*"]
 
 [tool.setuptools.package-data]
-"*" = ["*.cu", "*.h"]
+# measure/*.cu, *.h 는 **런타임에 nvcc 로 컴파일된다.** 패키지 데이터로
+# 함께 설치되어야 하고, include 경로는 paths.PKG_ROOT 에서 나온다.
+"kerneltab.measure" = ["*.cu", "*.h"]
+"kerneltab.build" = ["*.cu"]
+
+# hwspec/ 과 artifacts/ 와 results/ 는 **패키지 밖**이다.
+#   hwspec/    데이터 디렉토리 (Python 패키지 아님, __init__.py 없음).
+#              KERNELTAB_HWSPEC_DIR 로 위치를 바꿀 수 있다.
+#   artifacts/ 커널 .so 7.4 GB. 패키지 안에 있으면 pip 이 가져가려 한다.
+#   results/   측정 산출물. 컨테이너 볼륨 마운트 지점.
 
 # ---------------------------------------------------------------------------
 # ruff — 무시하는 규칙은 **이유를 적는다** (R-4d)

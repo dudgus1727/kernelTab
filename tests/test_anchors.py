@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from core import anchors
+from kerneltab.core import anchors
 
 EH = "c63710df" + "0" * 56
 OTHER = "deadbeef" + "0" * 56

@@ -7,14 +7,14 @@ get_backend(hw.arch) 를 통한다. 지원하지 않는 아키텍처에서 조�
 
 from __future__ import annotations
 
-from backends.base import Backend, UnsupportedArch
+from kerneltab.backends.base import Backend, UnsupportedArch
 
 __all__ = ["Backend", "UnsupportedArch", "get_backend"]
 
 
 def get_backend(arch: str) -> Backend:
     if arch in ("sm_80", "sm_86", "sm_89"):
-        from backends.sm80 import Sm80Backend
+        from kerneltab.backends.sm80 import Sm80Backend
 
         return Sm80Backend()
     if arch in ("sm_90", "sm_100"):

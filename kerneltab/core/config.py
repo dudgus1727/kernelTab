@@ -14,13 +14,13 @@ from collections import Counter
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
-from core.types import KernelConfig, Problem, RuntimeConfig
+from kerneltab.core.types import KernelConfig, Problem, RuntimeConfig
 
 if TYPE_CHECKING:  # pragma: no cover
     # 타입 힌트 전용이다. 런타임에 import 하면 core -> backends 역의존이 생겨
     # "피처만 쓰고 싶은" 소비 프로젝트가 backends 까지 끌어오게 된다.
     # 레이어는 core <- backends 방향이어야 한다.
-    from backends.base import Backend
+    from kerneltab.backends.base import Backend
 
 __all__ = [
     "DTYPE_BYTES",

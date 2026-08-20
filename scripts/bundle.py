@@ -38,9 +38,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from build import paths
-from core.hardware import hardware_from_env
-from core.shapes import all_layers
+from kerneltab.build import paths
+from kerneltab.core.hardware import hardware_from_env
+from kerneltab.core.shapes import all_layers
 
 DATASETS = REPO_ROOT / "datasets"
 RESULTS = paths.RESULTS_DIR / "results.jsonl"
@@ -155,7 +155,7 @@ def assert_single_env(parquet_path: Path, expected: str) -> int:
 
 def _noise_coefficients() -> dict:
     """앵커에서 잰 노이즈 바닥 계수. 없으면 core.noise 의 기본값."""
-    from core import noise
+    from kerneltab.core import noise
     return noise.coefficients()
 
 
@@ -242,7 +242,7 @@ tar --zstd -xf {b['bundle_id']}.tar.zst
 ## 쓰는 법
 
 ```python
-from core.bundle import load_bundle
+from kerneltab.core.bundle import load_bundle
 b = load_bundle("{b['bundle_id']}")   # sha256 자동 대조
 X = b.ranking()    # 규칙 입력 (정답 컬럼 제거됨)
 y = b.scoring()    # 채점용 (정답 포함)
@@ -630,7 +630,7 @@ CUTLASS (NVIDIA, BSD-3-Clause) 는 이 번들에 포함되지 않는다.
             return rc
 
     print(f"\n소비: KERNELTAB_DATASETS={Path(args.out).resolve()} "
-          f"python3 -c \"from core.bundle import load_bundle; "
+          f"python3 -c \"from kerneltab.core.bundle import load_bundle; "
           f"print(load_bundle('{bundle_id}').info['n_rows'])\"")
     return 0
 

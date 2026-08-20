@@ -22,11 +22,11 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from build import paths
-from core import device
-from core import kernels as kernels_mod
-from core.hardware import hardware_from_env
-from core.types import Problem
+from kerneltab.build import paths
+from kerneltab.core import device
+from kerneltab.core import kernels as kernels_mod
+from kerneltab.core.hardware import hardware_from_env
+from kerneltab.core.types import Problem
 
 TELE = paths.RESULTS_DIR / "telemetry_clocklock.csv"
 OUT = paths.RESULTS_DIR / "clock_lock_check.json"
@@ -86,7 +86,7 @@ def main() -> int:
     dev, _ = device.resolve_device(env)     # P-2: UUID 가 권위
     hw = hardware_from_env(env)
 
-    from measure.runner import Ctx, Kernel, KtProblemC
+    from kerneltab.measure.runner import Ctx, Kernel, KtProblemC
 
     rows = [json.loads(l) for l in
             (paths.RESULTS_DIR / "kernels.jsonl").read_text().splitlines() if l.strip()]

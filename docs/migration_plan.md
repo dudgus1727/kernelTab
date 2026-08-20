@@ -228,7 +228,7 @@ python3 scripts/rehearse.py --all --dry-run
 
 기존 `kernels.jsonl` 7,330 줄에는 `so_path` 가 남아 있다. 읽는 쪽이 무시하고
 조립하면 문제없다. **단 `.so` 파일이 실제로 그 위치에 있어야 한다** —
-`build/artifacts/lib/` 를 지우면 안 된다.
+`artifacts/lib/` 를 지우면 안 된다.
 
 ### 검증
 

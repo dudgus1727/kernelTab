@@ -52,8 +52,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from core import noise as noise_model
-from core import records
+from kerneltab.core import noise as noise_model
+from kerneltab.core import records
 
 __all__ = [
     "DEFAULT_TOL_PCT",
@@ -247,7 +247,7 @@ def assign_rounds(rows: list[dict],
 def load(env_hash: str, results_dir: str | Path | None = None
          ) -> tuple[list[dict], list[int | None], str, int]:
     """`(앵커 줄, 라운드, 라운드 출처, 슬라이스 수)`."""
-    from build import paths
+    from kerneltab.build import paths
     d = Path(results_dir) if results_dir else paths.RESULTS_DIR
     rows = records.load_records(d / "anchors.jsonl", env_hash)
     sl = slice_intervals(d / "sweep.jsonl", env_hash)

@@ -66,7 +66,7 @@ tar -czf ~/kerneltab-results-$(date +%Y%m%d-%H%M).tar.gz kernelTab/results
 ls -lh ~/kerneltab-results-*.tar.gz
 ```
 
-`build/artifacts/lib` (7.4 GB) 는 **백업하지 않아도 된다** — 재빌드 40 분이면
+`artifacts/lib` (7.4 GB) 는 **백업하지 않아도 된다** — 재빌드 40 분이면
 복원된다. `results/` 는 재현 불가능하다.
 
 ---
@@ -225,7 +225,7 @@ sha256sum -c datasets/$BID.tar.zst.sha256
 (cd /mnt/<other-disk>/kerneltab && sha256sum -c $BID.tar.zst.sha256)
 python3 -c "
 import sys; sys.path.insert(0,'.')
-from core.bundle import load_bundle
+from kerneltab.core.bundle import load_bundle
 b = load_bundle('/mnt/<other-disk>/kerneltab/$BID')   # verify=True 가 기본
 print('사본 무결성 OK:', b.bundle_id)"
 ```
@@ -263,7 +263,7 @@ ls results/report/
 ```bash
 python3 -c "
 import sys; sys.path.insert(0,'.')
-from core.table import load_for_ranking, load_for_scoring, assert_no_answers
+from kerneltab.core.table import load_for_ranking, load_for_scoring, assert_no_answers
 import json
 env = json.load(open('results/env.json'))['env_hash'][:8]
 X = load_for_ranking('results/table.parquet', env_hash=env)
@@ -370,7 +370,7 @@ sha256sum -c datasets/*.tar.zst.sha256
 
 # 리포트 · 소비 확인
 python3 scripts/report_phase3.py
-python3 -c "import sys;sys.path.insert(0,'.');from core.table import *;print('ok')"
+python3 -c "import sys;sys.path.insert(0,'.');from kerneltab.core.table import *;print('ok')"
 
 # 7~9) 코드 변경은 그 다음
 ```

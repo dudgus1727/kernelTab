@@ -22,9 +22,8 @@ import ctypes
 import json
 from dataclasses import asdict
 from dataclasses import replace as dc_replace
-from pathlib import Path
 
-from core.types import Hardware
+from kerneltab.core.types import Hardware
 
 __all__ = [
     "NVCC_ARCH",
@@ -55,7 +54,12 @@ NVCC_ARCH = {
     "sm_100": "sm_100a",
 }
 
-HWSPEC_PATH = Path(__file__).resolve().parent.parent / "hwspec" / "known.json"
+# hwspec/ 은 패키지 밖의 데이터 디렉토리다. build.paths 가 저장소 루트와
+# 환경변수(KERNELTAB_HWSPEC_DIR)를 함께 본다 — 여기서 경로를 다시 조립하면
+# 같은 규칙이 두 곳에 생긴다 (decisions 13).
+from kerneltab.build.paths import HWSPEC_DIR
+
+HWSPEC_PATH = HWSPEC_DIR / "known.json"
 
 
 class HardwareDetectionError(RuntimeError):
@@ -166,7 +170,11 @@ def device_uuid(index: int = 0) -> str:
 # ---------------------------------------------------------------------------
 def _load_known() -> dict:
     if not HWSPEC_PATH.exists():
-        raise HardwareDetectionError(f"{HWSPEC_PATH} 가 없다.")
+        raise HardwareDetectionError(
+            f"{HWSPEC_PATH} 가 없다.\n"
+            "  hwspec/ 은 패키지가 아니라 저장소의 데이터 디렉토리다.\n"
+            "  `pip install -e ../kernelTab` (editable) 이면 저장소에서 찾는다.\n"
+            "  비-editable 설치라면 KERNELTAB_HWSPEC_DIR 로 위치를 알려라.")
     with HWSPEC_PATH.open() as f:
         raw = json.load(f)
     return {k: v for k, v in raw.items() if not k.startswith("_")}

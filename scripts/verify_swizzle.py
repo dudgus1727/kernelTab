@@ -23,12 +23,12 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from backends import get_backend
-from build import paths
-from build.compile import BuildEnv, build_ctx_so, build_kernel
-from core import device
-from core.hardware import hardware_from_env
-from core.types import KernelConfig, Problem
+from kerneltab.backends import get_backend
+from kerneltab.build import paths
+from kerneltab.build.compile import BuildEnv, build_ctx_so, build_kernel
+from kerneltab.core import device
+from kerneltab.core.hardware import hardware_from_env
+from kerneltab.core.types import KernelConfig, Problem
 
 # 래스터 방향 차이가 드러나려면 타일 격자가 정사각이 아니어야 하고
 # 타일 수가 SM 수보다 충분히 많아야 한다.
@@ -56,7 +56,7 @@ def main() -> int:
     be = BuildEnv.from_env_json(env)
     build_ctx_so(env)
 
-    from measure.runner import Ctx, Kernel, KtProblemC
+    from kerneltab.measure.runner import Ctx, Kernel, KtProblemC
 
     cfgs = {}
     for swz, n in VARIANTS:

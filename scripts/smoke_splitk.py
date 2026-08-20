@@ -18,12 +18,12 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from backends import get_backend
-from build import paths
-from core import device
-from core import kernels as kernels_mod
-from core.hardware import hardware_from_env
-from core.types import Problem, RuntimeConfig
+from kerneltab.backends import get_backend
+from kerneltab.build import paths
+from kerneltab.core import device
+from kerneltab.core import kernels as kernels_mod
+from kerneltab.core.hardware import hardware_from_env
+from kerneltab.core.types import Problem, RuntimeConfig
 
 SHAPES = [Problem(1024, 1024, 4096), Problem(1024, 4096, 512),
           Problem(1024, 4096, 4100)]
@@ -38,7 +38,7 @@ def main() -> int:
     hw = hardware_from_env(env)
     backend = get_backend(hw.arch)
 
-    from measure.runner import Ctx, Kernel, KtProblemC
+    from kerneltab.measure.runner import Ctx, Kernel, KtProblemC
 
     rows = [json.loads(l) for l in
             (paths.RESULTS_DIR / "kernels.jsonl").read_text().splitlines() if l.strip()]
@@ -58,7 +58,7 @@ def main() -> int:
     bad = 0
     try:
         for p in SHAPES:
-            from core.config import alignments_for
+            from kerneltab.core.config import alignments_for
             al = alignments_for(p)
             krow = pick(al)
             if krow is None:
@@ -72,7 +72,7 @@ def main() -> int:
             print(f"  {'split_k':>8s} {'mode':>9s} {'grid.z':>7s} {'예측':>5s} "
                   f"{'time_ms':>9s} {'max_rel_err':>12s} {'ws_MB':>8s}")
             tbl = {}
-            from core.config import dtype_bytes  # noqa: F401
+            from kerneltab.core.config import dtype_bytes  # noqa: F401
             cfg_tile_k = krow["tile"]["k"]
             for sk in (1, 2, 3, 4, 6, 8, 12, 16):
                 for mode in ("serial", "parallel"):

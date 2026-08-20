@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from core.types import Hardware, KernelConfig, Problem, RuntimeConfig
+from kerneltab.core.types import Hardware, KernelConfig, Problem, RuntimeConfig
 
 
 class UnsupportedArch(RuntimeError):

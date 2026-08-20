@@ -17,11 +17,11 @@ REPO = Path(__file__).resolve().parent.parent
 
 
 class TestPathOverride:
-    """수정 6 — 컨테이너는 results/ 와 build/artifacts/ 를 볼륨으로 마운트한다."""
+    """수정 6 — 컨테이너는 results/ 와 artifacts/ 를 볼륨으로 마운트한다."""
 
     def _paths_in(self, env: dict):
         code = (f"import sys; sys.path.insert(0, {str(REPO)!r})\n"
-                "from build import paths\n"
+                "from kerneltab.build import paths\n"
                 "import json; print(json.dumps({'r': str(paths.RESULTS_DIR),"
                 "'a': str(paths.ARTIFACT_DIR), 'e': str(paths.ENV_JSON)}))")
         e = dict(os.environ)
@@ -34,10 +34,15 @@ class TestPathOverride:
         return json.loads(r.stdout)
 
     def test_default_is_repo_relative(self):
-        """★ 기본값이 바뀌면 기존 산출물(98만줄, 7.4GB)을 못 찾는다."""
+        """★ 기본값이 바뀌면 기존 산출물(98만줄, 7.4GB)을 못 찾는다.
+
+        패키지 이전에서 `build/artifacts` -> `artifacts` 로 **한 번** 옮겼다.
+        그때 디렉토리 이동·기본값·이 단언을 같은 커밋에서 함께 바꿨다.
+        앞으로 이 단언만 따로 바뀌면 그것이 사고다.
+        """
         p = self._paths_in({})
         assert p["r"] == str(REPO / "results")
-        assert p["a"] == str(REPO / "build" / "artifacts")
+        assert p["a"] == str(REPO / "artifacts")
 
     def test_env_vars_override(self, tmp_path):
         p = self._paths_in({"KERNELTAB_RESULTS_DIR": str(tmp_path / "R"),
@@ -105,7 +110,7 @@ class TestCutlassCommitInjection:
         assert i["commit_source"] == "unknown"
 
     def test_real_repo_reports_git(self):
-        from build import paths
+        from kerneltab.build import paths
         try:
             root = paths.cutlass_dir(None)
         except Exception:
@@ -121,7 +126,7 @@ class TestManifestInEnv:
     """수정 8 — manifest 를 env.json 에 기록하되 해시는 바꾸지 않는다."""
 
     def test_manifest_does_not_change_hash(self):
-        from core.env_hash import env_hash_v2
+        from kerneltab.core.env_hash import env_hash_v2
         env = json.loads((REPO / "results" / "env.json").read_text())
         env.pop("manifest", None)
         before = env_hash_v2(env)

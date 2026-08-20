@@ -25,9 +25,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from build import paths
-from core.env_hash import env_hash_v2
-from core.hardware import (
+from kerneltab.build import paths
+from kerneltab.core.env_hash import env_hash_v2
+from kerneltab.core.hardware import (
     bandwidth_from_api,
     bandwidth_reference_mhz,
     detect_hardware,
@@ -37,12 +37,12 @@ from core.hardware import (
     nvcc_arch_flag,
     peak_reference_mhz,
 )
-from measure.gpu_state import (
+from kerneltab.measure.gpu_state import (
     ClockLockResult,
     drift_check_seconds,
     try_lock_clocks,
 )
-from measure.runner import (
+from kerneltab.measure.runner import (
     PROTOCOL_DEFAULTS,
     SEGMENT_DEFAULTS,
     SOAK_DEFAULTS,

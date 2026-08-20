@@ -19,28 +19,28 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from backends import get_backend
-from build import paths
-from core.config import (
+from kerneltab.backends import get_backend
+from kerneltab.build import paths
+from kerneltab.core.config import (
     alignment_combos,
     alignments_for,
     dtype_bytes,
     enumerate_kernels_with_funnel,
     enumerate_runtimes,
 )
-from core.features import (
+from kerneltab.core.features import (
     arith_intensity,
     is_memory_bound,
     mainloop_iters,
     ridge_point,
     waves,
 )
-from core.hardware import (
+from kerneltab.core.hardware import (
     detect_hardware,
     hardware_from_env,
 )
-from core.shapes import all_layers, all_shapes
-from core.types import Hardware, Problem
+from kerneltab.core.shapes import all_layers, all_shapes
+from kerneltab.core.types import Hardware, Problem
 
 
 def load_hw(device: int) -> Hardware:
@@ -190,7 +190,7 @@ def main() -> int:
     # ---------------- 파생 지표 스모크 테스트 ----------------
     hr("파생 지표 스모크 테스트")
     cfg = next(c for c in one if (c.tile_m, c.tile_n, c.tile_k) == (128, 128, 32))
-    from core.types import RuntimeConfig
+    from kerneltab.core.types import RuntimeConfig
 
     for p in (Problem(1024, 1024, 4096), Problem(8192, 4096, 4096)):
         for sk in (1, 6):

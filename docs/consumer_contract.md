@@ -20,10 +20,28 @@ config 선택 규칙을 학습·평가하는 것은 별도 프로젝트(`kernelr
 시간을 넣지 않는다. 하지만 `table.parquet` 은 평면 테이블이라 그 보호가
 없다.
 
-## 2. 두 개의 로더만 쓴다
+## 2. 설치
+
+```bash
+cd ../kernelrule
+pip install -e ../kernelTab        # editable 로 설치한다
+```
+
+**editable 이어야 한다.** `hwspec/` (GPU 스펙 데이터)와 `artifacts/`
+(커널 `.so`)는 **패키지 밖**에 있다 — 7.4 GB 산출물이 패키지 안에 있으면
+`pip` 이 그것까지 가져가려 하고, 컨테이너 볼륨 마운트 지점으로도
+부적절하기 때문이다. 비-editable 로 설치하려면 `KERNELTAB_HWSPEC_DIR` 로
+위치를 알려야 한다 (없으면 `HardwareDetectionError` 가 경로를 찍고 죽는다).
+
+> ⚠️ **최상위 이름은 `kerneltab` 하나다.** 예전에는 `core` / `build` /
+> `measure` 가 최상위였다. `build` 는 PyPI 에 실제로 존재하는
+> 패키지(`python -m build`)이고 나머지도 흔한 이름이라, 충돌하면
+> `ImportError` 가 아니라 **다른 모듈이 조용히 import 된다.**
+
+## 3. 두 개의 로더만 쓴다
 
 ```python
-from core.table import load_for_ranking, load_for_scoring
+from kerneltab.core.table import load_for_ranking, load_for_scoring
 
 X = load_for_ranking("results/table.parquet", env_hash="368a84f1")
 y = load_for_scoring("results/table.parquet", env_hash="368a84f1")
@@ -73,12 +91,12 @@ sm_clock_mhz  mem_clock_mhz  gpu_temp_c  power_w  timestamp
 **커널을 빌드하기만 하면 알 수 있고 실행할 필요가 없기 때문이다.** 실무에서
 규칙을 쓸 때도 같은 정보를 얻을 수 있다.
 
-## 3. 안전장치
+## 4. 안전장치
 
 로더를 우회해 직접 DataFrame 을 만들었다면, 규칙에 넘기기 전에 확인한다.
 
 ```python
-from core.table import assert_no_answers, AnswerLeakError
+from kerneltab.core.table import assert_no_answers, AnswerLeakError
 
 assert_no_answers(X, where="rank_configs() 입력")   # 섞였으면 AnswerLeakError
 ```
@@ -93,7 +111,7 @@ def test_no_answer_leak():
     assert "time_ms" not in X.columns
 ```
 
-## 4. `env_hash` 는 반드시 지정한다
+## 5. `env_hash` 는 반드시 지정한다
 
 ```python
 X = load_for_ranking(path, env_hash="368a84f1")
@@ -110,7 +128,7 @@ X = load_for_ranking(path, env_hash="368a84f1")
 > (`docs/measurement_drift.md`). 이 문서의 예시에 그 값이 남아 있는 것은
 > 형식을 보이기 위해서다. 실제로는 재측정본의 `env_hash` 를 쓴다.
 
-## 5. `ext_*` 와 아키텍처 전이
+## 6. `ext_*` 와 아키텍처 전이
 
 `ext_*` 는 아키텍처 전용 필드다 (SM80: `ext_warp_m/n/k`, `ext_stages`,
 `ext_swizzle_*`). SM90 데이터를 같은 표에 합치면 `ext_cluster_m` 같은 컬럼이
@@ -123,7 +141,7 @@ X = load_for_ranking(path, env_hash="368a84f1")
 * 아키텍처 특화 규칙이면 `ext_*` 를 쓰되, 그 규칙은 다른 아키텍처에
   적용할 수 없다는 것을 명시할 것.
 
-## 6. `status != "ok"` 는 결측이 아니다
+## 7. `status != "ok"` 는 결측이 아니다
 
 로더는 기본으로 `status == "ok"` 만 남긴다 (`ok_only=True`). 하지만 실패
 줄은 **버려진 것이 아니라 명시적으로 기록된 것**이다.
@@ -139,7 +157,7 @@ X = load_for_ranking(path, env_hash="368a84f1")
 `launch_infeasible` 은 **규칙이 피해야 할 것을 배우는 데 쓸 수 있다** —
 `launchable` 컬럼이 그 정보를 정답 없이 제공한다.
 
-## 7. 이 계약을 어기면 생기는 일
+## 8. 이 계약을 어기면 생기는 일
 
 가장 흔한 사고는 이것이다.
 
@@ -159,7 +177,7 @@ model.fit(df.drop(columns=["time_ms"]), ...)   # ← time_ms 만 뺐다고 안�
 
 ```python
 import pandas as pd
-from core.table import load_for_ranking, load_for_scoring
+from kerneltab.core.table import load_for_ranking, load_for_scoring
 
 ENV = "368a84f1"
 TABLE = "results/table.parquet"

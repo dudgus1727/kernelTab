@@ -55,10 +55,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from build import paths
-from core import device, noise, records
-from measure.gpu_state import NvmlProbe
-from measure.runner import Ctx, Kernel, KtProblemC
+from kerneltab.build import paths
+from kerneltab.core import device, noise, records
+from kerneltab.measure.gpu_state import NvmlProbe
+from kerneltab.measure.runner import Ctx, Kernel, KtProblemC
 
 #: `a` 를 뽑기 위한 형상. **네 자릿수의 work 범위**를 덮어야 절편이
 #: 안정적으로 나온다. 가장 작은 것이 "짧은 커널" 역할을 겸한다.

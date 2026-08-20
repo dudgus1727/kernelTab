@@ -87,7 +87,7 @@ def resolve_device(env: dict, *, set_visible: bool = True) -> tuple[int, str]:
     preset = os.environ.get("CUDA_VISIBLE_DEVICES")
     if preset is not None and preset != "":
         # 호출자가 정한 것을 존중한다. 다만 그것이 맞는 GPU 인지는 확인한다.
-        from core.hardware import device_uuid
+        from kerneltab.core.hardware import device_uuid
         try:
             got = device_uuid(0)
         except Exception:

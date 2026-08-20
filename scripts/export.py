@@ -22,13 +22,13 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from backends import get_backend
-from build import paths
-from core import features as F
-from core import kernels as kernels_mod
-from core import records
-from core.hardware import hardware_from_env
-from core.types import Hardware, KernelConfig, Problem, RuntimeConfig
+from kerneltab.backends import get_backend
+from kerneltab.build import paths
+from kerneltab.core import features as F
+from kerneltab.core import kernels as kernels_mod
+from kerneltab.core import records
+from kerneltab.core.hardware import hardware_from_env
+from kerneltab.core.types import Hardware, KernelConfig, Problem, RuntimeConfig
 
 RESULTS = paths.RESULTS_DIR / "results.jsonl"
 KERNELS = paths.RESULTS_DIR / "kernels.jsonl"

@@ -23,14 +23,14 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from build import paths
-from core import (
+from kerneltab.build import paths
+from kerneltab.core import (
     device,
     records,
 )
-from core import kernels as kernels_mod
-from core.hardware import hardware_from_env
-from core.types import KernelConfig, Problem
+from kerneltab.core import kernels as kernels_mod
+from kerneltab.core.hardware import hardware_from_env
+from kerneltab.core.types import KernelConfig, Problem
 
 RESULTS = paths.RESULTS_DIR / "results.jsonl"
 KERNELS = paths.RESULTS_DIR / "kernels.jsonl"
@@ -58,8 +58,8 @@ def main() -> int:
     device.resolve_device(env)
     hw = hardware_from_env(env)
 
-    from measure.gpu_state import NvmlProbe
-    from measure.runner import Ctx, Kernel, KtProblemC
+    from kerneltab.measure.gpu_state import NvmlProbe
+    from kerneltab.measure.runner import Ctx, Kernel, KtProblemC
 
     kern = {r["kernel_id"]: r for r in
             (json.loads(l) for l in KERNELS.read_text().splitlines() if l.strip())}
@@ -70,15 +70,15 @@ def main() -> int:
     rng = random.Random(env["shuffle_seed"] ^ 0xC0FFEE)
     if args.shapes:
         # min_reps 를 낮춘 뒤 느린 형상에서도 재현성이 유지되는지 확인한다.
-        from backends import get_backend
-        from core.config import (
+        from kerneltab.backends import get_backend
+        from kerneltab.core.config import (
             alignment_combos,
             alignments_for,
             enumerate_kernels,
             enumerate_runtimes,
         )
-        from core.shapes import all_shapes
-        from core.types import RuntimeConfig  # noqa: F401
+        from kerneltab.core.shapes import all_shapes
+        from kerneltab.core.types import RuntimeConfig  # noqa: F401
 
         backend = get_backend(hw.arch)
         valid = {backend.kernel_id(c) for c in

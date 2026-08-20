@@ -18,7 +18,7 @@
 |---|---|---|---|---|---|
 | 1 | `phase0_env.py` | 환경 점검, 하드웨어 감지, CUTLASS 예제 검증, 클럭 상태 확정, 런치 오버헤드 측정 | (없음) + CLI 인자 | **E**, `clock_lock_check.json` 참조 | 필요 |
 | 2 | `count_space.py` | config 열거, 제약 funnel, 형상/커널/런타임 개수 | E | (표준출력만) | 불필요 |
-| 3 | `build_kernels.py` | `emit_cpp` → nvcc → ptxas/SASS 분석 → `kt_info` | E | **K**, `build/artifacts/{src,lib}` | 필요(introspect) |
+| 3 | `build_kernels.py` | `emit_cpp` → nvcc → ptxas/SASS 분석 → `kt_info` | E | **K**, `artifacts/{src,lib}` | 필요(introspect) |
 | 4 | `rehearse.py` | 리허설 측정 (6 형상 × 표본 20 커널) | E, K | **R**, `drift.jsonl`, `telemetry.csv`, `repro.jsonl`, `guard_probe.json` | 필요 |
 | 5 | `rehearse.py --all` | **Phase 3 전수 측정** | E, K | **R**, `drift.jsonl`, `telemetry.csv` | 필요 |
 | 6 | `export.py` | R ⨝ K 조인 + 파생 지표 계산 | E, K, R | `table.parquet` | 불필요 |
@@ -95,7 +95,7 @@ kerneltab <command> [options]
 --gpu <uuid|index>     기본: CUDA_VISIBLE_DEVICES 존중, 없으면 0
                        컨테이너에서는 지정하지 않는 것이 정상
 --results-dir <path>   기본: $KERNELTAB_RESULTS_DIR 또는 <repo>/results
---artifact-dir <path>  기본: $KERNELTAB_ARTIFACT_DIR 또는 <repo>/build/artifacts
+--artifact-dir <path>  기본: $KERNELTAB_ARTIFACT_DIR 또는 <repo>/artifacts
 --cutlass <path>       기본: $KERNELTAB_CUTLASS_DIR 또는 /opt/cutlass
 --jobs <n>             빌드 병렬도. 기본 min(48, cpu_count)
 -v / --json            사람이 읽는 출력 / 기계가 읽는 출력

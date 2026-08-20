@@ -9,7 +9,7 @@ import copy
 
 import pytest
 
-from core.env_hash import (
+from kerneltab.core.env_hash import (
     ENV_HASH_KEYS_V2,
     EXCLUDED_WITH_REASON,
     env_hash_v2,

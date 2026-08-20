@@ -28,18 +28,18 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import itertools
 
-from backends import get_backend
-from build import paths
-from core import kernels as kernels_mod
-from core.config import (
+from kerneltab.backends import get_backend
+from kerneltab.build import paths
+from kerneltab.core import kernels as kernels_mod
+from kerneltab.core.config import (
     alignment_combos,
     alignments_for,
     enumerate_kernels,
     enumerate_runtimes,
 )
-from core.hardware import hardware_from_env
-from core.shapes import all_shapes
-from core.types import KernelConfig
+from kerneltab.core.hardware import hardware_from_env
+from kerneltab.core.shapes import all_shapes
+from kerneltab.core.types import KernelConfig
 
 RESULTS = paths.RESULTS_DIR / "results.jsonl"
 KERNELS = paths.RESULTS_DIR / "kernels.jsonl"

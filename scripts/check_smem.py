@@ -24,15 +24,15 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from backends import get_backend
-from build import paths
-from core.config import alignment_combos, dtype_bytes, enumerate_kernels
-from core.hardware import (
+from kerneltab.backends import get_backend
+from kerneltab.build import paths
+from kerneltab.core.config import alignment_combos, dtype_bytes, enumerate_kernels
+from kerneltab.core.hardware import (
     detect_hardware,
     hardware_from_env,
     nvcc_arch_flag,
 )
-from core.shapes import all_shapes
+from kerneltab.core.shapes import all_shapes
 
 MAIN = """
 #include <cstdio>

@@ -14,8 +14,8 @@ from __future__ import annotations
 
 from math import ceil
 
-from core.config import alignments_for, dtype_bytes
-from core.types import Hardware, KernelConfig, Problem, RuntimeConfig
+from kerneltab.core.config import alignments_for, dtype_bytes
+from kerneltab.core.types import Hardware, KernelConfig, Problem, RuntimeConfig
 
 __all__ = [
     "arith_intensity",

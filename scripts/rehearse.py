@@ -30,18 +30,18 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from backends import get_backend
-from build import paths
-from core import (
+from kerneltab.backends import get_backend
+from kerneltab.build import paths
+from kerneltab.core import (
     device,
     records,
 )
-from core import kernels as kernels_mod
-from core.config import alignments_for, enumerate_runtimes
-from core.hardware import hardware_from_env
-from core.shapes import all_shapes
-from core.types import KernelConfig, Problem, RuntimeConfig
-from measure.runner import SOAK_DEFAULTS  # noqa: F401
+from kerneltab.core import kernels as kernels_mod
+from kerneltab.core.config import alignments_for, enumerate_runtimes
+from kerneltab.core.hardware import hardware_from_env
+from kerneltab.core.shapes import all_shapes
+from kerneltab.core.types import KernelConfig, Problem, RuntimeConfig
+from kerneltab.measure.runner import SOAK_DEFAULTS  # noqa: F401
 
 RESULTS = paths.RESULTS_DIR / "results.jsonl"
 DRIFT = paths.RESULTS_DIR / "drift.jsonl"
@@ -488,8 +488,8 @@ def main() -> int:
     drift_period = env["drift_check_seconds"]
     clock_locked = env["clock_locked"]
 
-    from measure.gpu_state import NvmlProbe
-    from measure.runner import Ctx, Kernel
+    from kerneltab.measure.gpu_state import NvmlProbe
+    from kerneltab.measure.runner import Ctx, Kernel
 
     # --- 빌드된 커널 로드 ---------------------------------------------------
     rows = [json.loads(l) for l in KERNELS.read_text().splitlines() if l.strip()]
@@ -506,7 +506,7 @@ def main() -> int:
         #      kernels.jsonl 은 append-only 라 과거 열거 공간에서 빌드된 것이
         #      남아 있다 (예: 계산이 틀리는 warp tile (64,128)). 측정 대상은
         #      항상 "지금의 is_valid_kernel 이 인정하는 집합" 이어야 한다.
-        from core.config import alignment_combos, enumerate_kernels
+        from kerneltab.core.config import alignment_combos, enumerate_kernels
 
         valid_ids = {backend.kernel_id(c) for c in
                      enumerate_kernels(hw, backend,
@@ -925,7 +925,7 @@ def main() -> int:
 def measure_one(ctx, kern, krow, p: Problem, rc: RuntimeConfig, probe, env,
                 launch_overhead_ms: float, regs_per_sm: int,
                 thermal: dict | None = None) -> dict:
-    from measure.runner import KtProblemC
+    from kerneltab.measure.runner import KtProblemC
 
     parallel = rc.split_k_mode == "parallel"
     kp = KtProblemC(p.M, p.N, p.K, rc.split_k, 1 if parallel else 0)
@@ -1034,7 +1034,7 @@ def alignment_guard_probe(ctx, sample, kernels, hw) -> list[dict]:
     않지만, "만들면 정말로 틀리는가" 를 확인해 두지 않으면 그 가드가 왜
     있는지 알 수 없게 된다.
     """
-    from measure.runner import KtProblemC
+    from kerneltab.measure.runner import KtProblemC
 
     p = Problem(1024, 4096, 4100)
     out = []
@@ -1087,7 +1087,7 @@ def measure_cublas(ctx, p: Problem, probe, env, out) -> dict:
 
 def _probe_ref(ctx, kern_obj, shape=DRIFT_SHAPE) -> float | None:
     """기준 config 를 한 번 재서 시간을 돌려준다 (소킹 판정 / 드리프트 공용)."""
-    from measure.runner import KtProblemC
+    from kerneltab.measure.runner import KtProblemC
 
     ctx.prepare_problem(shape.M, shape.N, shape.K)
     kp = KtProblemC(shape.M, shape.N, shape.K, 1, 0)
@@ -1116,7 +1116,7 @@ def thermal_soak(ctx, kernels, sample, probe, ref_kid: str,
 
     돌려주는 값은 results 줄에 기록된다 (D-3).
     """
-    from measure.runner import KtProblemC
+    from kerneltab.measure.runner import KtProblemC
 
     ref = kernels[ref_kid]
     # 소킹 부하는 실제 측정과 비슷해야 한다. 큰 형상을 반복한다.
@@ -1230,7 +1230,7 @@ def telemetry_tail_stats(seconds: int) -> dict:
 
 
 def _probe_shape(ctx, kern, p: Problem):
-    from measure.runner import KtProblemC
+    from kerneltab.measure.runner import KtProblemC
 
     ctx.prepare_problem(p.M, p.N, p.K)
     kp = KtProblemC(p.M, p.N, p.K, 1, 0)

@@ -18,13 +18,13 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from backends import get_backend
-from backends.sm80 import (
+from kerneltab.backends import get_backend
+from kerneltab.backends.sm80 import (
     epilogue_thread_map_ok,
     mainloop_smem_thread_map_ok,
 )
-from build import paths
-from core.types import KernelConfig
+from kerneltab.build import paths
+from kerneltab.core.types import KernelConfig
 
 KERNELS = paths.RESULTS_DIR / "kernels.jsonl"
 

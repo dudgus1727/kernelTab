@@ -5,7 +5,7 @@
 반응하는지 확인하는 것이 이 파일의 핵심이다.
 """
 
-from core.shapes import (
+from kerneltab.core.shapes import (
     all_layers,
     all_shapes,
     shapes_layer_a,
@@ -54,8 +54,8 @@ class TestLayerCIsHardwareDerived:
 
     def test_waves_targets_are_hit(self, hw_a6000, mk_cfg):
         """역산된 M 이 실제로 목표 waves 근처를 만드는지."""
-        from core import features as F
-        from core.types import RuntimeConfig
+        from kerneltab.core import features as F
+        from kerneltab.core.types import RuntimeConfig
         cfg = mk_cfg(tile=(128, 128, 32))
         got = sorted({round(F.waves(p, hw_a6000, cfg, RuntimeConfig(1, "serial")), 2)
                       for p in shapes_layer_c(hw_a6000)})
@@ -104,11 +104,11 @@ class TestHardwareIndependentLayers:
 
 class TestLayerD:
     def test_covers_all_low_alignments(self):
-        from core.config import alignments_for
+        from kerneltab.core.config import alignments_for
         got = {alignments_for(p) for p in shapes_layer_d()}
         assert got == {(4, 4, 8), (2, 2, 8), (1, 1, 8), (8, 8, 4), (8, 8, 2)}
 
     def test_no_full_alignment_shape(self):
         """층 D 는 alignment 엣지케이스 전용이다. (8,8,8) 이 섞이면 목적이 흐려진다."""
-        from core.config import alignments_for
+        from kerneltab.core.config import alignments_for
         assert all(alignments_for(p) != (8, 8, 8) for p in shapes_layer_d())

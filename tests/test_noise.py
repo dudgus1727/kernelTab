@@ -9,7 +9,7 @@ import itertools
 
 import pytest
 
-from core.noise import (
+from kerneltab.core.noise import (
     SIGMA_ABS_MS,
     SIGMA_REL,
     coefficients,

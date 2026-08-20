@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from math import ceil
 
-from core.types import Hardware, Problem
+from kerneltab.core.types import Hardware, Problem
 
 __all__ = [
     "all_layers",

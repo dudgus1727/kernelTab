@@ -213,7 +213,7 @@ sigma_rel(t) = 0.000374 / t + 0.00044      # 절대 지터 + 상대 성분
   t = 2.916 ms -> 0.06%      가능
 ```
 
-`core.table.answer_set(df)` 의 기본 허용치가 이 함수에서 나온다.
+`kerneltab.core.table.answer_set(df)` 의 기본 허용치가 이 함수에서 나온다.
 계수는 `BUNDLE.json` 의 `noise_floor` 에 실려 소비 쪽이 재계산 없이 쓴다.
 **다른 GPU 에서는 반드시 다시 재야 한다.**
 
@@ -525,7 +525,7 @@ python3 scripts/bundle.py --archive --archive-raw
 #### 소비 (kernelrule)
 
 ```python
-from core.bundle import load_bundle, load_bundles
+from kerneltab.core.bundle import load_bundle, load_bundles
 
 b = load_bundle("rtx-a6000-sm_86-<env_hash8>")   # sha256 대조 후 로드
 X = b.ranking()      # 규칙 입력 (정답 제거)

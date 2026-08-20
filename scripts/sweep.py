@@ -40,7 +40,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from build import paths
+from kerneltab.build import paths
 
 REHEARSE = REPO_ROOT / "scripts" / "rehearse.py"
 LOG = paths.RESULTS_DIR / "sweep.jsonl"
