@@ -56,14 +56,17 @@ def main() -> int:
     ctx = Ctx(paths.ARTIFACT_DIR / "libkt_ctx.so", 0)
     ctx.set_protocol(env)
     bad = 0
+    checked = 0          # 실제로 검사한 형상 수. 0이면 통과가 아니다.
     try:
         for p in SHAPES:
             from kerneltab.core.config import alignments_for
             al = alignments_for(p)
             krow = pick(al)
             if krow is None:
-                print(f"({p.M},{p.N},{p.K}) align={al}: 해당 커널 없음")
+                print(f"({p.M},{p.N},{p.K}) align={al}: 해당 커널 없음 "
+                      f"(tile=(128,128,32), stages=4)")
                 continue
+            checked += 1
             k = Kernel(paths.kernel_so(krow["kernel_id"]))
             ctx.prepare_problem(p.M, p.N, p.K)
             _, cub = ctx.measure_cublas()
@@ -126,7 +129,19 @@ def main() -> int:
                       f" | {fmt(pe, 0, '10.4f')} {fmt(pe, 1, '11.3e')}")
     finally:
         ctx.close()
-    print("\n결론: " + ("이상 없음" if bad == 0 else f"!! {bad}건 문제"))
+    # ⛔ **한 형상도 검사하지 못했으면 "이상 없음" 이 아니다.**
+    #    이 저장소가 네 번 밟은 "조용히 아무것도 안 하는 안전장치" 다
+    #    (docs/decisions.md 14). 컨테이너에서 커널을 400개만 빌드했더니
+    #    필요한 (128,128,32)/stages=4 조합이 없어 세 형상 모두 건너뛰고
+    #    "결론: 이상 없음" 을 찍었다.
+    if checked == 0:
+        print(f"\n⛔ 검사한 형상이 0개다 ({len(SHAPES)}개 중). "
+              "'이상 없음' 이 아니라 **검사를 못 한 것**이다.")
+        print("   tile=(128,128,32), stages=4 커널이 필요하다. "
+              "scripts/build_kernels.py 를 먼저(또는 --limit 없이) 돌려라.")
+        return 2
+    print(f"\n결론: 형상 {checked}/{len(SHAPES)}개 검사 — "
+          + ("이상 없음" if bad == 0 else f"!! {bad}건 문제"))
     return 0 if bad == 0 else 1
 
 
