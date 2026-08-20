@@ -57,6 +57,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from kerneltab.build import paths
+from kerneltab.build.compile import build_ctx_so
 from kerneltab.core import device, noise, records
 from kerneltab.core import kernels as kernels_mod
 from kerneltab.core.hardware import hardware_from_env
@@ -119,7 +120,10 @@ def main() -> int:
     picks = rng.sample(rows, min(a.pairs, len(rows)))
     pairs = [(r, SHAPES[i % len(SHAPES)]) for i, r in enumerate(picks)]
 
-    ctx = Ctx(paths.ARTIFACT_DIR / "libkt_ctx.so", 0)
+    # 없거나 낡았으면 여기서 빌드한다. 손으로 복사하게 두면 잊는다 —
+    # 실제로 캠페인 디렉토리를 새로 만들면서 .so 만 빠져 죽었다.
+    # (낡은 .so 는 Ctx 의 ABI 핸드셰이크가 따로 거부한다.)
+    ctx = Ctx(build_ctx_so(env), 0)
     p_new = protocol_from_env(env)
     p_old = old_protocol(env)
     print(f"조합 {len(pairs)}개 x 교대 {a.reps}회   허용 = "
