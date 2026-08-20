@@ -361,6 +361,30 @@ except Exception:
 같은 커밋에서 잡혔을 것이다. 실제로 이 프로젝트에서 전수 검사가 통했던
 사례가 이미 있었다 — `MEM_CLOCK_MIN_FRAC` 미구현을 AST 검사로 찾았다.
 
+### 여덟 번째 — 술어 하나가 **일곱 곳**에 복사돼 있었다
+
+`launchable` (= `regs_per_thread * threads <= regs_per_sm`) 판정이 일곱 곳에
+따로 있었다. 식은 같은데 **결측 처리가 서로 달랐다.**
+
+| 어디 | 결측일 때 |
+|---|---|
+| `rehearse.py::launchable()` | `True` |
+| `export.py` 의 `launchable` 컬럼 | `None` |
+| `validate_table.py` / `check_correctness.py` / `recheck_stability.py` / `verify_clock_lock.py` / `smoke_splitk.py` | 인라인, 통과시킴 |
+
+`core/kernels.py` 하나로 모았다. 그런데 **여기서 방법론이 갈렸다.**
+
+`grep` 으로 찾은 것은 여섯 곳이었다. 일곱 번째(`smoke_splitk.py`)는
+**테스트가 찾았다** — `tests/test_kernels.py` 가 AST 를 훑어
+`regs_per_thread` 와 `threads` 를 곱하는 곳이 있으면 실패한다. 표현이 조금
+달라(`r["regs_per_thread"]` vs `r.get("regs_per_thread")`) grep 패턴을
+빠져나갔던 것이다.
+
+교훈: **"전수 검색했다" 를 사람의 grep 으로 끝내지 마라.** 같은 검색을
+테스트로 만들면 지금 찾을 뿐 아니라 **다음에 추가되는 것도 막는다.**
+`docs/decisions.md` 15 의 "코드로 강제할 방법이 있는가" 와 같은 이야기이고,
+이번에는 그 질문이 실제로 한 건을 더 잡았다.
+
 교훈은 더 넓다 — **`env_hash` 는 조인 키가 아니라 격리 경계다.** 두 조건의
 줄이 같은 집계에 들어가는 경로가 생기면, 그 지표는 조용히 틀린다.
 

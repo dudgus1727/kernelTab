@@ -24,6 +24,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from build import paths
 from core import device
+from core import kernels as kernels_mod
 from core.hardware import hardware_from_env
 from core.types import Problem
 
@@ -97,7 +98,7 @@ def main() -> int:
         krow = next(r for r in rows
                     if r["build_status"] == "ok"
                     and (r["tile"]["m"], r["tile"]["n"]) == (128, 128)
-                    and r["regs_per_thread"] * r["threads"] <= hw.regs_per_sm)
+                    and kernels_mod.launchable(r, hw.regs_per_sm))
 
     expect = args.expect_mhz
     if expect is None:

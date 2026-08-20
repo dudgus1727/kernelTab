@@ -21,6 +21,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from backends import get_backend
 from build import paths
 from core import device
+from core import kernels as kernels_mod
 from core.hardware import hardware_from_env
 from core.types import Problem, RuntimeConfig
 
@@ -42,7 +43,7 @@ def main() -> int:
     rows = [json.loads(l) for l in
             (paths.RESULTS_DIR / "kernels.jsonl").read_text().splitlines() if l.strip()]
     ok = [r for r in rows if r.get("build_status") == "ok"
-          and r["regs_per_thread"] * r["threads"] <= hw.regs_per_sm]
+          and kernels_mod.launchable(r, hw.regs_per_sm)]
 
     def pick(align, tile=(128, 128, 32)):
         for r in sorted(ok, key=lambda r: r["kernel_id"]):

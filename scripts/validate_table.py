@@ -30,6 +30,7 @@ import itertools
 
 from backends import get_backend
 from build import paths
+from core import kernels as kernels_mod
 from core.config import (
     alignment_combos,
     alignments_for,
@@ -410,8 +411,7 @@ def expected_jobs(hw, backend, kern: dict, seen: Counter,
             continue
         if only_kernels is not None and r["kernel_id"] not in only_kernels:
             continue
-        rg, th = r.get("regs_per_thread"), r.get("threads")
-        if rg and th and rg * th > hw.regs_per_sm:
+        if not kernels_mod.launchable(r, hw.regs_per_sm):
             continue
         usable.append(r)
 

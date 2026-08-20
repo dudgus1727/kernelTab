@@ -36,6 +36,7 @@ from core import (
     device,
     records,
 )
+from core import kernels as kernels_mod
 from core.config import alignments_for, enumerate_runtimes
 from core.hardware import hardware_from_env
 from core.shapes import all_shapes
@@ -174,19 +175,10 @@ WARMUP_SECONDS = 20
 MEM_CLOCK_MIN_FRAC = 0.9
 
 
-def launchable(krow: dict, regs_per_sm: int) -> bool:
-    """런치 가능한가.
+# launchable 은 core/kernels.py 에 있다. 여섯 곳에 흩어져 있었고 결측 처리가
+# 서로 달랐다 (docs/decisions.md 13).
+launchable = kernels_mod.launchable
 
-    cutlass::Kernel2 에는 __launch_bounds__ 가 없어서 ptxas 가 스레드 수에 맞춰
-    레지스터를 제한하지 않는다. 그 결과 regs_per_thread * threads 가 SM 당
-    레지스터 수를 넘는 커널이 만들어지고, 이런 커널은 런치 자체가 실패한다
-    (cudaOccupancyMaxActiveBlocksPerMultiprocessor 도 0 을 돌려준다).
-    실제로 런치를 시도해 에러를 받기보다 미리 판정하는 편이 명확하고 빠르다.
-    """
-    r, t = krow.get("regs_per_thread"), krow.get("threads")
-    if not r or not t:
-        return True
-    return r * t <= regs_per_sm
 
 THROTTLE_BITS = {
     0x0004: "sw_power_cap",

@@ -24,6 +24,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from build import paths
 from core import device
+from core import kernels as kernels_mod
 from core.config import alignments_for
 from core.hardware import hardware_from_env
 from core.types import Problem
@@ -58,7 +59,7 @@ def main() -> int:
     cand = [r for r in rows
             if r.get("build_status") == "ok"
             and f"a{r['align']['a']}{r['align']['b']}{r['align']['c']}" in want
-            and r["regs_per_thread"] * r["threads"] <= hw.regs_per_sm]
+            and kernels_mod.launchable(r, hw.regs_per_sm)]
     cand.sort(key=lambda r: r["kernel_id"])
     if args.limit:
         cand = cand[: args.limit]

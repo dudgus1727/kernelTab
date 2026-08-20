@@ -28,6 +28,7 @@ from core import (
     device,
     records,
 )
+from core import kernels as kernels_mod
 from core.hardware import hardware_from_env
 from core.types import KernelConfig, Problem
 
@@ -85,7 +86,7 @@ def main() -> int:
         usable = [r for r in kern.values()
                   if r.get("build_status") == "ok"
                   and r["kernel_id"] in valid
-                  and r["regs_per_thread"] * r["threads"] <= hw.regs_per_sm]
+                  and kernels_mod.launchable(r, hw.regs_per_sm)]
         shapes = []
         for tok in args.shapes.split(","):
             M, N, K = (int(x) for x in tok.strip().split("x"))

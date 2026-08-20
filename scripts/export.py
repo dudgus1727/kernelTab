@@ -25,6 +25,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from backends import get_backend
 from build import paths
 from core import features as F
+from core import kernels as kernels_mod
 from core import records
 from core.hardware import hardware_from_env
 from core.types import Hardware, KernelConfig, Problem, RuntimeConfig
@@ -138,12 +139,14 @@ def main() -> int:
 
         # 자원 파생
         thr = k.get("threads") or 0
-        regs = k.get("regs_per_thread") or 0
         row["theoretical_occupancy"] = (
             (k.get("max_blocks_per_sm") or 0) * thr / hw.max_threads_per_sm
             if thr else None)
-        row["regs_total_per_block"] = regs * thr
-        row["launchable"] = (regs * thr <= hw.regs_per_sm) if regs and thr else None
+        row["regs_total_per_block"] = kernels_mod.regs_total_per_block(k)
+        # 결측이면 None 이다 — launchable() 은 True 를 주지만, 표의 컬럼은
+        # "모른다" 를 그대로 남겨야 소비 쪽이 판단할 수 있다.
+        row["launchable"] = (None if row["regs_total_per_block"] is None
+                             else kernels_mod.launchable(k, hw.regs_per_sm))
         row["has_spill"] = ((k.get("spill_stores") or 0)
                             + (k.get("spill_loads") or 0)) > 0
         # smem_computed 는 kernels.jsonl 에 빌드 시점 공식으로 박혀 있으므로
