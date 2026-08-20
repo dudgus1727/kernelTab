@@ -44,10 +44,22 @@ sys.path.insert(0, str(REPO_ROOT))
 from kerneltab.build import paths
 from kerneltab.core import anchors, records
 
-#: 슬라이스 내 이동이 기준선의 몇 배를 넘으면 악화로 볼지.
+#: **같은 앵커**를 기준선과 비교할 때의 배수.
 WITHIN_SLICE_WORSE = 2.0
 
-#: 기준선이 없을 때의 절대 상한 (%).
+#: 앵커가 겹치지 않을 때 — 기준선의 **최댓값** 대비 배수.
+#:
+#: ⚠️ 앵커 커널은 캠페인마다 다르다. 선택이 셔플 시드와 커널 풀에 의존하고
+#:    둘 다 바뀌기 때문이다. 실제로 12.4 와 13.3 의 짧은 앵커가 **하나도
+#:    겹치지 않았다.** 그러면 앵커별 대조는 전부 미스가 나고 `--baseline`
+#:    이 **조용히 무효**가 된다 — 준 줄 알았는데 안 쓰인다.
+#:
+#:    그래서 겹치지 않으면 분포 수준으로 비교한다: "이 캠페인의 최악값이
+#:    기준선 최악값의 몇 배인가". 같은 앵커끼리가 아니므로 배수는 더
+#:    작게 잡는다.
+WITHIN_SLICE_WORSE_DIST = 1.5
+
+#: 기준선이 아예 없을 때의 절대 상한 (%).
 WITHIN_SLICE_ABS = 4.0
 
 #: 재현성 허용 (상대 차이).
@@ -96,21 +108,48 @@ def main() -> int:
         checks[-1] = (checks[-1][0], False, checks[-1][2])
 
     # --- 3: 슬라이스 내 이동 -----------------------------------------------
-    base = {}
+    base, base_worst, base_src = {}, None, "기준선 없음 — 절대값"
     if a.baseline and Path(a.baseline).exists():
         b = json.loads(Path(a.baseline).read_text())
-        base = {f"{r[0]}@{r[1]}": abs(r[2]) for r in b.get("within_slice", [])}
-    moves = [(kid, M, d) for kid, M, d in rep.within_slice]
-    worst_k, worst_v, worst_lim = None, 0.0, WITHIN_SLICE_ABS
-    for kid, M, d in moves:
-        lim = (max(WITHIN_SLICE_WORSE * base[f"{kid}@{M}"], 1.0)
-               if f"{kid}@{M}" in base else WITHIN_SLICE_ABS)
-        if abs(d) - lim > worst_v - worst_lim:
-            worst_k, worst_v, worst_lim = f"{kid[-30:]}@{M}", abs(d), lim
+        base = {f"{r[0]}@{r[1]}": abs(r[2])
+                for r in b.get("within_slice", [])}
+        if base:
+            base_worst = max(base.values())
+    moves = list(rep.within_slice)
+    hit = sum(1 for kid, M, *_ in moves if f"{kid}@{M}" in base)
+    if base and hit:
+        base_src = f"앵커별 기준선 대비 ({hit}/{len(moves)} 일치)"
+    elif base:
+        # **겹치는 앵커가 없다.** 조용히 절대값으로 떨어지지 않고 분포로 본다.
+        base_src = (f"앵커가 하나도 안 겹친다 — 분포 비교 "
+                    f"(기준선 최악 {base_worst:.2f}%)")
+
+    worst_k, worst_v, worst_lim, sub = None, 0.0, None, 0
+    for kid, M, d, dmean, tick in moves:
+        key = f"{kid}@{M}"
+        if key in base:
+            lim = max(WITHIN_SLICE_WORSE * base[key], 1.0)
+        elif base_worst is not None:
+            lim = max(WITHIN_SLICE_WORSE_DIST * base_worst, 1.0)
+        else:
+            lim = WITHIN_SLICE_ABS
+        # ⛔ **타이머 눈금보다 작은 차이는 분해할 수 없다.** 허용치가 눈금보다
+        #    작으면 그 앵커는 어떤 값이 나와도 통과/실패가 양자화의 결과다.
+        #    실제로 -6.49 % 가 **0.84 눈금**이었다.
+        lim = max(lim, tick)
+        # 눈금 이하이면 평균으로 본다 (평균은 눈금 사이를 분해한다).
+        val = abs(d) if abs(d) >= tick else abs(dmean)
+        if abs(d) < tick:
+            sub += 1
+        if worst_lim is None or val - lim > worst_v - worst_lim:
+            worst_k, worst_v, worst_lim = f"{kid[-28:]}@{M}", val, lim
+    worst_lim = worst_lim if worst_lim is not None else WITHIN_SLICE_ABS
     ok3 = worst_v <= worst_lim
     checks.append(("3. 슬라이스 start->end", ok3,
-                   (f"최대 {worst_v:.2f}% ({worst_k}), 허용 {worst_lim:.2f}% "
-                    + ("[기준선 대비]" if base else "[기준선 없음 — 절대값]"))))
+                   f"최대 {worst_v:.2f}% ({worst_k}), 허용 {worst_lim:.2f}% "
+                   f"[{base_src}]"
+                   + (f"  ({sub}/{len(moves)}개는 눈금 미만 -> 평균으로 판정)"
+                      if sub else "")))
 
     # --- 4: 워밍업 하한 -----------------------------------------------------
     n = zero = below = 0
@@ -174,7 +213,7 @@ def main() -> int:
     out = {"env_hash": eh,
            "checks": [{"name": nm, "ok": ok, "detail": d}
                       for nm, ok, d in checks],
-           "within_slice": [[kid, M, d] for kid, M, d in moves],
+           "within_slice": [[kid, M, d, dm, tk] for kid, M, d, dm, tk in moves],
            "worst_short_pct": rep.worst_short,
            "abs_worst_pct": rep.abs_worst, "abs_floor_pct": rep.abs_floor,
            "warmup_min": min(warms) if warms else None,

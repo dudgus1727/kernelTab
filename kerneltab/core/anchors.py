@@ -150,7 +150,9 @@ class AnchorReport:
     abs_last: int | None = None
     abs_worst: float | None = None
     abs_floor: float | None = None
-    within_slice: list[tuple[str, int, float]] = field(default_factory=list)
+    #: (kernel_id, M, 중앙값 이동 %, 평균 이동 %, 눈금 하나 %)
+    within_slice: list[tuple[str, int, float, float, float]] = field(
+        default_factory=list)
     notes: list[str] = field(default_factory=list)
     n_slices: int = 0
     round_source: str = "none"       # "recorded" | "timestamp" | "none"
@@ -428,13 +430,22 @@ def analyze(rows: list[dict], rnd: list[int | None], env_hash: str,
 
     # --- 세그먼트 안 이동 (참고) ------------------------------------------
     # 이것은 노이즈 바닥의 정의 그 자체이므로 실패 조건으로 쓰지 않는다.
+    #
+    # ⚠️ **중앙값과 평균을 함께 낸다.** 짧은 앵커의 시간은 타이머 눈금
+    #    (1.024 us)에 양자화돼 있고, 14 us 커널에서 한 눈금은 7.3 % 다.
+    #    중앙값만 보면 눈금 하나가 "-6.49 %" 라는 큰 이상 신호처럼 보인다.
+    #    실제로 그런 값이 나왔고 확인해 보니 **0.84 눈금**이었다.
+    #    `tick_pct` 를 함께 실어 "분해 가능한 차이인가" 를 판정할 수 있게 한다.
     for k in order[: max(len(order) // 3, 1)]:
         st = [r["time_ms"] for r in rows
               if key_of(r) == k and r["when"] == "start"]
         en = [r["time_ms"] for r in rows
               if key_of(r) == k and r["when"] == "end"]
         if st and en:
-            rep.within_slice.append(
-                (k[0], k[1],
-                 (statistics.median(en) / statistics.median(st) - 1) * 100))
+            ms, me = statistics.median(st), statistics.median(en)
+            rep.within_slice.append((
+                k[0], k[1],
+                (me / ms - 1) * 100,
+                (statistics.fmean(en) / statistics.fmean(st) - 1) * 100,
+                100 * noise_model.tick_pct(ms)))
     return rep

@@ -144,9 +144,14 @@ def main() -> int:
 
     # --- 세그먼트 안 이동 (참고) ------------------------------------------
     print("\n세그먼트 안에서의 이동 (start -> end, 짧은 앵커)")
-    for kid, M, d in rep.within_slice:
-        print(f"  {kid[-40:]:>40} @{M:<5d} {d:+7.2f}%")
+    for kid, M, d, dm, tick in rep.within_slice:
+        note = "  <- 눈금 미만" if abs(d) < tick else ""
+        print(f"  {kid[-36:]:>36} @{M:<5d} 중앙 {d:+7.2f}% 평균 {dm:+7.2f}% "
+              f"(눈금 {tick:.2f}%){note}")
     print("  (노이즈 바닥의 정의 그 자체이므로 실패 조건으로 쓰지 않는다)")
+    print("  ⚠️ '눈금' 은 CUDA 이벤트 타이머 양자가 이 시간에서 차지하는 비율이다.")
+    print("     중앙값 이동이 눈금보다 작으면 **분해할 수 없는 차이**다 —")
+    print("     14us 앵커에서 한 눈금이 7.3% 라 큰 이상 신호처럼 보인다.")
 
     if rep.notes:
         print("\n주의 (실패는 아니다)")

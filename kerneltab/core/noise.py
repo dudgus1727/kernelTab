@@ -40,17 +40,33 @@
 
 from __future__ import annotations
 
+import itertools
+
 __all__ = [
+    "EVENT_TICK_MS",
     "SIGMA_ABS_MS",
     "SIGMA_REL",
     "coefficients",
     "noise_floor",
     "noise_floor_ms",
     "resolvable",
+    "tick_ms_observed",
+    "tick_pct",
 ]
 
 #: 절대 지터 (ms). 커널 시간과 무관한 타이머/런치 성분.
 #: 앵커 중 t < 0.06 ms 조합들의 절대 표준편차 중앙값.
+#: CUDA 이벤트 타이머의 관측 양자 (ms). A6000 에서 서로 다른 측정값의
+#: 최소 간격이 정확히 이 값이었다 (0.014336 - 0.013312).
+#:
+#: ⚠️ **이것보다 작은 차이는 분해할 수 없다.** 14 us 커널에서 한 눈금은
+#: **7.3 %** 다. 짧은 앵커의 중앙값 차이를 % 로만 보면 눈금 하나가 큰
+#: 이상 신호처럼 보인다 — 실제로 슬라이스 start/end 차이 -6.49 % 가
+#: **0.84 눈금**이었다.
+#:
+#: 다른 GPU 에서는 다를 수 있다. `tick_ms_observed()` 로 확인하라.
+EVENT_TICK_MS = 0.001024
+
 SIGMA_ABS_MS = 0.000374
 
 #: 상대 성분. 앵커 중 t > 1 ms 조합들의 상대 표준편차 중앙값.
@@ -70,6 +86,21 @@ def coefficients() -> dict:
     return {"sigma_abs_ms": SIGMA_ABS_MS, "sigma_rel": SIGMA_REL,
             "model": "sigma_rel(t) = sigma_abs_ms / t + sigma_rel",
             **PROVENANCE}
+
+
+def tick_pct(time_ms: float) -> float:
+    """이 시간에서 타이머 눈금 하나가 몇 %인가.
+
+    **분해 한계**다. 이보다 작은 차이는 측정으로 구분할 수 없다.
+    """
+    return EVENT_TICK_MS / time_ms if time_ms > 0 else float("inf")
+
+
+def tick_ms_observed(values) -> float | None:
+    """관측된 값들에서 양자를 추정한다. 서로 다른 값의 최소 간격."""
+    xs = sorted({round(float(v), 9) for v in values})
+    gaps = [b - a for a, b in itertools.pairwise(xs) if b - a > 1e-9]
+    return min(gaps) if gaps else None
 
 
 def noise_floor(time_ms: float) -> float:
