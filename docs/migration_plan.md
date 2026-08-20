@@ -353,7 +353,20 @@ CUDA_VISIBLE_DEVICES=0 python3 scripts/count_space.py >/dev/null && echo "존중
 > `env["manifest"]` 추가가 `env_hash_v2` 를 바꾸지 않는다. 독립적으로 처리했고
 > 테스트로 고정했다.
 
-## 4. 나머지 8 건
+## 4. 나머지 8 건 — ✅ 전부 완료 (2026-08-20)
+
+> | # | 상태 | 비고 |
+> |---|---|---|
+> | 7 | ✅ | 다만 **"pandas 는 미사용" 이 사실이 아니었다.** `core/table.py` 와 `core/bundle.py` 가 쓴다. 제거가 아니라 **필수화**했다 |
+> | 4 | ✅ | `uv pip compile --python-version 3.10 --generate-hashes`. `pytest` 와 `tomli`(3.10 백포트)를 추가했다 |
+> | 6 | ✅ | 기본값을 한 번 바꿨다 — `build/artifacts` → `artifacts` (패키지 이전). 디렉토리 이동·기본값·`test_portability` 단언을 **같은 커밋에서** 함께 |
+> | 5 | ✅ | P-2 와 함께. NVML 핸들 경로에 **같은 폴백이 따로** 있었다 (R-4) |
+> | 9 | ✅ | |
+> | 8 | ✅ | `manifest` 는 해시 키에서 **제외**했다. 소스 `tree_hash` 를 포함하면 측정 중 오타 수정조차 재측정이 된다 |
+> | 10 | ✅ | **컨테이너에서 실검증했다.** Python 3.10.12, 테스트 267 passed / 2 skipped, `verify smem` 40/40 일치. 여기서 `tomllib`(3.11 stdlib) 문제가 나왔다 — 이식성을 검사하는 테스트가 이식성이 없었다 |
+> | 11 | ✅ | 세 겹이 됐다: `safe.directory` / `$CUTLASS_COMMIT` 폴백 / `env_hash_v2` 가 필수 키 누락 시 예외. `--user` 로 돌리면 git 이 root 소유 저장소를 거부해 **`cutlass.commit` 이 null 인 env.json** 이 만들어진다 |
+
+## (원래 표) 나머지 8 건
 
 | # | 항목 | 깨질 수 있는 것 | 검증 |
 |---|---|---|---|

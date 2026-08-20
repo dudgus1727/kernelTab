@@ -1,5 +1,12 @@
 # 측정 완료 후 처리할 수정 목록
 
+> ## ✅ R-1 ~ R-6 전부 완료 (2026-08-19)
+>
+> 이후 작업은 `docs/migration_plan.md`(P-1~P-3 + 8건, 완료),
+> `docs/packaging.md`(`kerneltab.*` 이전, 완료),
+> `docs/container.md`(이미지, 완료), `docs/next_campaign.md`(본 캠페인)
+> 으로 넘어갔다.
+
 외부 코드 리뷰(R-1~R-4)와 이번 캠페인에서 반복 확인된 패턴(R-5)이다.
 
 ---
