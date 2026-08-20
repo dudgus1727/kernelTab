@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import warnings
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,6 +40,10 @@ __all__ = [
     "load_bundles",
     "resolve_bundle_path",
 ]
+
+
+class BundleSchemaWarning(UserWarning):
+    """번들 스키마가 옛 버전이라 값을 보완했다."""
 
 
 class BundleError(RuntimeError):
@@ -59,7 +64,12 @@ def _sha256(path: Path, chunk: int = 1 << 20) -> str:
 def resolve_bundle_path(ref: str | Path) -> Path:
     """번들 이름 또는 경로를 실제 디렉토리로 푼다.
 
-    탐색 순서: 절대/상대 경로 → `$KERNELTAB_DATASETS/<ref>` → `./datasets/<ref>`
+    탐색 순서: 절대/상대 경로 → `$KERNELTAB_DATASETS/<ref>`
+    → `<저장소 루트>/datasets/<ref>` → `./datasets/<ref>`
+
+    ⚠️ `datasets/` 는 **패키지 밖**이다 (`hwspec/`, `artifacts/` 와 같다).
+    패키지 이전 뒤 여기가 `PKG_ROOT/datasets` 를 보고 있어서 릴리즈 번들을
+    못 찾았다 — `launch_probe.cu` 와 같은 종류의 잔재다.
     """
     p = Path(ref)
     if (p / "BUNDLE.json").exists():
@@ -68,7 +78,9 @@ def resolve_bundle_path(ref: str | Path) -> Path:
     envv = os.environ.get("KERNELTAB_DATASETS")
     if envv:
         roots += [Path(x) for x in envv.split(os.pathsep) if x]
-    roots.append(Path(__file__).resolve().parent.parent / "datasets")
+    from kerneltab.build import paths as _paths
+    roots.append(_paths.REPO_ROOT / "datasets")
+    roots.append(Path.cwd() / "datasets")
     for r in roots:
         cand = r / str(ref)
         if (cand / "BUNDLE.json").exists():
@@ -100,17 +112,62 @@ class Bundle:
         함께 밝혀야 한다 (번들 안 LICENSE.txt)."""
         return self.info.get("license", "CC-BY-4.0")
 
+    #: `tick_ms` 가 없는 옛 번들(schema_version 1)에 쓸 값. **A6000 관측치**다.
+    #: 다른 GPU 의 번들에 이 값을 쓰면 틀린다 — 그래서 쓸 때 경고한다.
+    _FALLBACK_TICK_MS = 0.001024
+
+    @property
+    def schema_version(self) -> int:
+        """번들 스키마 버전.
+
+        | 버전 | 무엇이 들어 있는가 |
+        |---|---|
+        | 1 | `noise_floor` 가 통계 모델만 (`sigma_abs_ms`, `sigma_rel`) |
+        | 2 | `noise_floor.tick_ms` (타이머 분해능) + 표에 `distinct_time_frac` |
+        """
+        return int(self.info.get("schema_version") or 1)
+
+    @property
+    def tick_ms(self) -> float:
+        """CUDA 이벤트 타이머의 양자 (ms). **이보다 작은 차이는 분해 불가.**
+
+        ⚠️ 번들에 없으면(schema_version 1) A6000 관측치로 떨어지고
+        **경고한다.** 조용히 기본값을 쓰면 다른 GPU 의 번들에서 틀린 눈금을
+        쓰게 되고, 그 표의 정답 집합이 통째로 어긋난다.
+        """
+        c = self.info.get("noise_floor") or {}
+        t = c.get("tick_ms")
+        if t:
+            return float(t)
+        warnings.warn(
+            f"번들 {self.info.get('bundle_id')} 에 noise_floor.tick_ms 가 없다"
+            f" (schema_version {self.schema_version}).\n"
+            f"  A6000 관측치 {self._FALLBACK_TICK_MS} ms 로 대체한다 — "
+            "**다른 GPU 라면 틀린 값이다.**\n"
+            "  타이머 분해능 없이 채점하면 짧은 형상에서 노이즈를 신호로 "
+            "배운다 (66형상 중 45개가 최적 0.5ms 미만).\n"
+            "  새 캠페인 번들에는 자동으로 들어간다.",
+            BundleSchemaWarning, stacklevel=2)
+        return self._FALLBACK_TICK_MS
+
     @property
     def noise_floor(self):
         """이 측정 조건의 노이즈 바닥 함수. `f(time_ms) -> 상대 표준편차`.
 
+            noise_floor(t) = max( sigma_abs_ms/t + sigma_rel,  tick_ms/t )
+
         정답 허용치를 고정 1 % 로 두면 작은 형상에서 노이즈를 신호로
         배운다 (33시간 앵커에서 크기별 재현성 35 배 차이).
+
+        **분해능 항이 없으면 여전히 과소평가한다** — 14 us 에서 통계
+        노이즈는 2.7 % 인데 눈금 하나는 7.3 % 다. 같은 눈금에 떨어진 두
+        config 는 시간이 문자 그대로 동일하게 기록된다.
         """
         c = self.info.get("noise_floor") or {}
         a = c.get("sigma_abs_ms", 0.000374)
         b = c.get("sigma_rel", 0.00044)
-        return lambda t: (a / t + b) if t and t > 0 else b
+        tick = self.tick_ms
+        return lambda t: (max(a / t + b, tick / t) if t and t > 0 else b)
 
     @property
     def table_path(self) -> Path:

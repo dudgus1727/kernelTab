@@ -301,3 +301,64 @@ def test_validate_bundle_accepts_single_env(tmp_path):
         "n_rows": len(rows), "files": files, "shape_layers": {},
     }))
     assert validate_bundle(d) == 0
+
+
+class TestSchemaVersion:
+    """★ 옛 번들(`schema_version` 1)에는 `tick_ms` 가 없다.
+
+    조용히 기본값을 쓰면 **다른 GPU 의 번들에서 틀린 눈금**을 쓰게 되고,
+    그 표의 정답 집합이 통째로 어긋난다. 짧은 형상에서 특히 그렇다 —
+    12.4 캠페인은 66 형상 중 45 개가 최적 0.5 ms 미만이다.
+    """
+
+    def _bundle(self, tmp_path, noise):
+        import json
+
+        from kerneltab.core.bundle import Bundle
+        info = {"bundle_id": "test", "noise_floor": noise}
+        if noise is not None and "tick_ms" in noise:
+            info["schema_version"] = 2
+        tmp_path.mkdir(parents=True, exist_ok=True)
+        (tmp_path / "BUNDLE.json").write_text(json.dumps(info))
+        return Bundle(tmp_path, info)
+
+    def test_버전_없으면_1(self, tmp_path):
+        b = self._bundle(tmp_path, {"sigma_abs_ms": 0.000374, "sigma_rel": 0.00044})
+        assert b.schema_version == 1
+
+    def test_tick_ms_가_있으면_2(self, tmp_path):
+        b = self._bundle(tmp_path, {"sigma_abs_ms": 0.000374,
+                                    "sigma_rel": 0.00044, "tick_ms": 0.002})
+        assert b.schema_version == 2
+        assert b.tick_ms == 0.002
+
+    def test_tick_ms_가_없으면_경고한다(self, tmp_path):
+        from kerneltab.core.bundle import BundleSchemaWarning
+        b = self._bundle(tmp_path, {"sigma_abs_ms": 0.000374, "sigma_rel": 0.00044})
+        with pytest.warns(BundleSchemaWarning, match="tick_ms"):
+            t = b.tick_ms
+        assert t == pytest.approx(0.001024)
+
+    def test_noise_floor_가_분해능을_포함한다(self, tmp_path):
+        b = self._bundle(tmp_path, {"sigma_abs_ms": 0.000374,
+                                    "sigma_rel": 0.00044, "tick_ms": 0.001024})
+        f = b.noise_floor
+        # 14 us: 통계 2.72 %, 눈금 7.31 % -> 분해능이 지배
+        assert f(0.014) == pytest.approx(0.001024 / 0.014, rel=1e-9)
+        # 4 ms: 통계 0.053 %, 눈금 0.026 % -> 통계가 지배
+        assert f(4.0) == pytest.approx(0.000374 / 4.0 + 0.00044, rel=1e-9)
+
+    def test_큰_눈금_번들은_허용치가_커진다(self, tmp_path):
+        """다른 GPU 는 눈금이 다를 수 있다 — 그래서 번들이 들고 다녀야 한다."""
+        small = self._bundle(tmp_path / "a", {"tick_ms": 0.001024})
+        big = self._bundle(tmp_path / "b", {"tick_ms": 0.004})
+        assert big.noise_floor(0.014) > small.noise_floor(0.014)
+
+    def test_배포_번들이_최신_스키마다(self):
+        """`bundle.py` 가 굽는 값이 코드의 기대와 같은지."""
+        import re
+        src = (REPO / "scripts" / "bundle.py").read_text()
+        m = re.search(r'"schema_version":\s*(\d+)', src)
+        assert m and int(m.group(1)) == 2, (
+            "bundle.py 의 schema_version 과 이 테스트가 어긋난다. "
+            "스키마를 바꿨으면 둘 다 올려라.")

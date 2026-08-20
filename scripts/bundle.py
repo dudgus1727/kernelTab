@@ -188,6 +188,15 @@ def run_validate(env_hash: str, out: Path) -> tuple[bool, str]:
 GH_ASSET_LIMIT = 2 * 1024 ** 3
 
 
+def _table_columns(out: Path) -> list[str] | None:
+    """번들 표의 컬럼 목록. 없으면 None (조용히 빈 목록을 주지 않는다)."""
+    f = out / "table.parquet"
+    if not f.exists():
+        return None
+    import pyarrow.parquet as pq
+    return list(pq.read_schema(f).names)
+
+
 def release_notes(b: dict) -> str:
     """BUNDLE.json 에서 릴리즈 노트를 만든다.
 
@@ -514,6 +523,9 @@ CUTLASS (NVIDIA, BSD-3-Clause) 는 이 번들에 포함되지 않는다.
         # 측정 노이즈 바닥. 소비 쪽이 재계산 없이 정답 허용치를 정할 수
         # 있어야 한다. 형상마다 다르므로 고정 1% 를 쓰면 안 된다.
         "noise_floor": _noise_coefficients(),
+        # 표에 실제로 있는 컬럼. 스키마 버전만으로는 "이 번들에 그 컬럼이
+        # 있나" 를 확인할 수 없다 — 버전이 같아도 export 시점이 다를 수 있다.
+        "table_columns": _table_columns(out),
         "soak": env.get("soak"),
         # 층별 형상. 층 C 는 sm_count 에서 M 을 역산하므로 GPU 마다 다르다.
         # 여러 번들을 합칠 때 공통 형상을 가려내려면 이 정보가 필요하다.
@@ -524,7 +536,10 @@ CUTLASS (NVIDIA, BSD-3-Clause) 는 이 번들에 포함되지 않는다.
                       "kerneltab_commit", "kerneltab_tree_hash",
                       "manifest_hash", "image_tag", "python_version")},
         "files": files,
-        "schema_version": 1,
+        # 2 = noise_floor 에 tick_ms(타이머 분해능) + 표에 distinct_time_frac.
+        #     소비 쪽이 **버전으로 판정**할 수 있어야 한다 — 필드 유무를
+        #     일일이 확인하게 두면 확인 안 한다.
+        "schema_version": 2,
     }
     (out / "BUNDLE.json").write_text(
         json.dumps(bundle, indent=2, ensure_ascii=False) + "\n")

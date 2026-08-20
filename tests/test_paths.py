@@ -173,3 +173,23 @@ def _cutlass_available() -> bool:
     except paths.PathError:
         return False
     return True
+
+
+def test_datasets_는_저장소_루트에서_찾는다():
+    """`datasets/` 는 패키지 밖이다 (`hwspec/`, `artifacts/` 와 같다).
+
+    패키지 이전 뒤 `resolve_bundle_path` 가 `PKG_ROOT/datasets` 를 보고 있어서
+    릴리즈 번들을 못 찾았다 — `launch_probe.cu` 와 같은 종류의 잔재다.
+    """
+    from kerneltab.core.bundle import BundleError, resolve_bundle_path
+    d = REPO / "datasets"
+    if not d.exists():
+        pytest.skip("datasets/ 가 없다 (배포 번들 미생성)")
+    names = [x.name for x in d.iterdir() if (x / "BUNDLE.json").exists()]
+    if not names:
+        pytest.skip("번들이 없다")
+    try:
+        got = resolve_bundle_path(names[0])
+    except BundleError as e:
+        pytest.fail(f"저장소 루트의 번들을 못 찾는다: {e}")
+    assert got == (d / names[0]).resolve()
