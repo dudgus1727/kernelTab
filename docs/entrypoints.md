@@ -3,7 +3,28 @@
 컨테이너는 "이미지 하나 + 인자로 동작 선택" 이어야 한다. 현재는 `scripts/` 에
 14 개 스크립트가 흩어져 있고 실행 순서가 README 에만 있다.
 
-**이 문서는 설계안이다. 구현하지 않았다.**
+**이 문서는 설계안이다. Python CLI 는 구현하지 않았다.**
+
+> ### 대신 컨테이너에 셸 shim 을 두었다 (2026-08-20)
+>
+> `docker/entrypoint.sh` 가 동사를 `scripts/*.py` 로 넘긴다.
+>
+> ```
+> kerneltab detect | build | drift | probe | rehearse | sweep | anchors
+>           export | bundle | validate | verify {smem,splitk,clock}
+>           manifest | watch | test
+> ```
+>
+> 아래의 통합 CLI(`kerneltab/cli.py`)를 만들지 **않은** 이유:
+>
+> * **resume 명령이 바뀌면 안 된다.** 30~40 시간짜리 측정이 중단됐을 때
+>   같은 명령으로 재개되어야 하고, `scripts/*.py` 경로가 그 계약이다.
+> * CLI 통합은 패키지 이전과 **독립적인 작업**이다. 한 커밋에 섞으면
+>   무엇이 무엇을 깼는지 알 수 없다.
+> * shim 은 패키지 코드를 전혀 건드리지 않는다. 컨테이너 밖 사용법
+>   (`python3 scripts/xxx.py`)이 그대로 남는다.
+>
+> 실행 절차는 `docs/container.md`.
 
 ---
 
