@@ -577,14 +577,40 @@ MIT 가 아니라 Apache-2.0 인 이유:
 tar 하나만 받은 사람도 조건과 인용에 필요한 측정 조건(`env_hash`, 클럭,
 실효 피크/대역폭)을 알 수 있다.
 
-## 컨테이너 태그 규칙
+## 컨테이너
 
-이미지 태그에 CUDA 버전과 CUTLASS 커밋을 포함한다.
+전체 절차는 **`docs/container.md`**. 요약하면:
+
+```bash
+./docker/build.sh                      # -> kerneltab:cu133-<해시8>
+mkdir -p $PWD/data/results $PWD/data/artifacts
+G=$(nvidia-smi -i 3 --query-gpu=uuid --format=csv,noheader)
+docker run --rm --gpus "\"device=$G\"" -v $PWD/data:/data \
+    --user $(id -u):$(id -g) kerneltab:cu133-xxxxxxxx \
+    detect --gpu $G --externally-locked-mhz 1350 --externally-locked-mem-mhz 7601
+```
+
+* **클럭 고정은 호스트에서** 한다. 컨테이너 안에서는 불가능하고
+  `--privileged` 로 뚫지 마라.
+* GPU 는 **UUID** 로 지정한다. `--gpus` 로 준 GPU 는 안에서 인덱스 0 이 된다.
+* `/data` 를 **통째로** 마운트한다. 하위 경로를 따로 붙이면 익명 볼륨이
+  끼어 결과가 사라질 수 있다.
+* 커널 `.so` 는 이미지에 굽지 않는다 — 아키텍처가 박히고 7.4 GB 다.
+
+### 태그 규칙
 
 ```
-kerneltab:cu129-cutlass-a1b2c3d
+kerneltab:cu133-a64516d7        # CUDA 버전 + manifest_hash 앞 8자리
 ```
 
-`latest` 태그는 쓰지 않는다. 재현성을 위해 조합을 태그로 식별한다.
+`latest` 는 쓰지 않는다. `manifest_hash` 는 nvcc / CUTLASS 커밋 /
+**소스 트리 해시** / Python 패키지 버전을 담으므로, 소스가 한 글자만 바뀌어도
+태그가 바뀐다. 즉 태그만 보면 이 데이터가 어떤 코드로 만들어졌는지
+결정된다.
+
+> ⚠️ **태그는 이미지 안에서 계산해야 한다.** 호스트에서
+> `manifest.py --tag` 을 돌리면 호스트의 nvcc 가 들어가 거짓 태그가 나온다.
+> `docker/build.sh` 가 이것을 처리한다.
+
 같은 이유로 `results/env.json` 이 CUDA/드라이버/CUTLASS 커밋/GPU UUID 를
 전부 기록하고, 모든 측정 줄이 그 해시를 참조한다.
