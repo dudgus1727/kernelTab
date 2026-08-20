@@ -63,6 +63,7 @@ case "${1:-help}" in
   validate)  shift; exec python3 /work/scripts/validate_table.py   "$@" ;;
   manifest)  shift; exec python3 /work/scripts/manifest.py         "$@" ;;
   watch)     shift; exec python3 /work/scripts/watch.py            "$@" ;;
+  status)    shift; exec python3 /work/scripts/sweep_status.py      "$@" ;;
   verify)
     shift
     case "${1:-}" in
@@ -91,7 +92,8 @@ kerneltab — CUTLASS GEMM (형상 x config) -> 성능 표 측정 하네스
   validate   무결성 검사
   verify     smem | splitk | clock
   manifest   빌드 매니페스트 / 이미지 태그
-  watch      진행 상태 (0=진행중 3=끝남 5=죽음)
+  watch      슬라이스 하나의 하트비트 (0=진행중 3=끝남 5=죽음)
+  status     스윕 전체 진행률 + 앵커 (읽기 전용, 측정 중 안전)
   test       테스트 (GPU 불필요)
 
 ⚠️ 클럭 고정은 **호스트에서** 한다. 컨테이너 안에서는 불가능하다
