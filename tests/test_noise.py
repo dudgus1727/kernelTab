@@ -9,6 +9,7 @@ import itertools
 
 import pytest
 
+from kerneltab.core import noise
 from kerneltab.core.noise import (
     SIGMA_ABS_MS,
     SIGMA_REL,
@@ -79,3 +80,43 @@ class TestCoefficientsTravel:
         assert c["sigma_rel"] == SIGMA_REL
         for k in ("gpu", "env_hash", "source", "model"):
             assert c.get(k), f"{k} 가 계수와 함께 전달되지 않는다"
+
+
+class TestTimerTick:
+    """★ 타이머 눈금보다 작은 차이는 **분해할 수 없다**.
+
+    G-7 중간 점검에서 슬라이스 내 이동이 `-6.49%` 로 나왔다. 음수(= start 가
+    느림)라 **냉시작 신호처럼 보였다** — 워밍업을 줄인 직후라 정확히
+    우려하던 자리였다. 확인해 보니 **눈금의 0.84 배**였다.
+
+        start  값 [13.312, 13.312, 13.312, 13.312]   <- 전부 같은 눈금
+        end    값 [12.288, 12.448, 13.312]
+        눈금 1.024us = 13.312us 의 7.69%
+
+    start 가 전부 정확히 같은 것이 양자화의 서명이다. 열이나 캐시 거동이면
+    그럴 수 없다.
+    """
+
+    def test_짧은_커널에서_눈금이_크다(self):
+        assert noise.tick_pct(0.013312) == pytest.approx(0.0769, abs=1e-3)
+        assert noise.tick_pct(0.0143) == pytest.approx(0.0716, abs=1e-3)
+
+    def test_긴_커널에서는_무시할_수_있다(self):
+        assert noise.tick_pct(2.9) < 0.001
+
+    def test_실측_사례가_눈금_하나_미만이다(self):
+        start, end = 0.013312, 0.012448
+        moved = abs(end / start - 1)
+        assert moved == pytest.approx(0.0649, abs=1e-3)
+        assert moved < noise.tick_pct(start), (
+            "이 차이는 눈금보다 작다 — 분해할 수 없다")
+
+    def test_관측값에서_양자를_추정한다(self):
+        vals = [0.013312, 0.013312, 0.014336, 0.012288, 0.014336]
+        assert noise.tick_ms_observed(vals) == pytest.approx(0.001024, abs=1e-9)
+
+    def test_값이_하나뿐이면_추정_못_한다(self):
+        assert noise.tick_ms_observed([0.5, 0.5]) is None
+
+    def test_0_이하는_무한대(self):
+        assert noise.tick_pct(0) == float("inf")

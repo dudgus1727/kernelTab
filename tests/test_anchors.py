@@ -305,3 +305,55 @@ def test_단조_판정은_중앙값이_아니라_평균으로_한다(tmp_path):
         "평균은 움직여야 한다 — 그렇지 않으면 이 테스트가 아무것도 안 잡는다")
     assert any("단조 증가" in f for f in rep.failures), (
         "중앙값으로 판정하면 여기서 드리프트를 놓친다")
+
+
+def test_슬라이스_이동이_중앙값_평균_눈금을_함께_낸다(tmp_path):
+    """중앙값만 내면 눈금 하나가 큰 이상 신호처럼 보인다.
+
+    실제로 `-6.49%` 가 눈금의 0.84 배였다. 평균은 눈금 사이를 분해한다.
+    """
+    tick, lo = 0.001024, 0.013312
+    arows, srows = [], []
+    t = T0
+    for rnd in range(4):
+        for seg in range(2):
+            t0 = t
+            for when in ("start", "end"):
+                # start 는 전부 같은 눈금, end 는 눈금을 걸친다 — 실측 모양.
+                vals = ([lo] * 5 if when == "start"
+                        else [lo - tick, lo - tick, lo, lo, lo])
+                for j, v in enumerate(vals):
+                    arows.append({
+                        "kernel_id": "k_short",
+                        "problem": {"M": 512, "N": 512, "K": 512},
+                        "time_ms": v, "segment": seg, "when": when,
+                        "env_hash": EH, "round": rnd,
+                        "timestamp": _iso(t0 + timedelta(
+                            seconds=5 + j if when == "start" else SLICE_S - 5)),
+                    })
+            t = t0 + timedelta(seconds=SLICE_S)
+            srows.append({"event": "slice", "round": rnd, "segment": seg,
+                          "rc": 0, "seconds": SLICE_S, "timestamp": _iso(t),
+                          "env_hash": EH})
+    (tmp_path / "anchors.jsonl").write_text(
+        "".join(json.dumps(r) + "\n" for r in arows))
+    (tmp_path / "sweep.jsonl").write_text(
+        json.dumps({"event": "sweep_start", "env_hash": EH,
+                    "timestamp": _iso(T0)}) + "\n"
+        + "".join(json.dumps(r) + "\n" for r in srows))
+
+    rep = _analyze(tmp_path)
+    assert rep.within_slice, "슬라이스 내 이동이 비어 있다"
+    kid, M, med, mean, tick_pct = rep.within_slice[0]
+    assert (kid, M) == ("k_short", 512)
+    assert tick_pct == pytest.approx(100 * tick / lo, abs=0.01)
+
+    # **중앙값은 눈금에 양자화된다.** 여기서는 start/end 중앙값이 같은
+    # 눈금에 떨어져 정확히 0 이 된다 — 실제로는 움직였는데도.
+    assert med == pytest.approx(0.0, abs=1e-9)
+
+    # **평균은 눈금 사이를 분해한다.** end 의 5개 중 2개가 한 눈금 아래이므로
+    # 평균은 -0.4 눈금만큼 움직인다.
+    assert mean == pytest.approx(-100 * 0.4 * tick / lo, rel=1e-6)
+    assert 0 < abs(mean) < tick_pct, (
+        "평균이 눈금 미만의 이동을 잡아야 이 검사가 의미가 있다")
