@@ -79,3 +79,97 @@ class TestNoAbsolutePathInRecords:
                         and node.slice.value == "so_path"):
                     offenders.append(f"{f.name}:{node.lineno}")
         assert not offenders, f"so_path 를 읽는 곳이 남아 있다: {offenders}"
+
+
+class TestNoStalePackagePaths:
+    """패키지 이전 뒤 남은 `<repo>/build`, `<repo>/core` 같은 경로를 잡는다.
+
+    `phase0_env.py` 가 `REPO_ROOT / "build" / "launch_probe.cu"` 를 그대로
+    들고 있었다. 이전 후 그 경로는 없다. **호스트에서는 아무도 안 밟았고
+    컨테이너에서 처음 터졌다** — `detect` 가 "빈 커널 런치 오버헤드" 단계에서
+    죽었다.
+
+    소스 트리를 옮길 때마다 이런 것이 남는다. grep 한 번이 아니라 **검사로
+    고정한다** (`docs/decisions.md` 13 의 여덟 번째).
+    """
+
+    MOVED = ("build", "core", "measure", "backends")
+
+    def test_no_repo_root_reference_to_moved_dirs(self):
+        import re
+        pat = re.compile(
+            r'(?:paths\.)?REPO_ROOT\s*/\s*["\'](' + "|".join(self.MOVED) + r')["\']')
+        offenders = []
+        for d in ("scripts", "kerneltab", "tests"):
+            for f in sorted((REPO / d).rglob("*.py")):
+                if f.name == "test_paths.py":
+                    continue          # 이 파일의 설명문이 패턴에 걸린다
+                for i, line in enumerate(f.read_text().splitlines(), 1):
+                    if pat.search(line):
+                        offenders.append(f"{f.relative_to(REPO)}:{i}: {line.strip()}")
+        assert not offenders, (
+            "패키지 이전 뒤 남은 경로다. 이 디렉토리들은 kerneltab/ 아래로 "
+            "옮겼으니 paths.PKG_ROOT 를 써라:\n  " + "\n  ".join(offenders))
+
+    def test_pkg_root_files_exist(self):
+        """`PKG_ROOT` 로 조립하는 실제 파일들이 있는지."""
+        for rel in ("build/launch_probe.cu", "measure/kt_ctx.cu",
+                    "measure/kt_abi.h"):
+            assert (paths.PKG_ROOT / rel).exists(), f"{rel} 이 없다"
+
+
+class TestKernelIncludes:
+    """생성된 커널 `.cu` 는 CUTLASS 만으로 컴파일되지 않는다.
+
+    `emit_cpp()` 결과가 `kt_swizzle.h` / `kt_abi.h` 를 include 한다.
+    `check_smem.py` 가 CUTLASS 경로만 주고 있어서 40개 전부
+    "BUILD FAIL / compilation terminated." 이 났다 — 그런데 그 메시지는
+    `stderr[-800:]` 로 잘려서 **진짜 원인이 안 보였다.**
+    """
+
+    def test_includes_measure_dir(self):
+        inc = paths.kernel_includes(paths.cutlass_dir(None)) \
+            if _cutlass_available() else paths.kernel_includes(Path("/x"))
+        assert any(str(paths.PKG_ROOT / "measure") in i for i in inc), (
+            "kernel_includes 에 measure/ 가 없다 — kt_swizzle.h 를 못 찾는다")
+
+    def test_emitted_source_needs_those_headers(self):
+        """실제로 생성된 소스가 그 헤더를 요구하는지 확인한다."""
+        from kerneltab.backends import get_backend
+        from kerneltab.core.types import KernelConfig
+        be = get_backend("sm_86")
+        cfg = KernelConfig(128, 128, 32, 8, 8, 8, "sm_86",
+                           be.ext_from_dict({"warp_m": 64, "warp_n": 64,
+                                             "warp_k": 32, "stages": 3,
+                                             "swizzle_type": "identity",
+                                             "swizzle_n": 1}))
+        src = be.emit_cpp(cfg)
+        needed = [h for h in ("kt_swizzle.h", "kt_abi.h") if f'"{h}"' in src]
+        assert needed, "emit_cpp 가 로컬 헤더를 안 쓴다면 이 검사는 낡았다"
+        for h in needed:
+            assert (paths.PKG_ROOT / "measure" / h).exists(), \
+                f"{h} 가 kerneltab/measure/ 에 없다"
+
+    def test_no_bare_cutlass_includes_for_kernel_builds(self):
+        """커널을 컴파일하는 곳이 `cutlass_includes` 만 쓰면 안 된다."""
+        import re
+        offenders = []
+        for f in sorted((REPO / "scripts").glob("*.py")) + \
+                sorted((REPO / "kerneltab").rglob("*.py")):
+            src = f.read_text()
+            if "emit_cpp" not in src:
+                continue
+            for i, line in enumerate(src.splitlines(), 1):
+                if re.search(r"paths\.cutlass_includes\(", line):
+                    offenders.append(f"{f.relative_to(REPO)}:{i}")
+        assert not offenders, (
+            "커널을 emit 해서 컴파일하는데 CUTLASS 경로만 준다. "
+            f"paths.kernel_includes() 를 써라: {offenders}")
+
+
+def _cutlass_available() -> bool:
+    try:
+        paths.cutlass_dir(None)
+    except paths.PathError:
+        return False
+    return True

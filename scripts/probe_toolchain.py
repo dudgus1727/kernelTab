@@ -253,8 +253,7 @@ def main() -> int:
     benv = BuildEnv(
         nvcc=str(nvcc), arch_flag=env["nvcc_arch_flag"], cutlass_dir=cutlass,
         src_dir=src, lib_dir=lib,
-        include_args=(*tuple(paths.cutlass_includes(cutlass)),
-                      f"-I{paths.REPO_ROOT / 'measure'}"),
+        include_args=tuple(paths.kernel_includes(cutlass)),
     )
 
     nv = nvcc_version(str(nvcc))

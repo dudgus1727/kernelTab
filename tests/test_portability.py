@@ -9,9 +9,18 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
-import tomllib
+
+try:                                    # Python 3.11+
+    import tomllib
+except ModuleNotFoundError:             # Python 3.10 — 컨테이너가 여기다
+    # ⚠️ `tomllib` 은 3.11 stdlib 이다. 이 파일이 그걸 무조건 import 하는
+    #    바람에 **3.10 에서 모듈이 통째로 수집 실패**했다 — 이식성을 검사하는
+    #    테스트가 이식성이 없었다. 컨테이너에서 실제로 돌려 보고서야 나왔다
+    #    (vermin 은 잡았지만 tests/ 를 대상에 넣고 돌린 적이 없었다).
+    import tomli as tomllib
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -86,10 +95,23 @@ class TestCutlassCommitInjection:
     버전이 **같은 해시**를 받는다.
     """
 
-    def _info(self, root, override):
+    def _info(self, root, override, env_commit=None):
         sys.path.insert(0, str(REPO / "scripts"))
         from phase0_env import cutlass_info
-        return cutlass_info(str(root), override)
+        old = os.environ.get("CUTLASS_COMMIT")
+        # ⚠️ 환경변수를 **명시적으로** 지운다. 이미지에는 CUTLASS_COMMIT 이
+        #    설정돼 있어서(Dockerfile), 지우지 않으면 "아무것도 모르는" 경우를
+        #    검사할 수 없다. 컨테이너에서 이 테스트가 실패해 알았다.
+        if env_commit is None:
+            os.environ.pop("CUTLASS_COMMIT", None)
+        else:
+            os.environ["CUTLASS_COMMIT"] = env_commit
+        try:
+            return cutlass_info(str(root), override)
+        finally:
+            os.environ.pop("CUTLASS_COMMIT", None)
+            if old is not None:
+                os.environ["CUTLASS_COMMIT"] = old
 
     @pytest.fixture
     def fake_cutlass(self, tmp_path):
@@ -104,10 +126,25 @@ class TestCutlassCommitInjection:
         assert i["commit_source"] == "injected"
 
     def test_unknown_is_marked_not_faked(self, fake_cutlass):
-        """★ 주입도 없고 .git 도 없으면 'unknown' 으로 **드러나야** 한다."""
+        """★ 주입도 없고 .git 도 환경변수도 없으면 'unknown' 으로 **드러나야** 한다."""
         i = self._info(fake_cutlass, None)
         assert i["commit"] is None
         assert i["commit_source"] == "unknown"
+
+    def test_env_var_fallback(self, fake_cutlass):
+        """컨테이너에서 git 이 막히면(dubious ownership) 여기서 건진다.
+
+        출처를 `env` 로 남긴다 — git 에서 읽은 것처럼 위장하면 나중에
+        신뢰도를 판단할 수 없다.
+        """
+        i = self._info(fake_cutlass, None, env_commit="d" * 40)
+        assert i["commit"] == "d" * 40
+        assert i["commit_source"] == "env"
+
+    def test_주입이_환경변수보다_우선한다(self, fake_cutlass):
+        i = self._info(fake_cutlass, "abc123def", env_commit="d" * 40)
+        assert i["commit"] == "abc123def"
+        assert i["commit_source"] == "injected"
 
     def test_real_repo_reports_git(self):
         from kerneltab.build import paths
@@ -125,12 +162,60 @@ class TestCutlassCommitInjection:
 class TestManifestInEnv:
     """수정 8 — manifest 를 env.json 에 기록하되 해시는 바꾸지 않는다."""
 
+    #: 합성 env. **실제 `results/env.json` 을 읽지 않는다** — 컨테이너에는
+    #: 그 파일이 없고(results/ 는 볼륨이다), 검사하려는 성질은 실제 데이터가
+    #: 필요하지 않다. 파일에 의존하면 컨테이너에서 이 검사가 통째로 죽는다.
+    ENV: ClassVar[dict] = {
+        "hardware": {"name": "X", "arch": "sm_86", "sm_count": 84},
+        "nvcc_arch_flag": "sm_86",
+        "protocol": {"min_warmup": 10},
+        "soak": {"enabled": True},
+        "segments": {"kernels": 500},
+        "clock_locked": True, "locked_mhz": 1350,
+        "mem_clock_locked": True, "locked_mem_mhz": 7601,
+        "peak_tflops_f16_effective": 120.0,
+        "bandwidth_gbps_effective": 700.0,
+        "shuffle_seed": 1234,
+        "cutlass": {"commit": "c" * 40},
+        "cuda": {"nvcc_version": "13.3.73"},
+    }
+
     def test_manifest_does_not_change_hash(self):
         from kerneltab.core.env_hash import env_hash_v2
-        env = json.loads((REPO / "results" / "env.json").read_text())
-        env.pop("manifest", None)
+        env = dict(self.ENV)
         before = env_hash_v2(env)
         env["manifest"] = {"kerneltab_tree_hash": "x" * 40,
                            "manifest_hash": "y" * 40}
         assert env_hash_v2(env) == before, (
             "manifest 가 해시를 바꾸면 코드 한 글자 수정에도 재측정해야 한다")
+
+    def test_실제_env_json_에도_성립한다(self):
+        """있으면 실제 데이터로도 확인한다 (합성 env 가 현실과 다를 수 있다)."""
+        from kerneltab.build import paths
+        from kerneltab.core.env_hash import env_hash_v2
+        f = paths.RESULTS_DIR / "env.json"
+        if not f.exists():
+            pytest.skip(f"{f} 가 없다 (컨테이너 정상)")
+        env = json.loads(f.read_text())
+        env.pop("manifest", None)
+        before = env_hash_v2(env)
+        env["manifest"] = {"kerneltab_tree_hash": "x" * 40}
+        assert env_hash_v2(env) == before
+
+    def test_합성_env_가_실제_키를_전부_덮는다(self):
+        """★ 합성 env 가 낡으면 검사가 조용히 약해진다."""
+        from kerneltab.core.env_hash import ENV_HASH_KEYS_V2
+        missing = []
+        for k in ENV_HASH_KEYS_V2:
+            cur, ok = self.ENV, True
+            for part in k.split("."):
+                if isinstance(cur, dict) and part in cur:
+                    cur = cur[part]
+                else:
+                    ok = False
+                    break
+            if not ok:
+                missing.append(k)
+        assert not missing, (
+            f"합성 env 에 없는 해시 키: {missing}. ENV_HASH_KEYS_V2 가 "
+            "늘어났으면 위 ENV 도 함께 채워라.")

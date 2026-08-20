@@ -87,7 +87,7 @@ def main() -> int:
         exe = workdir / kid
         cmd = [
             str(paths.nvcc_path()), "-std=c++17", f"-arch={arch}", "-O0",
-            "-DKT_NO_IMPL", *paths.cutlass_includes(cutlass),
+            "-DKT_NO_IMPL", *paths.kernel_includes(cutlass),
             str(src), "-o", str(exe),
         ]
         p = subprocess.run(cmd, capture_output=True, text=True)

@@ -43,7 +43,7 @@ class BuildEnv:
         lib = paths.ARTIFACT_DIR / "lib"
         src.mkdir(parents=True, exist_ok=True)
         lib.mkdir(parents=True, exist_ok=True)
-        inc = (*tuple(paths.cutlass_includes(cutlass)), f"-I{paths.PKG_ROOT / 'measure'}")
+        inc = tuple(paths.kernel_includes(cutlass))
         return BuildEnv(
             nvcc=env["cuda"]["nvcc_path"],
             arch_flag=env["nvcc_arch_flag"],

@@ -88,10 +88,25 @@ def cutlass_dir(explicit: str | os.PathLike | None = None) -> Path:
 
 
 def cutlass_includes(root: Path) -> list[str]:
+    """CUTLASS 헤더만. **커널 소스를 컴파일할 때는 `kernel_includes()` 를 써라.**"""
     return [
         f"-I{root / 'include'}",
         f"-I{root / 'tools' / 'util' / 'include'}",
     ]
+
+
+def kernel_includes(root: Path) -> list[str]:
+    """생성된 커널 `.cu` 를 컴파일하는 데 필요한 include 전부.
+
+    `emit_cpp()` 결과는 `kt_swizzle.h` / `kt_abi.h` 를 include 하므로
+    `kerneltab/measure/` 가 반드시 들어가야 한다. CUTLASS 경로만 주면
+    **`fatal error: kt_swizzle.h: No such file or directory`** 로 죽는다.
+
+    실제로 `check_smem.py` 가 CUTLASS 경로만 주고 있어서 40개 전부
+    "BUILD FAIL / compilation terminated." 이 났다. 조립을 여러 곳에서
+    따로 하면 이렇게 된다 — 그래서 여기 하나로 모은다.
+    """
+    return [*cutlass_includes(root), f"-I{PKG_ROOT / 'measure'}"]
 
 
 def nvcc_path() -> Path:

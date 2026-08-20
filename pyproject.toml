@@ -33,7 +33,12 @@ dependencies = [
 export = []
 consumer = []
 # 테스트는 GPU 를 전혀 쓰지 않는다 (docs/testing.md)
-test = ["pytest>=8"]
+test = [
+    "pytest>=8",
+    # tomllib 은 3.11 stdlib 이다. 컨테이너는 ubuntu22.04 = Python 3.10 이라
+    # 백포트가 필요하다. 없으면 test_portability.py 가 수집조차 안 된다.
+    'tomli>=2 ; python_version < "3.11"',
+]
 # 리포트 그림
 plots = ["matplotlib>=3.7"]
 dev = ["ruff", "vermin", "uv"]

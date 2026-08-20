@@ -12,6 +12,8 @@ import pytest
 from kerneltab.core.env_hash import (
     ENV_HASH_KEYS_V2,
     EXCLUDED_WITH_REASON,
+    REQUIRED_V2,
+    EnvHashIncomplete,
     env_hash_v2,
     hash_inputs,
 )
@@ -116,3 +118,56 @@ class TestDocumentation:
         assert set(inp) == set(ENV_HASH_KEYS_V2)
         assert inp["locked_mhz"] == 1350
         assert inp["cutlass.commit"] == "abc123"
+
+
+class TestRequiredFields:
+    """★ 필수 값이 비면 **예외**여야 한다.
+
+    컨테이너에서 `--user` 로 돌렸더니 git 이 root 소유 `/opt/cutlass` 를
+    "dubious ownership" 으로 거부했고, `cutlass.commit` 이 `null` 인
+    `env.json` 이 만들어졌다. 그 상태로 해시를 계산하면 **CUTLASS 버전을
+    바꿔도 같은 env_hash** 가 나온다. 격리 경계가 통째로 뚫린다.
+
+    조용히 계산해 주는 쪽이 더 나쁘다 — 아무 오류도 없이 데이터가 섞인다.
+    """
+
+    def _env(self, **over):
+        e = {
+            "hardware": {"name": "X", "arch": "sm_86"},
+            "nvcc_arch_flag": "sm_86",
+            "cutlass": {"commit": "c" * 40},
+            "cuda": {"nvcc_version": "13.3.73"},
+        }
+        e.update(over)
+        return e
+
+    def test_정상이면_해시가_나온다(self):
+        assert len(env_hash_v2(self._env())) == 64
+
+    @pytest.mark.parametrize("path", list(REQUIRED_V2))
+    def test_필수_키가_비면_예외(self, path):
+        e = self._env()
+        cur = e
+        parts = path.split(".")
+        for p in parts[:-1]:
+            cur = cur[p]
+        cur[parts[-1]] = None
+        with pytest.raises(EnvHashIncomplete) as ex:
+            env_hash_v2(e)
+        assert path in str(ex.value)
+
+    def test_cutlass_commit_이_null_이면_다른_버전이_충돌한다(self):
+        """왜 예외여야 하는지 — 예외가 없다면 이 단언이 성립한다."""
+        a = self._env(cutlass={"commit": None, "version": "4.7.0"})
+        b = self._env(cutlass={"commit": None, "version": "2.11.0"})
+        assert hash_inputs(a)["cutlass.commit"] == hash_inputs(b)["cutlass.commit"]
+        for e in (a, b):
+            with pytest.raises(EnvHashIncomplete):
+                env_hash_v2(e)
+
+    def test_선택_키는_비어도_된다(self):
+        """고정하지 않은 클럭 등은 정상적으로 비어 있다."""
+        e = self._env()
+        e["locked_mem_mhz"] = None
+        e["soak"] = None
+        assert len(env_hash_v2(e)) == 64

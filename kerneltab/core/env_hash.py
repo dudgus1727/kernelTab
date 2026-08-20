@@ -31,7 +31,27 @@ from __future__ import annotations
 import hashlib
 import json
 
-__all__ = ["ENV_HASH_KEYS_V2", "canonical_hash", "env_hash_v2", "hash_inputs"]
+__all__ = ["ENV_HASH_KEYS_V2", "EnvHashIncomplete", "canonical_hash",
+           "env_hash_v2", "hash_inputs"]
+
+
+class EnvHashIncomplete(ValueError):
+    """해시에 반드시 들어가야 하는 값이 비어 있다."""
+
+
+#: **비어 있으면 안 되는** 키. 이 값들이 `null` 이면 서로 다른 조건이 같은
+#: 해시를 받는다 — 그리고 아무 오류도 나지 않는다.
+#:
+#: 실제로 밟았다. 컨테이너에서 `--user` 로 돌렸더니 git 이 `/opt/cutlass`
+#: 를 "dubious ownership" 으로 거부했고, `cutlass.commit` 이 `null` 인
+#: `env.json` 이 만들어졌다. 그 상태로 측정했으면 **CUTLASS 버전을 바꿔도
+#: 같은 env_hash** 가 나온다. 격리 경계가 뚫리는 것이다.
+REQUIRED_V2: tuple[str, ...] = (
+    "hardware",
+    "nvcc_arch_flag",
+    "cutlass.commit",
+    "cuda.nvcc_version",
+)
 
 #: 해시에 들어가는 것. `(env 키, 하위 경로)` — 하위 경로는 점으로 구분한다.
 ENV_HASH_KEYS_V2: tuple[str, ...] = (
@@ -87,5 +107,19 @@ def canonical_hash(obj) -> str:
 
 
 def env_hash_v2(env: dict) -> str:
-    """조건이 같으면 **몇 번을 다시 계산해도 같은 값**이 나와야 한다."""
-    return canonical_hash(hash_inputs(env))
+    """조건이 같으면 **몇 번을 다시 계산해도 같은 값**이 나와야 한다.
+
+    필수 키가 비어 있으면 `EnvHashIncomplete` 다. 조용히 계산해 주면 서로
+    다른 조건이 같은 해시를 받는다 — `env_hash` 는 조인 키가 아니라 **격리
+    경계**이므로 그 순간 모든 보호가 무의미해진다.
+    """
+    inputs = hash_inputs(env)
+    missing = [k for k in REQUIRED_V2 if not inputs.get(k)]
+    if missing:
+        raise EnvHashIncomplete(
+            f"env_hash 에 필요한 값이 비어 있다: {missing}\n"
+            "  이 상태로 해시를 만들면 다른 조건이 같은 해시를 받는다.\n"
+            "  cutlass.commit 이면: .git 을 읽을 수 없는 환경이다 "
+            "(컨테이너에서 흔하다). phase0_env.py --cutlass-commit 으로 "
+            "주입하거나 CUTLASS_COMMIT 환경변수를 설정하라.")
+    return canonical_hash(inputs)

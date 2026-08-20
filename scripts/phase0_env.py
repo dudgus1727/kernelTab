@@ -158,15 +158,22 @@ def cutlass_info(explicit: str | None, commit_override: str | None = None) -> di
                 dep_hits.append(f"{rel}:{i}: {line.strip()[:120]}")
 
     detected = commit.strip() if rc == 0 else None
+    src = "git" if detected else None
     if not detected and commit_override:
-        detected = commit_override.strip()
+        detected, src = commit_override.strip(), "injected"
+    if not detected:
+        # 이미지가 자기 CUTLASS 커밋을 환경변수로 들고 있다 (Dockerfile).
+        # `--user` 로 돌리면 git 이 root 소유 저장소를 "dubious ownership"
+        # 으로 거부해 rc != 0 이 된다 — 그때 여기서 건진다.
+        env_commit = os.environ.get("CUTLASS_COMMIT", "").strip()
+        if env_commit and env_commit != "unknown":
+            detected, src = env_commit, "env"
     return {
         "dir": str(root),
         "commit": detected,
         # 어떻게 알아냈는지 남긴다. 주입한 값을 git 에서 읽은 것처럼
         # 보이게 하면 나중에 신뢰도를 판단할 수 없다.
-        "commit_source": ("git" if rc == 0 else
-                          ("injected" if commit_override else "unknown")),
+        "commit_source": src or "unknown",
         "describe": desc.strip() if rc3 == 0 else None,
         "version": ver,
         # 빌드에 영향을 주는 것 = 추적 파일의 수정. 이것이 true 면 commit
@@ -267,7 +274,7 @@ def pynvml_info() -> dict:
 
 def measure_launch_overhead(arch_flag: str) -> dict:
     paths.ensure_dirs()
-    src = REPO_ROOT / "build" / "launch_probe.cu"
+    src = paths.PKG_ROOT / "build" / "launch_probe.cu"
     exe = paths.ARTIFACT_DIR / "launch_probe"
     cmd = [
         str(paths.nvcc_path()),
@@ -285,6 +292,14 @@ def measure_launch_overhead(arch_flag: str) -> dict:
     if rc != 0:
         raise RuntimeError(f"launch_probe 실행 실패:\n{out}")
     return json.loads(out.splitlines()[-1])
+
+
+def _first_errors(out: str, n: int = 8) -> str:
+    """컴파일러 출력에서 **오류 줄만** 앞에서부터 추린다."""
+    hits = [ln for ln in out.splitlines()
+            if ("error" in ln.lower() or "Permission denied" in ln)
+            and "warning" not in ln.lower()]
+    return "\n".join(hits[:n]) if hits else out[:1500]
 
 
 def sanity_check_example(cutlass_root: Path, arch_flag: str) -> dict:
@@ -316,10 +331,15 @@ def sanity_check_example(cutlass_root: Path, arch_flag: str) -> dict:
     ]
     rc, out = run(cmd)
     if rc != 0:
-        return {"ok": False, "stage": "compile", "error": out[-4000:]}
+        # ⚠️ **첫 오류를 앞에 둔다.** nvcc 는 오류를 먼저 찍고 그 뒤로 CUTLASS
+        #    헤더 경고를 수천 줄 쏟는다. 꼬리만 남기면 진짜 원인이 잘려
+        #    나간다 — 실제로 "권한 없음" 한 줄을 찾는 데 한참 걸렸다.
+        return {"ok": False, "stage": "compile",
+                "error": _first_errors(out) + "\n...\n" + out[-2000:]}
     rc, out = run([str(exe)])
     if rc != 0:
-        return {"ok": False, "stage": "run", "error": out[-4000:]}
+        return {"ok": False, "stage": "run",
+                "error": _first_errors(out) + "\n...\n" + out[-2000:]}
     passed = out.count("Disposition: Passed")
     failed = out.count("Disposition: Failed")
     gflops = [float(x) for x in re.findall(r"GFLOPs:\s*([\d.]+)", out)]
@@ -362,6 +382,11 @@ def canonical_hash(obj: dict) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--device", type=int, default=0, help="사용할 GPU 인덱스")
+    ap.add_argument("--gpu", default=None, metavar="UUID",
+                    help="GPU 를 **UUID 로** 지정한다. 인덱스는 "
+                         "CUDA_VISIBLE_DEVICES 와 컨테이너 --gpus 를 거치며 "
+                         "뜻이 바뀌므로, 컨테이너에서는 반드시 이쪽을 쓸 것. "
+                         "찾지 못하면 0번으로 떨어지지 않고 **실패한다** (P-2)")
     ap.add_argument("--cutlass", default=None, help="CUTLASS 저장소 경로")
     ap.add_argument("--cutlass-commit", default=None,
                     help="CUTLASS 에 .git 이 없을 때 커밋 해시를 주입한다 "
@@ -382,6 +407,14 @@ def main() -> int:
     args = ap.parse_args()
 
     # 물리 GPU 를 이 프로세스와 모든 자식(nvcc 산출물 포함)에 고정한다.
+    if args.gpu:
+        # UUID -> 인덱스. 없으면 DeviceNotFoundError 가 보이는 GPU 목록과
+        # 함께 죽는다. 조용히 0번을 쓰면 **다른 GPU 를 측정하고 그 조건을
+        # env.json 에 적는다** — 되돌릴 수 없는 오염이다 (P-2).
+        from kerneltab.core import device as _device
+        args.device = _device.index_of_uuid(args.gpu)
+        print(f"[gpu] UUID {args.gpu[:24]}... -> 인덱스 {args.device}")
+
     # 이후 CUDA 관점의 device 0 == 물리 args.device.
     smi = gpu_smi_info(args.device)
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.device)

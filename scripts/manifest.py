@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import platform
 import re
 import subprocess
@@ -63,17 +64,49 @@ def nvcc_info() -> tuple[str | None, str | None]:
     return (m.group(1), m.group(2)) if m else (None, None)
 
 
-def git_info(root: Path) -> dict:
-    """커밋 + worktree 상태. dirty 면 커밋만으로는 재현되지 않는다."""
+def git_info(root: Path, env_var: str | None = None) -> dict:
+    """커밋 + worktree 상태. dirty 면 커밋만으로는 재현되지 않는다.
+
+    컨테이너 안에는 `.git` 이 없다 (일부러 넣지 않는다 — 크고, 컨텍스트에
+    따라 dirty 가 달라져 레이어 캐시가 무의미해진다). 그때는 빌드 인자로
+    주입한 값을 쓰되 **어떻게 알아냈는지 남긴다.** 주입한 값을 git 에서
+    읽은 것처럼 보이게 하면 나중에 신뢰도를 판단할 수 없다.
+    """
     rc, commit = run(["git", "-C", str(root), "rev-parse", "HEAD"])
     rc2, dirty = run(["git", "-C", str(root), "status", "--porcelain"])
     if rc != 0:
-        return {"commit": None, "dirty": None, "error": commit[:200]}
+        injected = os.environ.get(env_var or "", "").strip()
+        if injected and injected != "unknown":
+            return {"commit": injected, "commit_source": "injected",
+                    "dirty": None, "dirty_files": None}
+        return {"commit": None, "commit_source": "unknown",
+                "dirty": None, "error": commit[:200]}
     return {
         "commit": commit.strip(),
+        "commit_source": "git",
         "dirty": bool(dirty.strip()) if rc2 == 0 else None,
         "dirty_files": len(dirty.strip().splitlines()) if rc2 == 0 else None,
     }
+
+
+class ManifestError(RuntimeError):
+    pass
+
+
+#: `tree_hash` 가 훑는 소스. **패턴이 0개를 맞으면 예외다** (아래 참조).
+TREE_HASH_PATTERNS = (
+    "kerneltab/*.py",
+    "kerneltab/core/*.py",
+    "kerneltab/backends/*.py",
+    "kerneltab/build/*.py",
+    "kerneltab/build/*.cu",
+    "kerneltab/measure/*.py",
+    "kerneltab/measure/*.cu",
+    "kerneltab/measure/*.h",
+    "scripts/*.py",
+    "hwspec/*.json",
+    "pyproject.toml",
+)
 
 
 def tree_hash(root: Path) -> str:
@@ -83,12 +116,26 @@ def tree_hash(root: Path) -> str:
     코드다. 실제 파일 내용을 해싱해 그 구멍을 막는다.
     """
     h = hashlib.sha256()
-    pats = ("core/*.py", "backends/*.py", "build/*.py", "build/*.cu",
-            "measure/*.py", "measure/*.cu", "measure/*.h", "scripts/*.py",
-            "hwspec/*.json", "pyproject.toml")
     files: list[Path] = []
-    for pat in pats:
-        files.extend(sorted(root.glob(pat)))
+    empty: list[str] = []
+    for pat in TREE_HASH_PATTERNS:
+        got = sorted(root.glob(pat))
+        if not got:
+            empty.append(pat)
+        files.extend(got)
+    if empty:
+        # ⛔ **조용히 넘어가면 안 된다.** 패턴이 하나도 안 맞으면 해시는
+        #    여전히 그럴듯한 값이 나오지만 그 소스는 태그에 반영되지 않는다.
+        #    즉 코드를 고쳐도 이미지 태그가 그대로다 — "같은 태그, 다른 코드".
+        #
+        #    실제로 밟았다. 패키지 이전(core/ -> kerneltab/core/) 뒤에
+        #    10개 패턴 중 **7개가 0개**를 맞았고, tree_hash 는 scripts/ 와
+        #    pyproject.toml 만 보고 있었다. 오류는 나지 않았다.
+        raise ManifestError(
+            "tree_hash 패턴이 파일을 하나도 못 찾았다: " + ", ".join(empty)
+            + f"\n  (root={root})\n"
+            "  소스가 옮겨졌다면 TREE_HASH_PATTERNS 를 함께 고쳐라. "
+            "그러지 않으면 코드가 바뀌어도 이미지 태그가 그대로다.")
     for f in sorted(files):
         h.update(str(f.relative_to(root)).encode())
         h.update(f.read_bytes())
@@ -116,16 +163,19 @@ def build(cutlass_dir: str | None = None) -> dict:
     except Exception:
         cutlass_root = None
 
-    cutlass_git = git_info(cutlass_root) if cutlass_root else {"commit": None}
-    kt_git = git_info(REPO_ROOT)
+    cutlass_git = (git_info(cutlass_root, "CUTLASS_COMMIT") if cutlass_root
+                   else {"commit": None, "commit_source": "unknown"})
+    kt_git = git_info(REPO_ROOT, "KERNELTAB_COMMIT")
 
     m = {
         "cuda_version": release,
         "nvcc_version": version,
         "cutlass_commit": cutlass_git.get("commit"),
+        "cutlass_commit_source": cutlass_git.get("commit_source"),
         "cutlass_dirty": cutlass_git.get("dirty"),
         "cutlass_dir": str(cutlass_root) if cutlass_root else None,
         "kerneltab_commit": kt_git.get("commit"),
+        "kerneltab_commit_source": kt_git.get("commit_source"),
         "kerneltab_dirty": kt_git.get("dirty"),
         "kerneltab_tree_hash": tree_hash(REPO_ROOT),
         "python_version": platform.python_version(),

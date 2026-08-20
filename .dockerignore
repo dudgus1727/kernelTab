@@ -1,0 +1,12 @@
+# 빌드 컨텍스트에서 제외한다. 없으면 7.4 GB 커널과 1 GB 측정 결과를
+# 데몬으로 전송한다 (빌드가 몇 분 느려지고 레이어 캐시가 무의미해진다).
+artifacts/
+results/
+datasets/
+.git/
+__pycache__/
+**/__pycache__/
+*.egg-info/
+.venv/
+venv/
+docs/img/
