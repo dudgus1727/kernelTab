@@ -45,23 +45,34 @@ def main() -> int:
     eh = (a.env_hash or env.get("env_hash") or records.ALL)[:8]
 
     # --- sweep.jsonl ---------------------------------------------------------
+    # ⚠️ **한 env_hash 안에 여러 실행이 있을 수 있다.** G-7(검증)과 G-8(전수)은
+    #    같은 조건이므로 같은 env_hash 를 쓰고, 그래야 재개가 된다. 그런데
+    #    진행률·속도를 통째로 합치면 틀린다 — 실제로 첫 30분 보고가
+    #    "150,868 측정, 86.3/s" 라고 나왔다. 그 중 120,000 은 G-7 것이고
+    #    86.3/s 는 물리적으로 불가능한 값이다 (실측 14~17/s).
+    #
+    #    **누적**(캠페인 완료율)과 **이번 실행**(속도/ETA)을 나눠 센다.
     sw = paths.RESULTS_DIR / "sweep.jsonl"
-    start, slices, done_ev = None, [], None
-    cur = ""
+    runs, cur = [], ""
     for r in records.iter_records(sw, records.ALL):
         ev = r.get("event")
         if ev == "sweep_start":
             cur = str(r.get("env_hash") or "")
             if cur.startswith(eh):
-                start = r
+                runs.append({"start": r, "slices": [], "done": None})
+        elif not runs:
+            continue
         elif ev == "slice" and (str(r.get("env_hash") or "") or cur).startswith(eh):
-            slices.append(r)
+            runs[-1]["slices"].append(r)
         elif ev == "sweep_done" and str(r.get("env_hash") or cur).startswith(eh):
-            done_ev = r
-    if not start:
+            runs[-1]["done"] = r
+    if not runs:
         print(f"env_hash={eh} 의 sweep_start 가 없다. 아직 시작 안 했다.")
         return 2
-
+    start = runs[-1]["start"]
+    slices = runs[-1]["slices"]
+    done_ev = runs[-1]["done"]
+    prev_slices = sum(len(x["slices"]) for x in runs[:-1])
     n_seg = start.get("n_segments")
     n_jobs = start.get("n_jobs") or 0
     t0 = _ts(start.get("timestamp"))
@@ -73,8 +84,9 @@ def main() -> int:
     per_round = Counter(int(s.get("round", 0)) for s in slices)
     rc = Counter(s.get("rc") for s in slices)
 
-    # --- results.jsonl 로 실제 측정 줄 수 -----------------------------------
-    n_rows = 0
+    # --- results.jsonl -------------------------------------------------------
+    # 누적은 캠페인 완료율, 이번 실행분은 속도/ETA 의 분자다.
+    n_rows = n_run = 0
     st = Counter()
     warm = []
     for r in records.iter_records(paths.RESULTS_DIR / "results.jsonl", eh):
@@ -82,8 +94,11 @@ def main() -> int:
         st[r.get("status")] += 1
         if r.get("n_warmup") is not None:
             warm.append(r["n_warmup"])
+        ts = _ts(r.get("timestamp"))
+        if t0 and ts and ts >= t0:
+            n_run += 1
 
-    rate = n_rows / max((now - t0).total_seconds(), 1) if t0 else 0
+    rate = n_run / max((now - t0).total_seconds(), 1) if t0 else 0
     remain = max(n_jobs - n_rows, 0)
     eta = remain / rate / 3600 if rate > 0 else float("nan")
 
@@ -91,8 +106,11 @@ def main() -> int:
     print(f"  시작 {start.get('timestamp')}  경과 {elapsed:.1f}h  "
           f"(마지막 슬라이스 {(now - last).total_seconds() / 60:.0f}분 전)"
           if last else "")
-    print(f"  측정 {n_rows:,} / {n_jobs:,} ({100 * n_rows / max(n_jobs, 1):.1f}%)"
-          f"   {rate:.1f}/s   ETA {eta:.1f}h")
+    print(f"  누적 {n_rows:,} / {n_jobs:,} "
+          f"({100 * n_rows / max(n_jobs, 1):.1f}%)"
+          + (f"   [이전 실행 {len(runs) - 1}회, 슬라이스 {prev_slices}]"
+             if len(runs) > 1 else ""))
+    print(f"  이번 실행 {n_run:,}줄   {rate:.1f}/s   ETA {eta:.1f}h")
     print(f"  라운드 {rounds}  슬라이스 {len(slices)}  "
           f"(라운드별 {dict(sorted(per_round.items()))})")
     print(f"  슬라이스 종료코드 {dict(rc)}   "
@@ -103,8 +121,13 @@ def main() -> int:
         print(f"  워밍업 최소 {min(warm)} 중앙 {int(statistics.median(warm))} "
               f"0회 {z}건" + ("  ⛔" if z else ""))
     if done_ev:
-        print(f"  ** sweep_done: 라운드 {done_ev.get('rounds')}, "
+        print(f"  ** 이번 실행 종료: 라운드 {done_ev.get('rounds')}, "
               f"{done_ev.get('hours')}h **")
+    for i, x in enumerate(runs[:-1]):
+        d = x["done"]
+        print(f"  (이전 실행 {i + 1}: 슬라이스 {len(x['slices'])}"
+              + (f", 라운드 {d.get('rounds')}, {d.get('hours')}h" if d else ", 미완")
+              + ")")
 
     # --- 텔레메트리 ---------------------------------------------------------
     tf = paths.RESULTS_DIR / "telemetry.csv"
