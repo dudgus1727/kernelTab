@@ -56,6 +56,7 @@ case "${1:-help}" in
   sweep)     shift; exec python3 /work/scripts/sweep.py            "$@" ;;
   anchors)   shift; exec python3 /work/scripts/check_anchors.py    "$@" ;;
   gate)      shift; exec python3 /work/scripts/gate_g7.py           "$@" ;;
+  recheck)   shift; exec python3 /work/scripts/recheck_stability.py "$@" ;;
   overhead)  shift; exec python3 /work/scripts/report_overhead.py   "$@" ;;
   warmup)    shift; exec python3 /work/scripts/verify_warmup.py     "$@" ;;
   export)    shift; exec python3 /work/scripts/export.py           "$@" ;;
@@ -85,6 +86,7 @@ kerneltab — CUTLASS GEMM (형상 x config) -> 성능 표 측정 하네스
   sweep      전수 측정 (세그먼트 라운드 로빈)
   anchors    앵커 판정 (세그먼트 간 계통 오차)
   gate       G-7 재현성 검증 5항목을 한 번에 (전수 전 필수)
+  recheck    재현성 재측정 -> stability.json (gate 5번의 입력)
   overhead   예비/워밍업 오버헤드 실측
   warmup     워밍업 시간 예산이 측정값을 바꾸지 않는지
   export     results/*.jsonl -> table.parquet

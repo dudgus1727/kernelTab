@@ -93,7 +93,7 @@ def main() -> int:
         return 2
     rep = anchors.analyze(rows, rnd, eh, round_source=src, n_slices=n_sl)
 
-    checks, verdicts = [], []
+    checks, verdicts, diffs = [], [], []
 
     # --- 1, 2: core/anchors 가 판정한다 ------------------------------------
     seg_fail = [f for f in rep.failures if "세그먼트 간 편차" in f]
@@ -174,30 +174,41 @@ def main() -> int:
                        f"{int(statistics.median(warms))}"))
 
     # --- 5: 재현성 ----------------------------------------------------------
-    f = paths.RESULTS_DIR / "repro.jsonl"
-    first = {}
-    for d in records.iter_records(paths.RESULTS_DIR / "results.jsonl", eh):
-        if d.get("kernel_id") == "cublas" or not d.get("time_ms"):
-            continue
-        p, rt = d["problem"], d["runtime"]
-        first.setdefault((d["kernel_id"], p["M"], p["N"], p["K"],
-                          rt["split_k"], rt["split_k_mode"]), d["time_ms"])
-    diffs = []
-    for d in records.iter_records(f, eh):
-        p, rt = d.get("problem"), d.get("runtime")
-        if not p or not rt or not d.get("time_ms"):
-            continue
-        t0 = first.get((d["kernel_id"], p["M"], p["N"], p["K"],
-                        rt["split_k"], rt["split_k_mode"]))
-        if t0:
-            diffs.append(abs(d["time_ms"] - t0) / t0)
-    if not diffs:
-        checks.append(("5. 재현성", False, "재측정 기록이 없다 — **검사 못 함**"))
+    # ⚠️ **스윕은 재현성을 재지 않는다.** `rehearse.py` 는 `--all` 모드에서
+    #    `reproducibility()` 를 건너뛴다 (재측정이 results.jsonl 에 중복
+    #    줄을 남기고 시간을 쓰기 때문이다). 그래서 이 항목은 스윕만으로는
+    #    **영원히 채워지지 않는다.**
+    #
+    #    G-7 은 두 단계다:  sweep --max-rounds 4   ->   recheck_stability
+    #    후자가 results/stability.json 을 만든다. 그 파일이 없으면
+    #    "검사 못 함" 이고, **검사 못 한 것은 통과가 아니다.**
+    sf = paths.RESULTS_DIR / "stability.json"
+    if not sf.exists():
+        checks.append(("5. 재현성", False,
+                       f"{sf.name} 이 없다 — **검사 못 함**. "
+                       "`recheck_stability.py` 를 먼저 돌려라 "
+                       "(스윕은 재현성을 재지 않는다)"))
     else:
-        over = [d for d in diffs if d > REPRO_TOL]
-        checks.append(("5. 재현성", not over,
-                       f"{len(diffs)}개 재측정, {REPRO_TOL:.0%} 초과 "
-                       f"{len(over)}건, 최대 {100 * max(diffs):.2f}%"))
+        try:
+            sd = json.loads(sf.read_text())
+        except (OSError, json.JSONDecodeError) as e:
+            sd = None
+            checks.append(("5. 재현성", False, f"{sf.name} 읽기 실패: {e!r}"))
+        if sd is not None:
+            over = int(sd.get("over_5pct") or 0)
+            nc = int(sd.get("n_combos") or 0)
+            if not nc:
+                checks.append(("5. 재현성", False,
+                               "조합 0개 — **검사 못 함**"))
+            else:
+                checks.append(("5. 재현성", over == 0,
+                               f"{nc}개 조합 x {sd.get('passes')}회, "
+                               f"{REPRO_TOL:.0%} 초과 {over}건, "
+                               f"변동폭 중앙 "
+                               f"{100 * (sd.get('spread_median') or 0):.2f}% "
+                               f"최대 "
+                               f"{100 * (sd.get('spread_max') or 0):.2f}%"))
+                diffs = [sd.get("spread_max") or 0]
 
     # --- 출력 ---------------------------------------------------------------
     print(f"G-7 재현성 검증  env_hash={eh}  "

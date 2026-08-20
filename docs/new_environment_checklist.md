@@ -258,9 +258,16 @@ smem 한계, 레지스터 한계, split-k 동작, 커널 필터가 축을 통째
 것과 달라지는 순간 이 게이트는 의미가 없다.
 
 ```bash
-python3 scripts/sweep.py --max-rounds 4
-python3 scripts/check_anchors.py; echo "exit=$?"
+kerneltab sweep --slice-jobs 2000 --max-rounds 4    # ~2.5시간
+kerneltab recheck --passes 3                        # 재현성 (스윕이 안 잰다)
+kerneltab gate --baseline docs/baselines/<이전>.json # 다섯 항목 판정
 ```
+
+> ⚠️ **재현성은 스윕이 재지 않는다.** `rehearse.py` 는 `--all` 모드에서
+> `reproducibility()` 를 건너뛴다 — 재측정이 `results.jsonl` 에 중복 줄을
+>남기고 시간을 쓰기 때문이다. `recheck_stability.py` 를 따로 돌려야
+> `stability.json` 이 생기고 5 번이 채워진다. 안 돌리면 `gate_g7` 이
+> **"검사 못 함 = 실패"** 로 잡는다.
 
 `check_anchors.py` 가 exit 0 이어야 한다. 판정은 **절대 기준이 아니라
 노이즈 대비**다 (`core/anchors.py`). 확인할 것 다섯 가지:
