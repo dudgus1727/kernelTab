@@ -328,7 +328,7 @@ A6000 에서 다중 시간 측정 드리프트를 발견했다 (7.5 시간에 +5
    +1380 % 오염돼 있었다.
 4. **세그먼트 크기 결정** — `segments.kernels` 를 문턱의 절반 이하로.
    재시작 오버헤드가 5 % 를 넘으면 문턱에 더 가깝게 올린다 (E-2).
-   절차 전체는 `docs/new_gpu_checklist.md` 에 게이트 형태로 정리돼 있다.
+   절차 전체는 `docs/new_environment_checklist.md` 에 게이트 형태로 정리돼 있다.
 
 5. **2~3 시간 짧은 검증** — `sweep.py --max-rounds N` 으로 돌리고
    `check_anchors.py` 로 판정한다. 통과 기준:

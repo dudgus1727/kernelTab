@@ -26,7 +26,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from kerneltab.build import paths
-from kerneltab.core.env_hash import env_hash_v2, hash_inputs
+from kerneltab.core.env_hash import (
+    ENV_HASH_DEF_VERSION,
+    env_hash_v2,
+    hash_inputs,
+)
 from kerneltab.core.records import ALL, iter_records
 
 REGISTRY = paths.RESULTS_DIR / "env_registry.jsonl"
@@ -103,12 +107,38 @@ def main() -> int:
     if a.check_only:
         return 0
 
+    # --- 정의가 바뀐 상태로 덮어쓰지 않는다 ---------------------------------
+    # 레지스트리는 append-only 다. 정의 버전이 올라가면 옛 행의 v2 값은
+    # **여전히 유효한 기록**이고, 새 행은 새 정의로 적힌다. 그 사실을
+    # 조용히 넘기지 않고 드러낸다.
+    if REGISTRY.exists():
+        prev = set()
+        for line in REGISTRY.read_text().splitlines():
+            if not line.strip():
+                continue
+            try:
+                r = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            prev.add(int(r.get("env_hash_def_version") or 2))
+        stale = sorted(v for v in prev if v != ENV_HASH_DEF_VERSION)
+        if stale:
+            print(f"\n⚠️ 레지스트리에 정의 버전 {stale} 로 적힌 행이 있다. "
+                  f"지금 정의는 {ENV_HASH_DEF_VERSION} 이다.")
+            print("   옛 행을 고치지 않는다 (append-only). 같은 env.json 이라도")
+            print("   정의가 다르면 v2 해시가 다르다 — 비교할 때 "
+                  "env_hash_def_version 을 함께 보라.")
+
     now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     lines = []
     for h, e in envs.items():
         env = {k: v for k, v in e.items() if k != "_file"}
         lines.append({
             "env_hash": h, "env_hash_v2": env_hash_v2(e),
+            # ⚠️ 정의 버전을 함께 적는다. 키 목록이 바뀌면 같은 env.json 이
+            #    다른 v2 해시를 낸다 — 버전이 없으면 기록된 값이 무엇이었는지
+            #    알 수 없다. 옛 행에는 이 필드가 없고, 그때는 정의 2다.
+            "env_hash_def_version": ENV_HASH_DEF_VERSION,
             "source_file": e["_file"], "recorded_utc": now,
             "n_rows": used.get(h, 0),
             "hash_inputs": hash_inputs(e),
@@ -116,7 +146,9 @@ def main() -> int:
         })
     for h in orphans:
         lines.append({
-            "env_hash": h, "env_hash_v2": None, "source_file": None,
+            "env_hash": h, "env_hash_v2": None,
+            "env_hash_def_version": ENV_HASH_DEF_VERSION,
+            "source_file": None,
             "recorded_utc": now, "n_rows": used.get(h, 0),
             "hash_inputs": None, "env": None,
             "note": "orphan — env.json 미보존. 조건을 복원할 수 없으므로 "

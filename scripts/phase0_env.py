@@ -11,7 +11,6 @@ env.json 은 이 스크립트가 한 번 쓰고 이후 단계는 읽기만 한�
 from __future__ import annotations
 
 import argparse
-import ctypes
 import hashlib
 import json
 import os
@@ -26,7 +25,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from kerneltab.build import paths
-from kerneltab.core.env_hash import env_hash_v2
+from kerneltab.core.env_hash import ENV_HASH_DEF_VERSION, env_hash_v2
 from kerneltab.core.hardware import (
     bandwidth_from_api,
     bandwidth_reference_mhz,
@@ -84,26 +83,28 @@ def host_info() -> dict:
 
 
 def cuda_info() -> dict:
+    """nvcc + 드라이버. **드라이버는 커널 모드와 유저 모드를 나눠 적는다.**
+
+    컨테이너에서는 둘이 다르다 — 커널 모드는 호스트에서 오고, 유저 모드
+    `libcuda` 는 이미지의 CUDA forward-compat 에서 온다. 하나만 적으면
+    "이 측정이 어떤 드라이버로 돌았나" 를 나중에 알 수 없다
+    (`kerneltab/core/hardware.py::driver_versions`).
+    """
     nvcc = paths.nvcc_path()
     _, ver = run([str(nvcc), "--version"])
     m = re.search(r"release (\d+\.\d+), V(\S+)", ver)
-    drv_api = ctypes.c_int()
-    try:
-        lib = ctypes.CDLL("libcuda.so.1")
-        lib.cuInit(0)
-        lib.cuDriverGetVersion(ctypes.byref(drv_api))
-    except OSError:
-        drv_api.value = 0
-    _, drv = run(
-        ["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"]
-    )
+    from kerneltab.core.hardware import driver_versions
+    dv = driver_versions()
     return {
         "nvcc_path": str(nvcc),
         "nvcc_release": m.group(1) if m else None,
         "nvcc_version": m.group(2) if m else None,
         "cuda_home": str(paths.cuda_home()),
-        "driver_version": drv.splitlines()[0].strip() if drv else None,
-        "cuda_driver_api_version": drv_api.value,
+        # 옛 이름은 유지한다 (기존 env.json 과 비교 가능해야 한다).
+        # 값은 커널 모드 = nvidia-smi 가 보고하는 것이다.
+        "driver_version": dv["driver_kernel_mode"],
+        "cuda_driver_api_version": dv["cuda_driver_version"],
+        **dv,
         "cuobjdump": str(paths.cuda_bin("cuobjdump")),
         "nvdisasm": str(paths.cuda_bin("nvdisasm")),
     }
@@ -432,7 +433,19 @@ def main() -> int:
     print(f"       CPU {host['cpu_count']} cores, "
           f"RAM {host['ram_available_gb']}/{host['ram_total_gb']} GB available")
     print(f"[cuda] nvcc {cuda['nvcc_release']} (V{cuda['nvcc_version']}), "
-          f"driver {cuda['driver_version']}, driver API {cuda['cuda_driver_api_version']}")
+          f"driver API {cuda['cuda_driver_version']}")
+    print(f"       드라이버 커널모드 {cuda['driver_kernel_mode']} (호스트) / "
+          f"유저모드 {cuda['driver_user_mode']} (이미지)")
+    if cuda.get("forward_compat"):
+        print("       -> CUDA **forward-compat** 가 끼어 있다. 유저 모드가 "
+              "호스트와 다르다.")
+        print("          이미지가 유저 모드를 고정하므로 GPU 간 비교에서 "
+              "변수가 줄지만,")
+        print("          compat 계층이 런치 오버헤드에 주는 영향은 확인되지 "
+              "않았다. env_hash 에 유저 모드가 들어간다.")
+    elif cuda.get("forward_compat") is None:
+        print("       -> 두 값 중 하나를 못 읽어 compat 여부를 판정하지 "
+              "않았다 (False 로 단정하지 않는다).")
     print(f"[cutlass] {cutlass['dir']}")
     print(f"          version {cutlass['version']}  commit {cutlass['commit']}"
           f"  ({cutlass['commit_source']})")
@@ -627,6 +640,9 @@ def main() -> int:
     # 갈라진다 — 이 캠페인에서 실제로 겪었다.
     # 구 해시는 그대로 두어 기존 98만 줄의 조회를 깨뜨리지 않는다.
     env["env_hash_v2"] = env_hash_v2(env)
+    # 정의 버전을 함께 적는다. 없으면 이 값이 어떤 키 목록으로 계산된
+    # 것인지 나중에 알 수 없다 (core/env_hash.py 의 ENV_HASH_DEF_VERSION).
+    env["env_hash_def_version"] = ENV_HASH_DEF_VERSION
 
     paths.ensure_dirs()
     paths.ENV_JSON.write_text(json.dumps(env, indent=2, ensure_ascii=False) + "\n")

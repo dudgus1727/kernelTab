@@ -34,6 +34,21 @@ nvidia-smi -i $I --query-gpu=pstate,clocks.sm,clocks.mem --format=csv -l 2
 mkdir -p $PWD/data/results $PWD/data/artifacts
 ```
 
+### ⛔ 항상 `--user $(id -u):$(id -g)` 로 돌린다
+
+편의상 root 로 돌리면 **버그 두 개가 숨는다.** 둘 다 실제로 겪었다.
+
+| root 로 돌리면 | 무슨 일이 일어나나 |
+|---|---|
+| 볼륨 권한 문제가 안 보인다 | 익명 볼륨/소유권 문제가 프로덕션에서만 터진다 |
+| git 의 "dubious ownership" 이 안 난다 | `--user` 일 때만 `cutlass.commit` 이 `null` 이 된다. 그러면 **CUTLASS 버전을 바꿔도 같은 `env_hash`** 가 나온다 |
+
+두 번째가 특히 나쁘다 — 오류가 나지 않고, 값이 있으니 정상으로 보인다.
+지금은 `env_hash_v2()` 가 `EnvHashIncomplete` 로 막지만, **막힌 것을
+확인하려면 그 조건에서 돌려봐야 한다.**
+
+호스트 파일이 root 소유로 만들어지는 것도 막는다.
+
 > ⛔ **`/data` 를 통째로 마운트하고, 하위 경로를 따로 마운트하지 마라.**
 > `-v .../results:/data/results` 처럼 나눠 붙이면 익명 볼륨이 끼어들 여지가
 > 생긴다. 그러면 root 소유가 되어 `--user` 로 쓰기가 막히고, 권한이 있어도
@@ -75,7 +90,7 @@ RUN="docker run --rm --gpus \"device=$G\" -v $PWD/data:/data --user $(id -u):$(i
 # 1) 환경 감지 — 실측 클럭을 넣는다 (요청값 아님)
 $RUN detect --gpu $G --externally-locked-mhz 1350 --externally-locked-mem-mhz 7601
 
-# 2) ⛔ 드리프트 3값 — 새 GPU/새 CUDA 면 반드시 (docs/new_gpu_checklist.md G-4)
+# 2) ⛔ 드리프트 3값 — 새 GPU/새 CUDA 면 반드시 (docs/new_environment_checklist.md G-4)
 $RUN drift --gpu $G --max-touch 3000 --step 100
 
 # 3) 커널 빌드 (30~40분, 볼륨에 캐싱된다)

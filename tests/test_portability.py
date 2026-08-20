@@ -177,7 +177,7 @@ class TestManifestInEnv:
         "bandwidth_gbps_effective": 700.0,
         "shuffle_seed": 1234,
         "cutlass": {"commit": "c" * 40},
-        "cuda": {"nvcc_version": "13.3.73"},
+        "cuda": {"nvcc_version": "13.3.73", "driver_user_mode": "610.43.02"},
     }
 
     def test_manifest_does_not_change_hash(self):

@@ -10,10 +10,13 @@ import copy
 import pytest
 
 from kerneltab.core.env_hash import (
+    ENV_HASH_DEF_VERSION,
+    ENV_HASH_KEYS,
     ENV_HASH_KEYS_V2,
     EXCLUDED_WITH_REASON,
     REQUIRED_V2,
     EnvHashIncomplete,
+    canonical_hash,
     env_hash_v2,
     hash_inputs,
 )
@@ -171,3 +174,60 @@ class TestRequiredFields:
         e["locked_mem_mhz"] = None
         e["soak"] = None
         assert len(env_hash_v2(e)) == 64
+
+
+class TestDefinitionVersion:
+    """★ 키 목록을 고치면 **정의 버전을 반드시 올려야** 한다.
+
+    `env_hash_v2` 값은 `env.json` 과 `env_registry.jsonl` 에 **기록되어
+    남는다.** 정의를 조용히 바꾸면 같은 함수가 같은 입력에 다른 값을 주고,
+    이미 기록된 값이 무엇이었는지 알 수 없게 된다.
+
+    문서에 "버전을 올려라" 라고 적어 두면 지켜지지 않는다는 것을 이 저장소가
+    여러 번 증명했다. 그래서 키 목록의 해시를 여기 고정한다.
+    """
+
+    #: (정의 버전, 키 목록 해시). 키를 고쳤으면 **둘 다** 갱신하라.
+    FROZEN = (3, "40c8c9040f60b957")
+
+    def test_키를_고치면_버전을_올려야_한다(self):
+        ver, digest = self.FROZEN
+        got = canonical_hash(list(ENV_HASH_KEYS))[:16]
+        assert (ENV_HASH_DEF_VERSION, got) == (ver, digest), (
+            "ENV_HASH_KEYS 가 바뀌었다.\n"
+            f"  기대: 버전 {ver}, 해시 {digest}\n"
+            f"  실제: 버전 {ENV_HASH_DEF_VERSION}, 해시 {got}\n"
+            "  키를 고쳤으면 ENV_HASH_DEF_VERSION 을 올리고 이 테스트의 "
+            "FROZEN 을 함께 갱신하라. 그러지 않으면 이미 기록된 "
+            "env_hash 값이 무엇이었는지 알 수 없게 된다.")
+
+    def test_유저모드_드라이버가_해시에_들어간다(self):
+        assert "cuda.driver_user_mode" in ENV_HASH_KEYS
+
+    def test_커널모드_드라이버는_해시에_안_들어간다(self):
+        """호스트마다 다르고 통제할 수 없다. 기록만 한다."""
+        assert "cuda.driver_kernel_mode" not in ENV_HASH_KEYS
+        assert "cuda.driver_version" not in ENV_HASH_KEYS
+
+    def test_유저모드가_다르면_해시가_다르다(self):
+        base = {
+            "hardware": {"name": "X", "arch": "sm_86"},
+            "nvcc_arch_flag": "sm_86",
+            "cutlass": {"commit": "c" * 40},
+            "cuda": {"nvcc_version": "13.3.73", "driver_user_mode": "610.43.02"},
+        }
+        other = copy.deepcopy(base)
+        other["cuda"]["driver_user_mode"] = "580.173.02"
+        assert env_hash_v2(base) != env_hash_v2(other)
+
+    def test_커널모드가_달라도_해시는_같다(self):
+        base = {
+            "hardware": {"name": "X", "arch": "sm_86"},
+            "nvcc_arch_flag": "sm_86",
+            "cutlass": {"commit": "c" * 40},
+            "cuda": {"nvcc_version": "13.3.73", "driver_user_mode": "610.43.02",
+                     "driver_kernel_mode": "580.173.02"},
+        }
+        other = copy.deepcopy(base)
+        other["cuda"]["driver_kernel_mode"] = "575.00.00"
+        assert env_hash_v2(base) == env_hash_v2(other)

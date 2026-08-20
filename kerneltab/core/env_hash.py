@@ -31,8 +31,8 @@ from __future__ import annotations
 import hashlib
 import json
 
-__all__ = ["ENV_HASH_KEYS_V2", "EnvHashIncomplete", "canonical_hash",
-           "env_hash_v2", "hash_inputs"]
+__all__ = ["ENV_HASH_DEF_VERSION", "ENV_HASH_KEYS", "ENV_HASH_KEYS_V2",
+           "EnvHashIncomplete", "canonical_hash", "env_hash_v2", "hash_inputs"]
 
 
 class EnvHashIncomplete(ValueError):
@@ -53,6 +53,22 @@ REQUIRED_V2: tuple[str, ...] = (
     "cuda.nvcc_version",
 )
 
+#: 해시 **정의**의 버전. 키 목록이 바뀌면 반드시 올린다.
+#:
+#: ⚠️ 왜 필요한가: `env_hash_v2` 값은 `env.json` 과 `env_registry.jsonl` 에
+#: **기록되어 남는다.** 정의를 바꾸면 그 기록들이 조용히 재현 불가능해진다 —
+#: 같은 함수가 같은 입력에 다른 값을 준다. 버전을 함께 적어야 옛 값이
+#: 무엇이었는지 알 수 있다.
+#:
+#: `tests/test_env_hash.py` 가 키 목록의 해시를 고정한다. 키를 고치고
+#: 버전을 안 올리면 **테스트가 실패한다.** 문서가 아니라 코드로 강제한다.
+#:
+#: | 버전 | 바뀐 것 |
+#: |---|---|
+#: | 2 | 최초 (P-3). `env` 전체 해싱을 대체 |
+#: | 3 | `cuda.driver_user_mode` 추가 (아래 참조) |
+ENV_HASH_DEF_VERSION = 3
+
 #: 해시에 들어가는 것. `(env 키, 하위 경로)` — 하위 경로는 점으로 구분한다.
 ENV_HASH_KEYS_V2: tuple[str, ...] = (
     "hardware",                  # 감지된 GPU 스펙
@@ -67,7 +83,19 @@ ENV_HASH_KEYS_V2: tuple[str, ...] = (
     "shuffle_seed",
     "cutlass.commit",            # 커널 생성 로직의 대부분을 커버한다
     "cuda.nvcc_version",
+    # --- 정의 3 에서 추가 ---------------------------------------------------
+    # 유저 모드 libcuda. 컨테이너에서는 **이미지**가 이것을 고정한다
+    # (CUDA forward-compat). 커널 모드 드라이버는 호스트마다 다르고 통제할 수
+    # 없으므로 해시에 넣지 않는다 — 기록만 한다.
+    #
+    # 왜 넣는가: compat 계층이 **런치 오버헤드**에 영향을 줄 가능성이
+    # 확인되지 않았다. 짧은 커널에서 런치 경로가 지배한다는 것은 이미 안다
+    # (docs/measurement_drift.md). 영향이 있다면 이것은 측정 조건이다.
+    "cuda.driver_user_mode",
 )
+
+#: 별칭. 코드에서는 이쪽을 쓴다 — `_V2` 라는 이름이 정의 버전과 어긋난다.
+ENV_HASH_KEYS = ENV_HASH_KEYS_V2
 
 #: 명시적으로 **제외**하는 것. 왜 뺐는지 남긴다 — 나중에 누가 다시 넣으려
 #: 할 때 근거가 필요하다.
@@ -97,7 +125,7 @@ def _dig(env: dict, path: str):
 
 def hash_inputs(env: dict) -> dict:
     """해시에 들어가는 값만 뽑아 돌려준다. 진단/설명용."""
-    return {k: _dig(env, k) for k in ENV_HASH_KEYS_V2}
+    return {k: _dig(env, k) for k in ENV_HASH_KEYS}
 
 
 def canonical_hash(obj) -> str:

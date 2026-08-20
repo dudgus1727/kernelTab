@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""드리프트 3 값 측정 — `docs/new_gpu_checklist.md` 의 ⛔ G-4 게이트.
+"""드리프트 3 값 측정 — `docs/new_environment_checklist.md` 의 ⛔ G-4 게이트.
 
     python3 scripts/measure_drift.py                       # env.json 의 GPU
     python3 scripts/measure_drift.py --gpu GPU-93284c84-...
@@ -368,7 +368,16 @@ def main() -> int:
         "cuda": env["cuda"]["nvcc_version"],
         "driver": env["cuda"].get("driver_version"),
         "cutlass_commit": (env.get("cutlass") or {}).get("commit"),
+        # ⚠️ 어느 조건에서 잰 값인지 함께 남긴다. 드리프트 3값은
+        #    GPU 만이 아니라 **툴체인마다** 달라진다 — 같은 A6000 을
+        #    CUDA 12.4 와 13.3 에서 재니 문턱이 1,154 -> 962 였다.
         "env_hash": env.get("env_hash"),
+        "env_hash_v2": env.get("env_hash_v2"),
+        "env_hash_def_version": env.get("env_hash_def_version"),
+        "cutlass_version": (env.get("cutlass") or {}).get("version"),
+        "driver_kernel_mode": (env.get("cuda") or {}).get("driver_kernel_mode"),
+        "driver_user_mode": (env.get("cuda") or {}).get("driver_user_mode"),
+        "forward_compat": (env.get("cuda") or {}).get("forward_compat"),
         "timestamp": datetime.now(timezone.utc).isoformat().replace(
             "+00:00", "Z"),
         "threshold_kernels": knee,

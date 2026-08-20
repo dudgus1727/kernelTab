@@ -20,6 +20,10 @@ from __future__ import annotations
 
 import ctypes
 import json
+import os
+import re
+import shutil
+import subprocess
 from dataclasses import asdict
 from dataclasses import replace as dc_replace
 
@@ -116,6 +120,76 @@ def _driver() -> ctypes.CDLL:
         raise HardwareDetectionError(f"cuInit 실패 (CUresult={rc})")
     _lib = lib
     return lib
+
+
+def driver_versions() -> dict:
+    """드라이버가 **어디서 오는지** 구분해 기록한다.
+
+    컨테이너에서는 둘이 다르다.
+
+    | | 어디서 오나 | 예 |
+    |---|---|---|
+    | 커널 모드 | **호스트** (`nvidia-smi`) | 580.173.02 |
+    | 유저 모드 `libcuda` | **이미지** (CUDA forward-compat) | 610.43.02 |
+
+    `nvidia-container-toolkit` 이 컨테이너 시작 시
+    `/usr/lib/x86_64-linux-gnu/libcuda.so.1` 을 이미지의
+    `/usr/local/cuda/compat/libcuda.so.<ver>` 로 링크한다. 그래서 호스트에서
+    `cuDriverGetVersion()` 이 13000 인데 컨테이너 안에서는 13030 이 나온다.
+
+    ⚠️ 이것이 **양날**이다. 이미지가 유저 모드를 고정하므로 GPU 간 비교에서
+    변수가 하나 줄지만, compat 계층이 **런치 오버헤드**에 영향을 줄
+    가능성은 확인되지 않았다. 짧은 커널에서 런치 경로가 지배한다는 것은
+    이미 안다 (`docs/measurement_drift.md`). 그래서 **기록은 반드시 남긴다.**
+
+    `env_hash` 에는 **유저 모드만** 들어간다 — 커널 모드는 호스트마다 다르고
+    통제할 수 없다. 기록은 둘 다 한다.
+    """
+    lib = _driver()
+    v = ctypes.c_int()
+    api = v.value if lib.cuDriverGetVersion(ctypes.byref(v)) == 0 else None
+
+    # 실제로 어떤 .so 가 매핑됐는지 본다. ldconfig 나 관례 경로를 믿지 않는다
+    # — 심볼릭 링크가 컨테이너 시작 시점에 바뀌기 때문이다.
+    so_path = user_mode = None
+    try:
+        with open("/proc/self/maps") as f:
+            for line in f:
+                i = line.find("/libcuda.so")
+                if i != -1:
+                    so_path = line[line.rfind(" ", 0, i) + 1:].strip()
+                    break
+    except OSError:
+        pass
+    if so_path:
+        real = os.path.realpath(so_path)
+        m = re.search(r"libcuda\.so\.([0-9]+(?:\.[0-9]+)+)$", real)
+        if m:
+            user_mode = m.group(1)
+        so_path = real
+
+    kernel_mode = None
+    smi = shutil.which("nvidia-smi")
+    if smi:
+        try:
+            r = subprocess.run(
+                [smi, "--query-gpu=driver_version", "--format=csv,noheader"],
+                capture_output=True, text=True, timeout=30)
+            if r.returncode == 0 and r.stdout.strip():
+                kernel_mode = r.stdout.strip().splitlines()[0].strip()
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+    return {
+        "driver_kernel_mode": kernel_mode,      # 호스트. env_hash 에 안 들어간다
+        "driver_user_mode": user_mode,          # 이미지. **env_hash 에 들어간다**
+        "driver_user_mode_path": so_path,
+        "cuda_driver_version": api,             # cuDriverGetVersion()
+        # 둘을 알 수 없으면 판정하지 않는다. False 로 단정하면 "compat 아님" 이
+        # 사실인 것처럼 기록된다.
+        "forward_compat": (None if (kernel_mode is None or user_mode is None)
+                           else user_mode != kernel_mode),
+    }
 
 
 def _check(rc: int, what: str) -> None:
