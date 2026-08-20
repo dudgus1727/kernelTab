@@ -366,6 +366,26 @@ def main() -> int:
                   if r_short is not None and r_long not in (None, 0) else None)
 
     rec = int(knee * SEGMENT_FRACTION) if knee else None
+
+    # --- 이전 측정 이력을 이어 붙인다 ---------------------------------------
+    # 같은 환경에서 다시 재면 문턱이 흔들린다 (A6000/13.3 에서 962 vs 1051,
+    # STEP=100 의 ±1 스텝). **그 흔들림 자체가 정보다** — 크게 다르면 STEP 을
+    # 줄여야 한다는 신호이고, 한 번만 재고 덮어쓰면 알 수 없다.
+    history = []
+    prev_f = Path(args.out)
+    if prev_f.exists():
+        try:
+            prev = json.loads(prev_f.read_text())
+        except (OSError, json.JSONDecodeError):
+            prev = None
+        if prev:
+            history = list(prev.get("history") or [])
+            history.append({k: prev.get(k) for k in (
+                "timestamp", "threshold_kernels", "us_per_1k_modules",
+                "recommended_segment_kernels", "distortion_ratio",
+                "b_drift_pct", "step", "max_modules", "cuda",
+                "driver_user_mode", "cutlass_commit")})
+
     out = {
         "gpu": env["hardware"]["name"], "uuid": uuid,
         "arch": env["hardware"]["arch"],
@@ -398,6 +418,7 @@ def main() -> int:
                                if r_long is not None else None),
         "shapes": PROBE_SHAPES, "step": args.step, "reps": REPS,
         "n_probes": len(probes), "max_modules": ns[-1] if ns else 0,
+        "history": history,
         "nvml_failures": nv.failures(),
         # 터치 실패를 남긴다. x 축이 실제보다 짧으면 문턱이 통째로 틀린다.
         "touch_attempted": min(len(touch_rows), i * args.step),
@@ -421,6 +442,20 @@ def main() -> int:
               f"— 압력 축이 그만큼 짧다.")
         for why, c in touch_fail.most_common(5):
             print(f"     {why:24s} {c:,}회")
+    # --- 재측정 흔들림 -----------------------------------------------------
+    ths = [h["threshold_kernels"] for h in history
+           if h.get("threshold_kernels")] + ([knee] if knee else [])
+    if len(ths) >= 2:
+        lo, hi = min(ths), max(ths)
+        print(f"\n재측정 이력  문턱 {ths}  (폭 {hi - lo}, {100 * (hi / lo - 1):.0f}%)")
+        if hi - lo > args.step:
+            print(f"  ⚠️ 흔들림이 STEP({args.step})보다 크다. --step 을 절반으로")
+            print("     줄여 다시 재라. 지금 값은 해상도 안에서 결정되지 않는다.")
+        else:
+            print(f"  STEP({args.step}) 안이다 — 해상도의 ±1 스텝. 정상.")
+        print(f"  권장 세그먼트는 **가장 낮은 문턱** 기준으로도 안전해야 한다: "
+              f"{rec} / {lo} = {100 * rec / lo:.0f}%" if rec else "")
+
     print(f"\n권장 segments.kernels = {rec}  (문턱의 {SEGMENT_FRACTION:.0%})")
     if knee is None:
         print("\n⚠️ 문턱을 찾지 못했다. 둘 중 하나다:")
