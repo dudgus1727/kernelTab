@@ -199,7 +199,7 @@ def _table_columns(out: Path) -> list[str] | None:
     return list(pq.read_schema(f).names)
 
 
-def release_notes(b: dict) -> str:
+def release_notes(b: dict, extra: str | None = None) -> str:
     """BUNDLE.json 에서 릴리즈 노트를 만든다.
 
     측정 조건이 노트에 있어야 한다 — 릴리즈를 받은 사람이 저장소를 보지
@@ -208,6 +208,10 @@ def release_notes(b: dict) -> str:
     """
     m = b.get("manifest") or {}
     corr = _render_corrections(b.get("corrections") or [])
+    # ⚠️ 캠페인 고유의 설명(다른 표와의 관계 등)은 **저장소 파일**에서 온다.
+    #    번들 디렉토리의 RELEASE.md 를 손으로 고치면 아카이브와 어긋나고,
+    #    다음에 bundle.py 를 돌리면 조용히 사라진다. 실제로 그럴 뻔했다.
+    extra_md = f"\n{extra.rstrip()}\n" if extra else ""
     return f"""\
 # kerneltab 측정 표 — {b['gpu_name']} (`{b['bundle_id']}`)
 
@@ -232,6 +236,7 @@ CUTLASS GEMM 의 (형상 x config) -> 성능 표.
 클럭을 고정해 측정했고, 컴퓨트 워크로드는 P2 상태로 동작해 메모리 클럭이
 P0 최대치에 도달하지 못한다.
 
+{extra_md}
 ## 규모
 
 - 형상 {b.get('n_shapes')}개 x 커널 {b.get('n_kernels'):,}개 = **{b.get('n_rows'):,}행**
@@ -282,7 +287,7 @@ y = b.scoring()    # 채점용 (정답 포함)
 
 
 def github_release(bundle: dict, out: Path, dsdir: Path, bundle_id: str,
-                   env_hash: str, publish: bool) -> int:
+                   env_hash: str, publish: bool, extra: str | None = None) -> int:
     """오프사이트 백업. 기본은 dry-run 이다.
 
     ⚠️ 공개 저장소면 실행하는 순간 데이터가 인터넷에 공개된다. 되돌리려면
@@ -296,7 +301,7 @@ def github_release(bundle: dict, out: Path, dsdir: Path, bundle_id: str,
 
     notes = out / "RELEASE.md"
     if not notes.exists():          # 보통 main() 이 아카이브 전에 써 둔다
-        notes.write_text(release_notes(bundle))
+        notes.write_text(release_notes(bundle, extra))
 
     assets = []
     for pat in (f"{bundle_id}.tar.zst", f"{bundle_id}.tar.gz",
@@ -363,6 +368,10 @@ def main() -> int:
     ap.add_argument("--publish", action="store_true",
                     help="--github-release 를 실제로 실행한다. 공개 저장소면 "
                          "이 순간 데이터가 인터넷에 공개된다")
+    ap.add_argument("--notes-extra", default=None, metavar="FILE",
+                    help="RELEASE.md 에 끼워 넣을 마크다운 (캠페인 고유 설명). "
+                         "번들 디렉토리를 손으로 고치지 마라 — 아카이브와 "
+                         "어긋나고 다음 실행에 사라진다")
     ap.add_argument("--skip-validate", action="store_true",
                     help="무결성 검사를 건너뛴다. 검증 안 된 데이터를 배포하게 "
                          "되므로 진단 목적에만 쓸 것")
@@ -569,7 +578,9 @@ CUTLASS (NVIDIA, BSD-3-Clause) 는 이 번들에 포함되지 않는다.
 
     # RELEASE.md 는 **아카이브 전에** 쓴다. github_release() 안에서 쓰면
     # tar 안에는 낡은 사본이 들어간다.
-    (out / "RELEASE.md").write_text(release_notes(bundle))
+    _extra = (Path(args.notes_extra).read_text()
+              if args.notes_extra else None)
+    (out / "RELEASE.md").write_text(release_notes(bundle, _extra))
 
     # 배포 경계 게이트 — 아카이브 직전. validate_table --bundle 과 같은
     # 검사를 부른다 (구현이 둘로 갈리면 한쪽만 고치게 된다).
@@ -642,7 +653,7 @@ CUTLASS (NVIDIA, BSD-3-Clause) 는 이 번들에 포함되지 않는다.
     # --- C-3: GitHub Release (오프사이트) ------------------------------------
     if args.github_release:
         rc = github_release(bundle, out, Path(args.out), bundle_id,
-                            env_hash, args.publish)
+                            env_hash, args.publish, _extra)
         if rc:
             return rc
 
