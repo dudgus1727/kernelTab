@@ -11,6 +11,7 @@ import statistics
 
 import pytest
 
+from kerneltab.core import records
 from kerneltab.core.records import (
     ALL,
     EnvHashError,
@@ -120,3 +121,51 @@ class TestCallersFilter:
         from pathlib import Path
         src = (Path(__file__).resolve().parent.parent / path).read_text()
         assert needle in src, f"{path} 가 {needle} 를 쓰지 않는다 (R-5)"
+
+
+class TestReferenceRows:
+    """★ `results.jsonl` 에는 **두 종류**가 섞여 있다.
+
+    측정 980,915 + cuBLAS 참조 11,536 = 992,451.
+    합쳐 세면 진행률이 **101.2 %** 가 된다 — 실제로 그랬다.
+
+    참조 줄은 config 후보가 아니므로 열거·순위·정답 집합에서 빼야 한다.
+    `export.py` 는 표의 **행이 아니라 `cublas_ms` 컬럼**으로 옮긴다.
+    """
+
+    def test_kernel_id_로_판정한다(self):
+        assert records.is_reference({"kernel_id": "cublas"})
+        assert not records.is_reference({"kernel_id": "sm86_tb128x128x32_x"})
+
+    def test_record_kind_가_있으면_그것을_우선한다(self):
+        """2026-08-21 이후 줄에는 명시 필드가 있다."""
+        assert records.is_reference(
+            {"kernel_id": "cublas", "record_kind": "reference"})
+        assert not records.is_reference(
+            {"kernel_id": "cublas", "record_kind": "measurement"})
+
+    def test_is_measurement_은_여집합이다(self):
+        for row in ({"kernel_id": "cublas"}, {"kernel_id": "x"}, {}):
+            assert records.is_reference(row) != records.is_measurement(row)
+
+    def test_판정이_한_곳에만_있다(self):
+        """`"cublas"` 문자열을 직접 비교하는 곳이 없어야 한다.
+
+        예전에는 여덟 곳이 각자 비교했다. 한 곳을 고쳐도 나머지가 남는다.
+        """
+        import pathlib
+        repo = pathlib.Path(__file__).resolve().parent.parent
+        offenders = []
+        for d in ("scripts", "kerneltab"):
+            for f in sorted((repo / d).rglob("*.py")):
+                if f.name == "records.py":
+                    continue
+                for i, line in enumerate(f.read_text().splitlines(), 1):
+                    if line.lstrip().startswith("#"):
+                        continue
+                    if '"cublas"' in line and "CUBLAS_KERNEL_ID" not in line:
+                        offenders.append(
+                            f"{f.relative_to(repo)}:{i}: {line.strip()}")
+        assert not offenders, (
+            "cuBLAS 판정을 직접 한다. core.records.is_reference() 를 써라:\n  "
+            + "\n  ".join(offenders))

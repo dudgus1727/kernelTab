@@ -37,9 +37,12 @@ from typing import Any
 
 __all__ = [
     "ALL",
+    "CUBLAS_KERNEL_ID",
     "EnvHashError",
     "aggregate_per_env",
     "env_hashes",
+    "is_measurement",
+    "is_reference",
     "iter_records",
     "load_records",
 ]
@@ -56,6 +59,39 @@ _parse_skips: dict[str, int] = {}
 def parse_skips() -> dict[str, int]:
     """지금까지 건너뛴 깨진 줄 수. 진단용."""
     return dict(_parse_skips)
+
+
+#: cuBLAS 참조 줄의 `kernel_id`. **이 문자열을 코드에 박지 마라** —
+#: `is_reference()` / `is_measurement()` 를 써라.
+CUBLAS_KERNEL_ID = "cublas"
+
+
+def is_reference(row: dict) -> bool:
+    """cuBLAS 참조 줄인가.
+
+    `results.jsonl` 에는 두 종류가 섞여 있다.
+
+    | 종류 | 무엇 | 개수 (A6000/13.3) |
+    |---|---|---|
+    | 측정 | (형상, 커널, 런타임) 조합 | 980,915 |
+    | 참조 | 형상별 cuBLAS 시간 | 11,536 |
+
+    **둘을 합쳐 세면 진행률이 101.2 % 가 된다** — 실제로 그랬다.
+    참조 줄은 config 후보가 아니므로 열거·순위·정답 집합에서 빼야 한다.
+    `export.py` 는 이것을 표의 **행이 아니라 `cublas_ms` 컬럼**으로 옮긴다.
+
+    2026-08-21 이후 기록되는 줄에는 `record_kind` 가 있다. 그 이전 줄은
+    `kernel_id` 로 판정한다 — 그래서 이 함수 하나만 두 경로를 안다.
+    """
+    kind = row.get("record_kind")
+    if kind:
+        return kind == "reference"
+    return row.get("kernel_id") == CUBLAS_KERNEL_ID
+
+
+def is_measurement(row: dict) -> bool:
+    """(형상, 커널, 런타임) 측정 줄인가. 참조가 아니면 측정이다."""
+    return not is_reference(row)
 
 
 class EnvHashError(ValueError):

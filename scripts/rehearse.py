@@ -1074,7 +1074,10 @@ def measure_cublas(ctx, p: Problem, probe, env, out) -> dict:
     st, m = ctx.measure_cublas()
     snap = probe.snapshot()
     row = {
-        "kernel_id": "cublas",
+        "kernel_id": records.CUBLAS_KERNEL_ID,
+        # 참조 줄임을 **명시**한다. 예전에는 kernel_id 문자열로만 구분해서
+        # 소비 쪽이 후보 열거에 섞을 위험이 있었다.
+        "record_kind": "reference",
         "problem": {"M": p.M, "N": p.N, "K": p.K, "dtype": p.dtype},
         "runtime": {"split_k": 1, "split_k_mode": "serial"},
         "time_ms": m.time_ms, "time_std_ms": m.time_std_ms,
@@ -1299,7 +1302,7 @@ def reproducibility(ctx, kernels, jobs, probe, env, launch_overhead_ms,
     #    통째로 무의미해진다 (R-5, docs/decisions.md 13).
     first = {}
     for d in records.iter_records(RESULTS, env["env_hash"]):
-        if d["kernel_id"] == "cublas":
+        if records.is_reference(d):
             continue
         p, r = d["problem"], d["runtime"]
         first[(d["kernel_id"], p["M"], p["N"], p["K"],

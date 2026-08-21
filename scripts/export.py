@@ -74,11 +74,11 @@ def main() -> int:
     kern = {r["kernel_id"]: r for r in load(KERNELS)}
     res = load(RESULTS)
     cublas = {(r["problem"]["M"], r["problem"]["N"], r["problem"]["K"]):
-              r.get("time_ms") for r in res if r["kernel_id"] == "cublas"}
+              r.get("time_ms") for r in res if records.is_reference(r)}
 
     rows = []
     for r in res:
-        if r["kernel_id"] == "cublas":
+        if records.is_reference(r):
             continue
         k = kern.get(r["kernel_id"])
         if k is None:

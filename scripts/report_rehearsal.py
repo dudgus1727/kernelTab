@@ -22,7 +22,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from kerneltab.backends import get_backend
-from kerneltab.core import paths
+from kerneltab.core import paths, records
 from kerneltab.core.hardware import hardware_from_env
 from kerneltab.core.types import Problem, RuntimeConfig
 
@@ -59,9 +59,9 @@ def main() -> int:
 
     res = load(RESULTS)
     kern = {r["kernel_id"]: r for r in load(KERNELS)}
-    meas = [r for r in res if r["kernel_id"] != "cublas"]
+    meas = [r for r in res if records.is_measurement(r)]
     cublas = {(r["problem"]["M"], r["problem"]["N"], r["problem"]["K"]): r
-              for r in res if r["kernel_id"] == "cublas"}
+              for r in res if records.is_reference(r)}
     ok = [r for r in meas if r.get("status") == "ok"]
 
     print(f"측정 {len(meas)}줄 (+ cuBLAS {len(cublas)}줄), 커널 {len(kern)}개")

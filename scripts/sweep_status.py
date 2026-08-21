@@ -85,10 +85,16 @@ def main() -> int:
 
     # --- results.jsonl -------------------------------------------------------
     # 누적은 캠페인 완료율, 이번 실행분은 속도/ETA 의 분자다.
-    n_rows = n_run = 0
+    # ⚠️ **참조 줄(cuBLAS)을 측정과 함께 세면 안 된다.** 진행률이 100 % 를
+    #    넘는다 — 실제로 101.2 % 를 냈다. 참조는 형상당 하나씩 쌓이는
+    #    별개 기록이고 config 후보가 아니다.
+    n_rows = n_run = n_ref = 0
     st = Counter()
     warm = []
     for r in records.iter_records(paths.RESULTS_DIR / "results.jsonl", eh):
+        if records.is_reference(r):
+            n_ref += 1
+            continue
         n_rows += 1
         st[r.get("status")] += 1
         if r.get("n_warmup") is not None:
@@ -107,6 +113,7 @@ def main() -> int:
           if last else "")
     print(f"  누적 {n_rows:,} / {n_jobs:,} "
           f"({100 * n_rows / max(n_jobs, 1):.1f}%)"
+          f"   [+ cuBLAS 참조 {n_ref:,}]"
           + (f"   [이전 실행 {len(runs) - 1}회, 슬라이스 {prev_slices}]"
              if len(runs) > 1 else ""))
     print(f"  이번 실행 {n_run:,}줄   {rate:.1f}/s   ETA {eta:.1f}h")

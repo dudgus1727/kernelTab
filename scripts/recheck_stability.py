@@ -65,7 +65,8 @@ def main() -> int:
             (json.loads(l) for l in KERNELS.read_text().splitlines() if l.strip())}
     # ⚠️ 이 측정 조건의 줄만. 조건이 섞이면 재측정 대조가 어긋난다 (R-5).
     res = records.load_records(RESULTS, env["env_hash"])
-    okrows = [r for r in res if r.get("status") == "ok" and r["kernel_id"] != "cublas"]
+    okrows = [r for r in res
+              if r.get("status") == "ok" and records.is_measurement(r)]
 
     rng = random.Random(env["shuffle_seed"] ^ 0xC0FFEE)
     if args.shapes:

@@ -315,7 +315,7 @@ def main() -> int:
             tmax = _ts if tmax is None else max(tmax, _ts)
         p = d["problem"]
         key = (p["M"], p["N"], p["K"])
-        if d["kernel_id"] == "cublas":
+        if records.is_reference(d):
             if d.get("time_ms"):
                 cublas[key] = min(cublas.get(key, math.inf), d["time_ms"])
             continue
@@ -674,7 +674,7 @@ def main() -> int:
     sk_best: dict[tuple, dict] = defaultdict(dict)   # 형상 -> split_k -> 최소 시간
     skmode_best: dict[tuple, dict] = defaultdict(dict)
     for d in iter_rows(env_hash):
-        if d["kernel_id"] == "cublas" or d.get("status") != "ok":
+        if records.is_reference(d) or d.get("status") != "ok":
             continue
         t = d.get("time_ms")
         p = d["problem"]

@@ -30,7 +30,7 @@ import itertools
 
 from kerneltab.backends import get_backend
 from kerneltab.core import kernels as kernels_mod
-from kerneltab.core import paths
+from kerneltab.core import paths, records
 from kerneltab.core.config import (
     alignment_combos,
     alignments_for,
@@ -215,7 +215,7 @@ def main() -> int:
             n_sel += 1
             p, rt = d["problem"], d["runtime"]
             key = (p["M"], p["N"], p["K"])
-            if d["kernel_id"] == "cublas":
+            if records.is_reference(d):
                 n_cublas += 1
                 continue
             seen[(d["kernel_id"], *key, rt["split_k"], rt["split_k_mode"])] += 1

@@ -91,7 +91,69 @@ sm_clock_mhz  mem_clock_mhz  gpu_temp_c  power_w  timestamp
 **커널을 빌드하기만 하면 알 수 있고 실행할 필요가 없기 때문이다.** 실무에서
 규칙을 쓸 때도 같은 정보를 얻을 수 있다.
 
-## 4. 안전장치
+## 4. cuBLAS 는 **행이 아니라 컬럼**이다
+
+`results.jsonl` 에는 두 종류가 섞여 있다.
+
+| 종류 | 무엇 | 개수 (A6000/13.3) |
+|---|---|---|
+| 측정 | (형상, 커널, 런타임) 조합 | 980,915 |
+| **참조** | 형상별 cuBLAS 시간 | 11,536 |
+
+**`table.parquet` 에는 참조 줄이 없다.** `export.py` 가 그것을 각 행의
+`cublas_ms` **컬럼**으로 옮긴다. 확인:
+
+```python
+(df.kernel_id == "cublas").sum()   # 0 이어야 한다
+```
+
+그러니 **후보 열거에서 따로 걸러낼 필요가 없다.** 다만 `results.jsonl` 을
+직접 읽는다면 반드시 걸러라 — 합쳐 세면 진행률이 **101.2 %** 가 된다
+(실제로 그랬다).
+
+```python
+from kerneltab.core import records
+for r in records.iter_records(path, env_hash):
+    if records.is_reference(r):     # kernel_id 문자열을 직접 비교하지 마라
+        continue
+```
+
+`is_reference()` 가 유일한 판정 지점이다. 2026-08-21 이후 기록되는 줄에는
+`record_kind: "reference"` 가 있고, 그 이전 줄은 `kernel_id` 로 판정한다 —
+그 두 경로를 이 함수 하나만 안다.
+
+## 5. `schema_version` — 번들이 무엇을 들고 있는가
+
+| 버전 | 무엇이 들어 있는가 |
+|---|---|
+| 1 | `noise_floor` 가 통계 모델만 (`sigma_abs_ms`, `sigma_rel`) |
+| **2** | `noise_floor.tick_ms` (타이머 분해능) + 표에 `distinct_time_frac` |
+
+```python
+b = load_bundle(...)
+b.schema_version      # 2
+b.tick_ms             # 0.001024 — 없으면 경고하고 A6000 관측치로 대체
+b.noise_floor(t)      # max(통계, 분해능)
+b.info["table_columns"]   # 표에 **실제로** 있는 컬럼
+```
+
+> 버전은 "무엇이 들어갈 수 있는가" 이고 `table_columns` 는 "실제로 무엇이
+> 들어 있는가" 다. 같은 버전이라도 `export` 시점이 다를 수 있으므로
+> **후자를 봐라.**
+
+### 새 컬럼 — `distinct_time_frac`
+
+형상별 **서로 다른 시간값 / 후보 수**. 난이도와 **다른 축**이다.
+
+| | 무엇을 말하는가 |
+|---|---|
+| 난이도 낮음 | 실제로 성능이 비슷하다 (**물리**) |
+| `distinct_time_frac` 낮음 | 측정이 구분을 못 한다 (**계측**) |
+
+`ANSWER_COLS` 이므로 `load_for_ranking()` 에는 안 나온다 —
+`load_for_scoring()` 에서 채점을 층화·가중할 때 쓴다. `difficulty` 와 같다.
+
+## 6. 안전장치
 
 로더를 우회해 직접 DataFrame 을 만들었다면, 규칙에 넘기기 전에 확인한다.
 
@@ -111,7 +173,7 @@ def test_no_answer_leak():
     assert "time_ms" not in X.columns
 ```
 
-## 5. `env_hash` 는 반드시 지정한다
+## 7. `env_hash` 는 반드시 지정한다
 
 ```python
 X = load_for_ranking(path, env_hash="368a84f1")
@@ -128,7 +190,7 @@ X = load_for_ranking(path, env_hash="368a84f1")
 > (`docs/measurement_drift.md`). 이 문서의 예시에 그 값이 남아 있는 것은
 > 형식을 보이기 위해서다. 실제로는 재측정본의 `env_hash` 를 쓴다.
 
-## 6. `ext_*` 와 아키텍처 전이
+## 8. `ext_*` 와 아키텍처 전이
 
 `ext_*` 는 아키텍처 전용 필드다 (SM80: `ext_warp_m/n/k`, `ext_stages`,
 `ext_swizzle_*`). SM90 데이터를 같은 표에 합치면 `ext_cluster_m` 같은 컬럼이
@@ -141,7 +203,7 @@ X = load_for_ranking(path, env_hash="368a84f1")
 * 아키텍처 특화 규칙이면 `ext_*` 를 쓰되, 그 규칙은 다른 아키텍처에
   적용할 수 없다는 것을 명시할 것.
 
-## 7. `status != "ok"` 는 결측이 아니다
+## 9. `status != "ok"` 는 결측이 아니다
 
 로더는 기본으로 `status == "ok"` 만 남긴다 (`ok_only=True`). 하지만 실패
 줄은 **버려진 것이 아니라 명시적으로 기록된 것**이다.
@@ -157,7 +219,7 @@ X = load_for_ranking(path, env_hash="368a84f1")
 `launch_infeasible` 은 **규칙이 피해야 할 것을 배우는 데 쓸 수 있다** —
 `launchable` 컬럼이 그 정보를 정답 없이 제공한다.
 
-## 8. 이 계약을 어기면 생기는 일
+## 10. 이 계약을 어기면 생기는 일
 
 가장 흔한 사고는 이것이다.
 
