@@ -38,14 +38,21 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("module", nargs="?", default="rules.handwritten")
     ap.add_argument("--env-hash", default=None)
+    ap.add_argument("--status", choices=("ok", "all"), default="all",
+                    help="측정 줄 필터. **기본 all** — `high_outlier_frac` 은 "
+                         "결측이 아니라 품질 표시다 (consumer_contract 9절). "
+                         "`ok` 만 남기면 전 형상 덮개가 필요한 지표(정적 "
+                         "top-k)가 통째로 왜곡된다: a888 61형상 전부에서 ok 인 "
+                         "config 가 3,465개 -> **3개** 로 줄어든다")
     a = ap.parse_args()
 
     env = json.loads(paths.ENV_JSON.read_text())
     eh = (a.env_hash or env["env_hash"])[:16]
     pq = str(paths.RESULTS_DIR / "table.parquet")
 
-    X = load_for_ranking(pq, env_hash=eh).reset_index(drop=True)   # 정답 없음
-    y = load_for_scoring(pq, env_hash=eh).reset_index(drop=True)   # 채점용
+    _ok = a.status == "ok"
+    X = load_for_ranking(pq, env_hash=eh, ok_only=_ok).reset_index(drop=True)   # 정답 없음
+    y = load_for_scoring(pq, env_hash=eh, ok_only=_ok).reset_index(drop=True)   # 채점용
     assert_no_answers(X)
     assert len(X) == len(y)
     print(f"규칙 입력 {X.shape} (정답 제거), 채점 {y.shape}")

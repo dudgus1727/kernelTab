@@ -60,12 +60,20 @@ def main() -> int:
                     help="`--split transfer` 용. **다른 조건의 표**로 채점한다. "
                          "학습은 기본 표(KERNELTAB_RESULTS_DIR)로 한다")
     ap.add_argument("--eval-env-hash", default=None)
+    ap.add_argument("--status", choices=("ok", "all"), default="all",
+                    help="측정 줄 필터. **기본 all** — `high_outlier_frac` 은 "
+                         "결측이 아니라 품질 표시다 (consumer_contract 9절). "
+                         "`ok` 만 남기면 전 형상 덮개가 필요한 지표(정적 "
+                         "top-k)가 통째로 왜곡된다: a888 61형상 전부에서 ok 인 "
+                         "config 가 3,465개 -> **3개** 로 줄어든다")
     a = ap.parse_args()
 
     env = json.loads(paths.ENV_JSON.read_text())
     eh = env["env_hash"][:16]
     df = pq.read_table(paths.RESULTS_DIR / "table.parquet").to_pandas()
-    df = df[df.env_hash.astype(str).str.startswith(eh[:8]) & (df.status == "ok")]
+    df = df[df.env_hash.astype(str).str.startswith(eh[:8])]
+    if a.status == "ok":
+        df = df[df.status == "ok"]
     df = df[df.time_ms > 0].copy()
     df["_shape"] = list(zip(df.M, df.N, df.K))
     df["_y"] = np.log(df.time_ms / df.groupby("_shape").time_ms.transform("min"))
@@ -121,7 +129,10 @@ def main() -> int:
         eeh = (a.eval_env_hash or "")[:8]
         if eeh:
             ev = ev[ev.env_hash.astype(str).str.startswith(eeh)]
-        ev = ev[(ev.status == "ok") & (ev.time_ms > 0)].copy()
+        ev = ev[ev.time_ms > 0]
+        if a.status == "ok":
+            ev = ev[ev.status == "ok"]
+        ev = ev.copy()
         ev["_shape"] = list(zip(ev.M, ev.N, ev.K))
         # ⚠️ 피처를 **학습 때와 같은 순서·같은 처리**로 만든다. 컬럼이
         #    하나라도 어긋나면 LightGBM 이 조용히 다른 것을 읽는다.

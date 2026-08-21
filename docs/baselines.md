@@ -1,5 +1,41 @@
 # 베이스라인 — 측정 없이 config 하나를 고를 때
 
+> ## ⚠️ 정정 (2026-08-21) — 정적 top-k 가 **필터 인공물**이었다
+>
+> 베이스라인 스크립트와 리포트가 `status == "ok"` 만 쓰고 있었다.
+> `high_outlier_frac` 은 **결측이 아니라 품질 표시**이고 `time_ms` 는
+> 유효하다 (`docs/consumer_contract.md` 9 절). 이 저장소의 계약과
+> 코드가 어긋나 있었다.
+>
+> 형상별 지표(난이도, 최적 시간)는 거의 영향이 없다. 문제는 **전 형상
+> 덮개가 필요한 지표**다 — 정적 top-k 는 61 형상 **전부**에서 측정된
+> config 를 그리디로 고르는데:
+>
+> | | `ok` 만 | **전체** |
+> |---|---:|---:|
+> | 61 형상 전부에서 측정된 config | **3** | **3,465** |
+>
+> **셋 중에서 고르고 있었다.** 그래서 k=1 이 부풀려지고 k≥3 이 곧바로
+> 포화했다.
+>
+> ### 바뀐 값
+>
+> | | 옛 (`ok` 만) | **정정 (전체)** |
+> |---|---:|---:|
+> | 정적 top-1 | 1.3944 | **1.1151** |
+> | 정적 top-8 | 1.0090 | **1.0057** |
+> | 벤더 엄격 덮개 | 82 % | **94 %** |
+> | 벤더 최근접 k=1 | 1.0881 | **1.0830** |
+> | 손규칙 k=1 | 1.1921 | 1.1928 |
+> | GBDT (블록) k=1 | 1.0107 | 1.0145 |
+>
+> **결론은 안 바뀐다.** 정적 top-1 이 1.394 → 1.115 로 내려가도 벤더
+> (1.083)와 GBDT(1.015)보다 여전히 나쁘고, "k=1 이 연구의 자리" 라는
+> 판단은 유지된다. 다만 **정적 top-1 이 생각만큼 약한 상대는 아니었다.**
+>
+> 세 베이스라인 스크립트에 `--status {ok,all}` 를 넣고 **기본을 `all`**
+> 로 했다. `report_phase3.py` 도 필터를 뺐다.
+
 > ## ⚠️ 채점 전에 — 정답 집합이 넓어졌다 (2026-08-20)
 >
 > `noise_floor` 에 **타이머 분해능** 항이 들어갔다.
@@ -75,9 +111,9 @@ a888 형상 61개, 덮개 100%:
 
 | k | 1 | 3 | 5 | 8 | 10 | 20 |
 |---|---:|---:|---:|---:|---:|---:|
-| regret | **1.3944** | 1.0604 | 1.0235 | 1.0090 | 1.0048 | 1.0009 |
+| regret | **1.1151** | 1.0307 | 1.0146 | 1.0057 | 1.0036 | 1.0005 |
 
-**고정 8개를 매번 재면 0.9% 손해다.** 즉 빌드타임 오토튜닝에는 남은 여지가
+**고정 8개를 매번 재면 0.6% 손해다.** 즉 빌드타임 오토튜닝에는 남은 여지가
 없고, 그 자체가 실무자가 알아야 할 결과다("8개만 재면 충분하다").
 문제는 잴 수 없을 때다.
 
@@ -87,7 +123,7 @@ a888 형상 61개, 덮개 100%:
 
 | 베이스라인 | regret@1 | 어려운 절반 | 쉬운 절반 |
 |---|---:|---:|---:|
-| 정적 top-1 (형상 무관 고정) | 1.394 | 1.553 | 1.256 |
+| 정적 top-1 (형상 무관 고정) | **1.115** | — | — |
 | **벤더 휴리스틱** (nvMatmulHeuristics, CUTLASS 타깃) | **1.088** | 1.085 | 1.091 |
 | **손으로 쓴 규칙** (`rules/handwritten.py`, 66줄) | **1.192** | 1.239 | 1.147 |
 | **GBDT 랭커** (블록 분할 / 5-fold) | **1.011 / 1.019** | 1.013 / 1.016 | 1.002 / 1.022 |
@@ -223,10 +259,12 @@ arith_intensity, smem_computed, cpasync_count, split_k
 ## 재현
 
 ```bash
-# 1. 벤더 — 별도 venv (이 저장소 환경을 오염시키지 않는다)
+# 1. 벤더 — 추출 결과를 **커밋해 두었다** (nvMatmulHeuristics 없이 재현 가능)
+python3 scripts/baseline_vendor.py --score docs/baselines/vendor_a6000_c63710df.json
+
+# 다시 뽑으려면 (별도 venv — 이 저장소 환경을 오염시키지 않는다)
 python3 -m venv /tmp/nvmmh && /tmp/nvmmh/bin/pip install nvidia-matmul-heuristics
 /tmp/nvmmh/bin/python scripts/baseline_vendor.py --extract /tmp/vendor.json
-python3 scripts/baseline_vendor.py --score /tmp/vendor.json
 
 # 2. 손규칙
 python3 scripts/baseline_rule.py rules.handwritten
@@ -236,6 +274,10 @@ python3 -m venv /tmp/gbdt
 /tmp/gbdt/bin/pip install lightgbm scikit-learn pandas pyarrow
 /tmp/gbdt/bin/python scripts/baseline_gbdt.py --split block
 /tmp/gbdt/bin/python scripts/baseline_gbdt.py --split kfold
+
+# 4. 툴체인 전이 (12.4 학습 -> 13.3 채점).  docs/toolchain_sensitivity.md
+/tmp/gbdt/bin/python scripts/baseline_gbdt.py --split transfer \
+    --eval-table <13.3>/table.parquet --eval-env-hash 828baa64
 ```
 
 ## ⚠️ 0.5 ms 경계 — 그 아래에서는 1 % 를 구분하지 마라

@@ -319,7 +319,16 @@ def main() -> int:
             if d.get("time_ms"):
                 cublas[key] = min(cublas.get(key, math.inf), d["time_ms"])
             continue
-        if d.get("status") == "ok" and d.get("time_ms"):
+        # ⚠️ **`status == "ok"` 로 거르지 않는다.** `high_outlier_frac` 은
+        #    결측이 아니라 품질 표시이고 `time_ms` 는 유효하다
+        #    (`docs/consumer_contract.md` 9절).
+        #
+        #    거르면 **전 형상 덮개가 필요한 지표가 통째로 왜곡된다.**
+        #    정적 top-k 는 형상 전부에서 측정된 config 를 그리디로 고르는데,
+        #    `ok` 만 남기면 a888 61 형상 전부에서 ok 인 config 가
+        #    3,465개 -> **3개** 로 줄어 그 셋 중에서 고르게 된다.
+        #    그 결과 regret@1 이 1.115 대신 1.24~1.39 로 나왔다.
+        if d.get("time_ms"):
             shape_times[key].append(d["time_ms"])
             rt = d.get("runtime") or {}
             ck = (d["kernel_id"], rt.get("split_k"), rt.get("split_k_mode"))
@@ -575,6 +584,11 @@ def main() -> int:
         w()
 
     w("### 정적 top-k — 형상 무관 고정 config")
+    w()
+    w("⚠️ **`status` 로 거르지 않고 잰다.** `high_outlier_frac` 은 결측이")
+    w("아니라 품질 표시다. `ok` 만 남기면 61 형상 전부에서 측정된 config 가")
+    w("3,465개 → **3개** 로 줄어 그리디가 그 셋 중에서 고르게 되고, 값이")
+    w("통째로 부풀려진다 (1.115 → 1.24).")
     w()
     w("형상을 보지 않고 **고정된 k 개**만 시도했을 때의 regret 이다.")
     w("규칙이 이겨야 하는 하한선이고, 동시에 **문제가 얼마나 쉬운지**의")

@@ -115,7 +115,7 @@ def _dist(a, b) -> float:
                for w, x, y in zip(NEAR_W, a, b))
 
 
-def score(path: str) -> int:
+def score(path: str, ok_only: bool = False) -> int:
     sys.path.insert(0, str(REPO_ROOT))
     import pyarrow.parquet as pq
 
@@ -140,7 +140,9 @@ def score(path: str) -> int:
     best, diff = {}, {}
     cand = defaultdict(list)
     for i in range(t.num_rows):
-        if not str(c["env_hash"][i]).startswith(eh[:8]) or c["status"][i] != "ok":
+        if not str(c["env_hash"][i]).startswith(eh[:8]):
+            continue
+        if ok_only and c["status"][i] != "ok":
             continue
         tm = c["time_ms"][i]
         if not tm:
@@ -215,11 +217,14 @@ def main() -> int:
                     help="휴리스틱에서 뽑아 JSON 으로 저장 (nvMatmulHeuristics 필요)")
     ap.add_argument("--score", metavar="IN", help="뽑아둔 JSON 을 표에 대조해 채점")
     ap.add_argument("--count", type=int, default=16)
+    ap.add_argument("--status", choices=("ok", "all"), default="all",
+                    help="측정 줄 필터. **기본 all** — `high_outlier_frac` 은 "
+                         "결측이 아니라 품질 표시다 (consumer_contract 9절)")
     a = ap.parse_args()
     if a.extract:
         return extract(a.extract, a.count)
     if a.score:
-        return score(a.score)
+        return score(a.score, a.status == "ok")
     ap.print_help()
     return 2
 
