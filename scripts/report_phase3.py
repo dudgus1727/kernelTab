@@ -688,7 +688,11 @@ def main() -> int:
     sk_best: dict[tuple, dict] = defaultdict(dict)   # 형상 -> split_k -> 최소 시간
     skmode_best: dict[tuple, dict] = defaultdict(dict)
     for d in iter_rows(env_hash):
-        if records.is_reference(d) or d.get("status") != "ok":
+        # status-filter: **거르지 않는다.** 축별 상대 성능은 형상 안에서
+        # 계산하는 집계라, `high_outlier_frac` 를 빼면 그 축의 값 하나가
+        # 통째로 사라질 수 있다 (consumer_contract §9). 시간이 유효한지만
+        # 아래에서 본다.
+        if records.is_reference(d):
             continue
         t = d.get("time_ms")
         p = d["problem"]

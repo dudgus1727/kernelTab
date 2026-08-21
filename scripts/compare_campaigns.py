@@ -54,7 +54,11 @@ def _load(path, env):
     df = pq.read_table(path, columns=[c for c in cols if c in sc]).to_pandas()
     if env:
         df = df[df.env_hash.astype(str).str.startswith(env)]
-    df = df[(df.status == "ok") & df.time_ms.notna() & (df.time_ms > 0)].copy()
+    # status-filter: 유효한 시간만 뺀다. `status != ok` 는 결측이 아니다
+    # (consumer_contract §9) — high_outlier_frac 는 시간이 유효한데 산포가
+    # 넓다는 표시일 뿐이고, 빼면 그 config 가 두 표에서 통째로 사라진다.
+    df = df[df.time_ms.notna() & (df.time_ms > 0)].copy()
+    df = df[df.status != "numerical_fail"] if "status" in df else df
     df["_shape"] = list(zip(df.M, df.N, df.K))
     return df
 
@@ -125,6 +129,11 @@ def main() -> int:
     # --- 2. 순위 안정성 -----------------------------------------------------
     print(f"\n## 2. 순위 안정성 (형상 {len(sh)}개)")
     jac, taus, same_best, res_best = [], [], 0, 0
+    # 노이즈 바닥은 **B 조건의 것**을 쓴다. 두 캠페인의 타이머 눈금이 다를 수
+    # 있고(GPU/드라이버), A6000 값을 그냥 쓰면 짧은 형상에서 "노이즈 이내"
+    # 판정이 통째로 어긋난다. 눈금은 **B 의 관측값에서 직접 추정**한다 —
+    # 결과 디렉터리에는 계수가 없지만 측정값 자체에 양자가 찍혀 있다.
+    coef_b = noise.coef_from_observed(B.time_ms, x.b_name)
     for s in sh:
         ga = A[A._shape == s].nsmallest(TOP_TAU, "time_ms")
         gb = B[B._shape == s].nsmallest(TOP_TAU, "time_ms")
@@ -146,7 +155,7 @@ def main() -> int:
         # 최적이 바뀌었어도 **분해 가능한 차이인가**
         tb_of_a = ib.get(ba)
         if tb_of_a is not None:
-            if (tb_of_a / best_b[s] - 1) <= 2 * noise.noise_floor(best_b[s]):
+            if (tb_of_a / best_b[s] - 1) <= 2 * coef_b.floor(best_b[s]):
                 res_best += 1
     print(f"  상위 {TOP_JACCARD} Jaccard   중앙 {st.median(jac):.3f}  "
           f"평균 {st.fmean(jac):.3f}  최소 {min(jac):.3f}")
@@ -154,6 +163,7 @@ def main() -> int:
           f"평균 {st.fmean(taus):.3f}  최소 {min(taus):.3f}  (n={len(taus)})")
     print(f"  최적 config 가 **그대로**       {same_best}/{len(sh)} "
           f"({100 * same_best / len(sh):.0f}%)")
+    print(f"  ({coef_b.source})")
     print(f"  옛 최적이 새 표에서 **노이즈 이내**  {res_best}/{len(sh)} "
           f"({100 * res_best / len(sh):.0f}%)   <- 실질적으로 같은 선택")
 

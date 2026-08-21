@@ -62,6 +62,8 @@ def main() -> int:
     meas = [r for r in res if records.is_measurement(r)]
     cublas = {(r["problem"]["M"], r["problem"]["N"], r["problem"]["K"]): r
               for r in res if records.is_reference(r)}
+    # status-filter: 리허설 품질 보고 — 플래그가 몇 줄인지 세는 것이
+    # 목적이다. 집계가 아니라 분포 확인이다.
     ok = [r for r in meas if r.get("status") == "ok"]
 
     print(f"측정 {len(meas)}줄 (+ cuBLAS {len(cublas)}줄), 커널 {len(kern)}개")

@@ -65,6 +65,8 @@ def main() -> int:
             (json.loads(l) for l in KERNELS.read_text().splitlines() if l.strip())}
     # ⚠️ 이 측정 조건의 줄만. 조건이 섞이면 재측정 대조가 어긋난다 (R-5).
     res = records.load_records(RESULTS, env["env_hash"])
+    # status-filter: 재측정 대상을 고르는 자리. 이미 산포가 넓다고 표시된
+    # 줄을 다시 재면 안정성 점검의 귀무분포가 오염된다.
     okrows = [r for r in res
               if r.get("status") == "ok" and records.is_measurement(r)]
 

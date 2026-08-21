@@ -155,6 +155,16 @@ def assert_single_env(parquet_path: Path, expected: str) -> int:
     return 0
 
 
+def _export_agg_status() -> str:
+    """`export.py` 가 형상별 집계에 쓴 status 정책. 표를 만든 코드에서 읽는다.
+
+    문서에 손으로 적지 않는다 — 문서와 코드가 어긋나면 코드가 이긴다.
+    """
+    from scripts.export import AGG_STATUS
+
+    return AGG_STATUS
+
+
 def _noise_coefficients() -> dict:
     """앵커에서 잰 노이즈 바닥 계수. 없으면 core.noise 의 기본값."""
     from kerneltab.core import noise
@@ -548,9 +558,13 @@ CUTLASS (NVIDIA, BSD-3-Clause) 는 이 번들에 포함되지 않는다.
                       "manifest_hash", "image_tag", "python_version")},
         "files": files,
         # 2 = noise_floor 에 tick_ms(타이머 분해능) + 표에 distinct_time_frac.
+        # 3 = aggregate_status. 형상별 집계가 ok 만이 아니라 유효 측정 전부.
         #     소비 쪽이 **버전으로 판정**할 수 있어야 한다 — 필드 유무를
         #     일일이 확인하게 두면 확인 안 한다.
-        "schema_version": 2,
+        "schema_version": 3,
+        # 형상별 집계(difficulty, distinct_time_frac)를 어떤 행으로 계산했나.
+        # 공개된 c63710df/828baa64 (schema<=2) 는 "ok" 였다 — 값이 없으면 "ok".
+        "aggregate_status": _export_agg_status(),
     }
     (out / "BUNDLE.json").write_text(
         json.dumps(bundle, indent=2, ensure_ascii=False) + "\n")

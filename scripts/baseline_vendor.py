@@ -142,6 +142,7 @@ def score(path: str, ok_only: bool = False) -> int:
     for i in range(t.num_rows):
         if not str(c["env_hash"][i]).startswith(eh[:8]):
             continue
+        # status-filter: --status 플래그. 기본은 all.
         if ok_only and c["status"][i] != "ok":
             continue
         tm = c["time_ms"][i]
@@ -224,6 +225,7 @@ def main() -> int:
     if a.extract:
         return extract(a.extract, a.count)
     if a.score:
+        # status-filter: --status 플래그를 score() 로 넘긴다. 기본은 all.
         return score(a.score, a.status == "ok")
     ap.print_help()
     return 2

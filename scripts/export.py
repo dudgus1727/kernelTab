@@ -44,6 +44,42 @@ KERNEL_COLS = [
 ]
 
 
+#: 표에 실리는 형상별 집계(`difficulty`, `distinct_time_frac`)를 어떤 행으로
+#: 계산하는가. **`all` — 유효한 시간이 있는 측정은 전부 쓴다.**
+#:
+#: ⛔ 예전에는 `status == "ok"` 만 썼다. `consumer_contract.md` §9 는
+#:    "status != ok 는 결측이 아니다" 라고 **옳게** 적어 뒀는데 코드가 반대로
+#:    하고 있었다. `high_outlier_frac` 는 시간이 유효한데 산포가 넓다는
+#:    표시일 뿐이라, 빼면 그 config 를 없는 것으로 만든다 (10.6% = 104,425행).
+#:
+#: 실측 영향 (828baa64):
+#:    difficulty          중앙 +0.02%,  13/66 형상이 1% 넘게 변함
+#:    distinct_time_frac  중앙 -1.49pp, 40/66 형상이 1pp 넘게 변함
+#:    형상 최적 시간       중앙 +0.00%,  1% 넘는 변화 없음
+#:
+#: ⚠️ 공개된 c63710df / 828baa64 번들은 **`ok` 로 계산됐다**
+#:    (schema_version <= 2). BUNDLE.json 의 `aggregate_status` 로 구분한다.
+AGG_STATUS = "all"
+
+
+def _agg_time(r):
+    """형상별 집계에 넣을 시간. 유효하지 않은 것만 뺀다 (`AGG_STATUS` 참고)."""
+    t = r.get("time_ms")
+    if not t or t <= 0:
+        return None
+    # status-filter: AGG_STATUS 정책 게이트. 기본 "all" 이라 이 가지는
+    # 평소 안 탄다 — 옛 동작을 재현할 때만 쓴다.
+    if AGG_STATUS == "ok" and r.get("status") != "ok":
+        return None
+    return t
+
+
+def _agg_time_q(r):
+    """`_agg_time` 을 눈금 단위로 반올림한 값 (서로 다른 값 세기용)."""
+    t = _agg_time(r)
+    return None if t is None else round(t, 9)
+
+
 def load(path: Path) -> list[dict]:
     if not path.exists():
         return []
@@ -191,9 +227,7 @@ def main() -> int:
     _diff = _per_env(
         rows,
         key_fn=lambda r: (r["M"], r["N"], r["K"]),
-        val_fn=lambda r: (r["time_ms"]
-                          if r.get("status") == "ok" and r.get("time_ms")
-                          else None),
+        val_fn=_agg_time,
         agg=lambda ts: _st.median(ts) / min(ts),
         min_n=5)          # 표본이 적으면 중앙값이 의미 없다
     # --- 형상 분해능 -------------------------------------------------------
@@ -215,17 +249,13 @@ def main() -> int:
     _distinct = _per_env(
         rows,
         key_fn=lambda r: (r["M"], r["N"], r["K"]),
-        val_fn=lambda r: (round(r["time_ms"], 9)
-                          if r.get("status") == "ok" and r.get("time_ms")
-                          else None),
+        val_fn=_agg_time_q,
         agg=lambda ts: len(set(ts)) / len(ts),
         min_n=5)
     _ndist = _per_env(
         rows,
         key_fn=lambda r: (r["M"], r["N"], r["K"]),
-        val_fn=lambda r: (round(r["time_ms"], 9)
-                          if r.get("status") == "ok" and r.get("time_ms")
-                          else None),
+        val_fn=_agg_time_q,
         agg=lambda ts: len(set(ts)),
         min_n=5)
 

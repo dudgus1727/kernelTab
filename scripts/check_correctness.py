@@ -106,6 +106,8 @@ def main() -> int:
             except Exception as exc:  # pragma: no cover
                 rec.update(status="exception", detail=repr(exc))
             f.write(json.dumps(rec) + "\n")
+            # status-filter: 여기서 status 는 **정확도 검증 결과**다.
+            # 측정 품질 플래그가 아니라 이 스크립트가 방금 만든 값이다.
             if rec["status"] == "ok":
                 n_ok += 1
             else:

@@ -11,13 +11,20 @@ import pytest
 
 from kerneltab.core import noise
 from kerneltab.core.noise import (
+    A6000_MEASURED,
     SIGMA_ABS_MS,
     SIGMA_REL,
     coefficients,
-    noise_floor,
-    noise_floor_ms,
-    resolvable,
 )
+
+# 계수는 **주입**한다 (C-1). 모듈 전역 함수는 지웠다 — 4090/H100 번들에서
+# A6000 눈금을 조용히 쓰던 경로였다. 이 파일은 A6000 계수의 성질을 검사하니
+# 그것을 이름으로 집어 온다.
+noise_floor = A6000_MEASURED.floor
+noise_floor_ms = A6000_MEASURED.floor_ms
+resolvable = A6000_MEASURED.resolvable
+sigma_rel = A6000_MEASURED.sigma
+tick_pct = A6000_MEASURED.tick_pct
 
 
 class TestModel:
@@ -32,7 +39,6 @@ class TestModel:
         타이머 분해능이 더 들어가 있어서 짧은 커널에서 훨씬 크다 — 관측된
         산포와 비교할 값이 아니다.
         """
-        from kerneltab.core.noise import sigma_rel
         # 0.0143 ms -> 실측 2.93%,  2.9164 ms -> 실측 0.018%
         assert 0.015 < sigma_rel(0.0143) < 0.045
         assert 0.0003 < sigma_rel(2.9164) < 0.0015
@@ -44,13 +50,11 @@ class TestModel:
         떨어진 두 config 는 시간이 **문자 그대로 동일**하게 기록되므로
         2.7 % 기준으로 "구분된다" 고 하면 없는 순위를 만든다.
         """
-        from kerneltab.core.noise import sigma_rel, tick_pct
         t = 0.0143
         assert tick_pct(t) > sigma_rel(t)
         assert noise_floor(t) == pytest.approx(tick_pct(t))
 
     def test_긴_커널에서는_통계가_지배한다(self):
-        from kerneltab.core.noise import sigma_rel, tick_pct
         t = 4.0
         assert sigma_rel(t) > tick_pct(t)
         assert noise_floor(t) == pytest.approx(sigma_rel(t))
@@ -122,17 +126,17 @@ class TestTimerTick:
     """
 
     def test_짧은_커널에서_눈금이_크다(self):
-        assert noise.tick_pct(0.013312) == pytest.approx(0.0769, abs=1e-3)
-        assert noise.tick_pct(0.0143) == pytest.approx(0.0716, abs=1e-3)
+        assert tick_pct(0.013312) == pytest.approx(0.0769, abs=1e-3)
+        assert tick_pct(0.0143) == pytest.approx(0.0716, abs=1e-3)
 
     def test_긴_커널에서는_무시할_수_있다(self):
-        assert noise.tick_pct(2.9) < 0.001
+        assert tick_pct(2.9) < 0.001
 
     def test_실측_사례가_눈금_하나_미만이다(self):
         start, end = 0.013312, 0.012448
         moved = abs(end / start - 1)
         assert moved == pytest.approx(0.0649, abs=1e-3)
-        assert moved < noise.tick_pct(start), (
+        assert moved < tick_pct(start), (
             "이 차이는 눈금보다 작다 — 분해할 수 없다")
 
     def test_관측값에서_양자를_추정한다(self):
@@ -143,4 +147,4 @@ class TestTimerTick:
         assert noise.tick_ms_observed([0.5, 0.5]) is None
 
     def test_0_이하는_무한대(self):
-        assert noise.tick_pct(0) == float("inf")
+        assert tick_pct(0) == float("inf")

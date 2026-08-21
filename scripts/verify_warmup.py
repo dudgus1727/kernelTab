@@ -163,6 +163,10 @@ def main() -> int:
             kern.release(h)
         if len(o) < 3 or len(n) < 3:
             continue
+        # 눈금은 **이 장비에서 관측된 값**으로 잡는다. A6000 상수를 그냥
+        # 쓰면 다른 GPU 에서 허용치가 틀린다 — 그리고 이 스크립트가 두 번
+        # 틀린 곳이 정확히 허용치다.
+        coef = noise.coef_from_observed(o + n + ctrl, krow["kernel_id"])
         mo, mn = statistics.median(o), statistics.median(n)
         mc = statistics.median(ctrl) if len(ctrl) >= 3 else mo
         rel = (mn - mo) / mo
@@ -171,7 +175,7 @@ def main() -> int:
         # 그룹 내 산포에서 중앙값 차이의 표준오차를 잡는다.
         pooled = statistics.fmean([statistics.pstdev(o), statistics.pstdev(n)])
         se = (pooled / max(len(o), 1) ** 0.5) / mo if mo else 0.0
-        floor = noise.noise_floor(mo)
+        floor = coef.floor(mo)
         # 허용치는 **대조군을 포함**해서 잡는다. 같은 프로토콜을 두 번 재서
         # X 만큼 달랐다면, 프로토콜 간 X 이하의 차이는 증거가 되지 못한다.
         #

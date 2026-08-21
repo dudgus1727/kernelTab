@@ -72,6 +72,7 @@ def main() -> int:
     eh = env["env_hash"][:16]
     df = pq.read_table(paths.RESULTS_DIR / "table.parquet").to_pandas()
     df = df[df.env_hash.astype(str).str.startswith(eh[:8])]
+    # status-filter: --status 플래그를 해석하는 자리. 기본은 all.
     if a.status == "ok":
         df = df[df.status == "ok"]
     df = df[df.time_ms > 0].copy()
@@ -130,6 +131,7 @@ def main() -> int:
         if eeh:
             ev = ev[ev.env_hash.astype(str).str.startswith(eeh)]
         ev = ev[ev.time_ms > 0]
+        # status-filter: --status 플래그 (평가 표). 기본은 all.
         if a.status == "ok":
             ev = ev[ev.status == "ok"]
         ev = ev.copy()

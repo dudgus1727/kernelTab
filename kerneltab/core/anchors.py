@@ -53,6 +53,12 @@ from datetime import datetime
 from pathlib import Path
 
 from kerneltab.core import noise as noise_model
+
+#: 앵커 분석은 **측정 직후 그 장비에서** 돌기 때문에 번들이 아직 없다.
+#: A6000 계수를 쓰되, 이름으로 출처를 드러낸다 — 다른 GPU 에서는
+#: `model_pct`/`tick_pct` 열이 참고치라는 뜻이다 (판정은 관측 산포 `s_within`
+#: 으로 하므로 계수에 의존하지 않는다).
+NOISE = noise_model.A6000_MEASURED
 from kerneltab.core import records
 
 __all__ = [
@@ -329,7 +335,7 @@ def analyze(rows: list[dict], rnd: list[int | None], env_hash: str,
         judged = i < n_judged
         rep.stats.append(AnchorStat(k[0], k[1], overall, len(med),
                                     max(vals) - min(vals), s_b, s_w,
-                                    noise1[k], 100 * noise_model.sigma_rel(overall),
+                                    noise1[k], 100 * NOISE.sigma(overall),
                                     ratio, judged, ok))
         if judged and not ok:
             rep.failures.append(
@@ -447,5 +453,5 @@ def analyze(rows: list[dict], rnd: list[int | None], env_hash: str,
                 k[0], k[1],
                 (me / ms - 1) * 100,
                 (statistics.fmean(en) / statistics.fmean(st) - 1) * 100,
-                100 * noise_model.tick_pct(ms)))
+                100 * NOISE.tick_pct(ms)))
     return rep

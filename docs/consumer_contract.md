@@ -128,14 +128,22 @@ for r in records.iter_records(path, env_hash):
 |---|---|
 | 1 | `noise_floor` 가 통계 모델만 (`sigma_abs_ms`, `sigma_rel`) |
 | **2** | `noise_floor.tick_ms` (타이머 분해능) + 표에 `distinct_time_frac` |
+| **3** | `aggregate_status` — 형상별 집계가 `ok` 만이 아니라 **유효 측정 전부** |
 
 ```python
 b = load_bundle(...)
 b.schema_version      # 2
 b.tick_ms             # 0.001024 — 없으면 경고하고 A6000 관측치로 대체
+b.coef                # NoiseCoef — answer_set 에 넘길 계수 (§5.1)
 b.noise_floor(t)      # max(통계, 분해능)
+b.aggregate_status    # "all" | "ok" — 없으면 "ok" (schema <= 2)
 b.info["table_columns"]   # 표에 **실제로** 있는 컬럼
 ```
+
+> 공개된 `c63710df` / `828baa64` 번들은 **`aggregate_status = "ok"`** 다.
+> `difficulty` 와 `distinct_time_frac` 을 그 두 표와 **다음 캠페인 표
+> 사이에서 비교하려면** 이 값을 먼저 봐라. 실측 차이는 `difficulty` 중앙
+> +0.02 %, `distinct_time_frac` 중앙 −1.49 pp 다.
 
 > 버전은 "무엇이 들어갈 수 있는가" 이고 `table_columns` 는 "실제로 무엇이
 > 들어 있는가" 다. 같은 버전이라도 `export` 시점이 다를 수 있으므로
@@ -152,6 +160,27 @@ b.info["table_columns"]   # 표에 **실제로** 있는 컬럼
 
 `ANSWER_COLS` 이므로 `load_for_ranking()` 에는 안 나온다 —
 `load_for_scoring()` 에서 채점을 층화·가중할 때 쓴다. `difficulty` 와 같다.
+
+### 5.1 `answer_set()` 은 계수를 **주입받는다**
+
+```python
+from kerneltab.core.table import answer_set
+
+b = load_bundle("rtx-a6000-sm_86-828baa64")
+ans = answer_set(shape_rows, noise=b.coef)   # ✅
+ans = b.answer_set(shape_rows)               # ✅ 같은 것, 잊을 수 없는 쪽
+answer_set(shape_rows)                       # ⛔ NoiseCoefRequired
+```
+
+**왜 기본값을 없앴나.** 예전에는 `core/noise.py` 의 모듈 전역
+`noise_floor(t)` 를 불렀다. 그 계수는 **A6000 에서 잰 값**이라, 4090/H100
+번들을 채점할 때도 A6000 눈금을 썼다 — 게다가 `Bundle.tick_ms` 를 안
+거치니 **그 경고조차 안 났다.** 눈금이 2 배인 GPU 에서 정답 집합이
+1.5~6.2 배 어긋난다.
+
+기본값이 조용히 틀리는 것보다 **명시를 요구하는 쪽**이 안전하다
+(`decisions.md` 15 의 원칙). 노이즈와 무관한 고정 허용치를 쓰려면
+`answer_set(rows, tol=0.01)` 로 근거를 남기고 쓴다.
 
 ## 6. 안전장치
 
@@ -207,6 +236,17 @@ X = load_for_ranking(path, env_hash="368a84f1")
 
 로더는 기본으로 `status == "ok"` 만 남긴다 (`ok_only=True`). 하지만 실패
 줄은 **버려진 것이 아니라 명시적으로 기록된 것**이다.
+
+> ⚠️ **이 계약을 우리 코드가 어기고 있었다.** `baseline_*.py` 가
+> `ok` 만 남기는 바람에 "61 형상 전부에서 측정된 config" 가 3,465 개가
+> 아니라 **3 개**로 줄었고, 정적 top-1 이 1.115 인데 **1.394** 로 공개
+> 문서에 실렸다 (`baselines.md` 정정 이력 참고).
+>
+> **문서가 옳고 코드가 틀렸는데, 문서를 믿었으니 아무도 안 봤다.**
+> 지금은 `--status {ok,all}` (기본 `all`) 이고,
+> `tests/test_contracts.py` 가 (a) 기본값이 `all` 인지, (b) 새로 생기는
+> `status` 비교마다 `# status-filter: <이유>` 표시가 붙는지를 AST 로
+> 검사한다. 계약을 적었으면 **그 계약을 검사하는 테스트**를 함께 쓴다.
 
 | status | 의미 | 규칙 관점 |
 |---|---|---|

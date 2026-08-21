@@ -154,6 +154,8 @@ def _read(path: str | Path, env_hash: str | None, ok_only: bool):
             "비교할 수 없다.\n  " + ", ".join(sorted(df["env_hash"].unique())[:5])
         )
     if ok_only:
+        # status-filter: ok_only 인자를 해석하는 자리. 기본값은 호출자가
+        # 정하고, 스크립트 기본은 all 이다 (test_contracts 가 고정).
         df = df[df["status"] == "ok"]
     return df.reset_index(drop=True)
 
@@ -207,33 +209,46 @@ def load_for_scoring(
     return df[keys + ans]
 
 
-def answer_set(df, tol: float | None = None):
+def answer_set(df, tol: float | None = None, *, noise=None):
     """이 형상에서 **정답으로 인정할 config 집합** (채점용).
 
     `df` 는 한 형상의 행들이어야 한다 (`time_ms` 필요 -> `load_for_scoring`).
 
-    ⚠️ `tol=None` 이 기본이고, 그때는 **형상마다 다른** 노이즈 바닥을 쓴다
-    (`core.noise`). 고정 1 % 를 기본값으로 두면 안 된다 — 15 us 커널에서
+    `noise` 는 이 표를 만든 조건의 `core.noise.NoiseCoef` 다. **필수다.**
+    `Bundle.coef` 가 번들에서 만들어 주고, `Bundle.answer_set()` 이 알아서
+    넘긴다.
+
+    ⛔ 예전에는 `core.noise` 의 모듈 전역 함수를 불렀다. 그러면 4090/H100
+    번들을 채점할 때도 **A6000 눈금을 경고 없이 쓴다** — `Bundle.tick_ms`
+    를 안 거치니 그 경고조차 안 난다. 눈금이 2배인 GPU 에서 정답 집합이
+    1.5~6.2 배 어긋난다. 기본값이 조용히 틀리는 것보다 명시를 요구하는
+    쪽이 안전하다.
+
+    ⚠️ 고정 허용치(`tol=0.01`)를 기본값으로 두면 안 된다 — 15 us 커널에서
     1 % 는 재현되지 않는 차이라서, 그 형상에서는 노이즈를 정답/오답으로
     가르게 된다. 33시간 앵커에서 크기별 재현성이 **35 배** 차이났다.
-
     `tol` 을 명시하면 그 값을 쓴다. 왜 노이즈 바닥이 아닌지 근거를 남길 것.
     """
-    from kerneltab.core.noise import noise_floor
-
     t = df["time_ms"]
     best = t.min()
-    if tol is None:
-        # 최적 시간 기준 노이즈. 2 시그마를 허용치로 본다.
-        tol = 2.0 * noise_floor(float(best))
+    tol = answer_tolerance(float(best), tol, noise=noise)
     return df[t <= best * (1.0 + tol)]
 
 
-def answer_tolerance(best_time_ms: float, tol: float | None = None) -> float:
-    """`answer_set` 이 쓰는 허용치. 리포트/문서에서 인용하려고 분리했다."""
-    from kerneltab.core.noise import noise_floor
+def answer_tolerance(best_time_ms: float, tol: float | None = None,
+                     *, noise=None) -> float:
+    """`answer_set` 이 쓰는 허용치. 리포트/문서에서 인용하려고 분리했다.
 
-    return 2.0 * noise_floor(best_time_ms) if tol is None else tol
+    최적 시간 기준 노이즈 바닥의 2 시그마. `noise` 주입은 필수 —
+    이유는 `answer_set` 참고.
+    """
+    if tol is not None:
+        return tol
+    if noise is None:
+        from kerneltab.core.noise import NoiseCoefRequired
+
+        raise NoiseCoefRequired("answer_set()/answer_tolerance()")
+    return 2.0 * noise.floor(best_time_ms)
 
 
 def assert_no_answers(df, where: str = "규칙 입력") -> None:

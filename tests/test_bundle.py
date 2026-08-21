@@ -357,8 +357,16 @@ class TestSchemaVersion:
     def test_배포_번들이_최신_스키마다(self):
         """`bundle.py` 가 굽는 값이 코드의 기대와 같은지."""
         import re
+
+        from kerneltab.core import bundle as bundle_mod
         src = (REPO / "scripts" / "bundle.py").read_text()
         m = re.search(r'"schema_version":\s*(\d+)', src)
-        assert m and int(m.group(1)) == 2, (
+        assert m and int(m.group(1)) == 3, (
             "bundle.py 의 schema_version 과 이 테스트가 어긋난다. "
             "스키마를 바꿨으면 둘 다 올려라.")
+        # 버전 표에 그 줄이 있는가. 올리기만 하고 무엇이 바뀌었는지 안 적으면
+        # 소비 쪽이 구분할 수 없다.
+        doc = bundle_mod.Bundle.schema_version.__doc__ or ""
+        assert f"| {m.group(1)} |" in doc, (
+            "core/bundle.py 의 schema_version 버전 표에 "
+            f"{m.group(1)} 줄이 없다. 무엇이 늘었는지 적어라.")

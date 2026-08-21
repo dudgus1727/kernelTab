@@ -50,6 +50,7 @@ def main() -> int:
     eh = (a.env_hash or env["env_hash"])[:16]
     pq = str(paths.RESULTS_DIR / "table.parquet")
 
+    # status-filter: --status 플래그를 해석하는 자리. 기본은 all.
     _ok = a.status == "ok"
     X = load_for_ranking(pq, env_hash=eh, ok_only=_ok).reset_index(drop=True)   # 정답 없음
     y = load_for_scoring(pq, env_hash=eh, ok_only=_ok).reset_index(drop=True)   # 채점용

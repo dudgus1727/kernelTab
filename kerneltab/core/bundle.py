@@ -118,8 +118,33 @@ class Bundle:
         |---|---|
         | 1 | `noise_floor` 가 통계 모델만 (`sigma_abs_ms`, `sigma_rel`) |
         | 2 | `noise_floor.tick_ms` (타이머 분해능) + 표에 `distinct_time_frac` |
+        | 3 | `aggregate_status` — 형상별 집계가 `ok` 만이 아니라 유효 측정 전부 |
         """
         return int(self.info.get("schema_version") or 1)
+
+    @property
+    def aggregate_status(self) -> str:
+        """`difficulty` / `distinct_time_frac` 를 어떤 행으로 계산했는가.
+
+        `"all"` = 유효한 시간이 있는 측정 전부. `"ok"` = `status == "ok"` 만.
+
+        ⚠️ **값이 없으면 `"ok"` 다** (schema_version <= 2). 공개된
+        c63710df / 828baa64 번들이 그렇다. `status != ok` 를 결측처럼 뺀
+        것이라 `distinct_time_frac` 이 형상당 중앙 1.5 pp 높게 나온다.
+        두 캠페인을 **가로질러 이 열을 비교하려면** 이 값을 먼저 봐라.
+        """
+        return str(self.info.get("aggregate_status") or "ok")
+
+    @property
+    def coef(self):
+        """이 번들의 노이즈 계수 (`core.noise.NoiseCoef`).
+
+        **채점 쪽은 이것을 `answer_set(..., noise=...)` 로 넘겨야 한다.**
+        `core.noise` 의 계수는 A6000 값이라 다른 GPU 번들에 쓰면 틀린다.
+        """
+        from kerneltab.core import noise as noise_mod
+
+        return noise_mod.from_bundle(self.info)
 
     @property
     def tick_ms(self) -> float:
@@ -157,11 +182,17 @@ class Bundle:
         노이즈는 2.7 % 인데 눈금 하나는 7.3 % 다. 같은 눈금에 떨어진 두
         config 는 시간이 문자 그대로 동일하게 기록된다.
         """
-        c = self.info.get("noise_floor") or {}
-        a = c.get("sigma_abs_ms", 0.000374)
-        b = c.get("sigma_rel", 0.00044)
-        tick = self.tick_ms
-        return lambda t: (max(a / t + b, tick / t) if t and t > 0 else b)
+        return self.coef.floor
+
+    def answer_set(self, df, tol: float | None = None):
+        """이 번들의 눈금으로 정답 집합을 고른다.
+
+        `table.answer_set(df, noise=bundle.coef)` 와 같다. 계수 주입을
+        잊지 않게 하려고 번들에 붙여 뒀다.
+        """
+        from kerneltab.core.table import answer_set
+
+        return answer_set(df, tol, noise=self.coef)
 
     @property
     def table_path(self) -> Path:

@@ -108,7 +108,9 @@ def _wls(work: list[float], t_ms: list[float]) -> Fit:
     큰 형상이 회귀를 지배해 **절편이 그 하나의 잡음에 끌려간다** — 우리가
     알고 싶은 것이 바로 그 절편이다.
     """
-    w = [1.0 / max(noise.noise_floor_ms(t), 1e-9) ** 2 for t in t_ms]
+    # 계수는 A6000 값이다. 여기서는 **상대 가중치**로만 쓰이므로 다른 GPU
+    # 에서도 순서가 유지된다 — 짧은 형상일수록 가볍게. 판정에는 안 쓴다.
+    w = [1.0 / max(noise.A6000_MEASURED.floor_ms(t), 1e-9) ** 2 for t in t_ms]
     sw = sum(w)
     mx = sum(wi * x for wi, x in zip(w, work, strict=True)) / sw
     my = sum(wi * y for wi, y in zip(w, t_ms, strict=True)) / sw
