@@ -326,6 +326,22 @@ class Sm80Backend:
 
         return None
 
+    # -- 축 목록 (덮개 점검용) --------------------------------------------
+    def axis_space(self) -> dict[str, set]:
+        """모듈 상수에서 그대로 읽는다. 손으로 다시 적지 않는다."""
+        return {
+            "tb_tile": {tuple(t) for t in TB_TILES},
+            "tile_k": set(TB_K),
+            "warp_tile": {tuple(t) for t in WARP_TILES},
+            # warp_k 는 독립 축이 아니라 tile_k 를 나눈 값이다.
+            "warp_k": set(TB_K),
+            "stages": set(STAGES),
+            "split_k": set(SPLIT_K),
+            "split_k_mode": set(SPLIT_MODE),
+            "swizzle_n": {n for _, n in SWIZZLE},
+            "swizzle_type": {t for t, _ in SWIZZLE},
+        }
+
     # -- 파이프라인 계열 ---------------------------------------------------
     def pipeline_kind(self, cfg: KernelConfig) -> str:
         """stages=2 와 stages>=3 은 구현이 다른 별개 커널이다.

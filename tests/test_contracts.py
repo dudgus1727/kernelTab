@@ -187,3 +187,77 @@ def test_A6000_계수는_허용된_곳에서만_이름으로_쓴다():
     assert not bad, (
         "A6000_MEASURED 를 허용 목록 밖에서 쓴다:\n  " + "\n  ".join(bad)
         + "\n번들이 있으면 Bundle.coef 를 써라.")
+
+
+# --------------------------------------------------------------------------
+# C-3 — 축 목록은 안전장치다
+# --------------------------------------------------------------------------
+
+def test_백엔드를_직접_import_하지_않는다():
+    """호출부는 `get_backend()` 만 쓴다.
+
+    `check_axis_coverage.py` 가 축 목록이 필요해서 `backends.sm80` 을
+    직접 import 했었다. Protocol 에 `axis_space()` 를 넣어 없앴다.
+    """
+    #: 백엔드 **자체를 검증하는** 스크립트. sm80 의 예측 함수가 실측과
+    #: 맞는지 보는 것이 목적이라 그 함수를 직접 부를 수밖에 없다.
+    allowed = {"scripts/validate_constraints.py"}
+    bad = []
+    for f in _py_files():
+        rel = str(f.relative_to(REPO))
+        if rel.startswith("kerneltab/backends/") or rel in allowed:
+            continue
+        for node in ast.walk(_tree(f)):
+            mod = ""
+            if isinstance(node, ast.ImportFrom):
+                mod = node.module or ""
+            elif isinstance(node, ast.Import):
+                mod = ",".join(a.name for a in node.names)
+            if "backends.sm" in mod:
+                bad.append(f"{_where(f, node)}  {mod}")
+    assert not bad, (
+        "백엔드를 직접 import 한다:\n  " + "\n  ".join(bad)
+        + "\nget_backend(hw.arch) 를 써라. 필요한 것이 없으면 Protocol 에 "
+          "메서드를 더한다 (decisions.md 12).")
+
+
+def test_axis_space_가_모듈_상수와_같다():
+    """`axis_space()` 가 손으로 적은 사본이 되면 걸린다.
+
+    축 목록은 탐색 범위이면서 **안전장치**다 (`stages=1` — decisions.md
+    13-b). 두 벌이 되면 한쪽만 고쳐진다.
+    """
+    from kerneltab.backends import get_backend, sm80
+
+    sp = get_backend("sm_86").axis_space()
+    assert sp["stages"] == set(sm80.STAGES)
+    assert sp["split_k"] == set(sm80.SPLIT_K)
+    assert sp["warp_tile"] == {tuple(t) for t in sm80.WARP_TILES}
+    assert sp["tb_tile"] == {tuple(t) for t in sm80.TB_TILES}
+
+
+def test_stages_1_은_축에_없다():
+    """`stages=1` 은 컴파일도 되고 `can_implement()` 도 통과하는데 **결과가
+    틀린다** (65,536 원소 중 62,674 개 불일치, 최대 상대오차 32).
+
+    열거기의 `explain_kernel()` 도 `valid` 로 판정한다 — 이 목록이 유일한
+    방어다. 근거는 `docs/axis_coverage.md`, `decisions.md` 13-b.
+    """
+    from kerneltab.backends import sm80
+
+    assert 1 not in sm80.STAGES, (
+        "stages=1 을 축에 넣었다. CUTLASS 2.x OpClassTensorOp 에서 수치가 "
+        "틀린다 — can_implement() 는 통과시키므로 열거기로는 못 거른다.")
+
+
+def test_축_덮개_KNOWN_에는_근거가_있다():
+    """`KNOWN` 에 "확인했다" 만 적고 넘어가는 것을 막는다."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_cac", REPO / "scripts" / "check_axis_coverage.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    for key, why in mod.KNOWN.items():
+        assert len(why) > 120, f"{key} 의 근거가 너무 짧다: {why!r}"
+        assert "확인" in why or "불일치" in why, f"{key} 에 확인 내용이 없다"

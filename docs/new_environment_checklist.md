@@ -70,6 +70,7 @@ A6000 에서 이 절차 없이 시작했고, 두 번 대가를 치렀다.
 | | 게이트 | 소요 | 통과 기준 | 실패하면 |
 |---|---|---|---|---|
 | G-0 | 이미지 · 환경 | 20 분 | `manifest.py` 태그가 나온다 | 빌드 인자 확인 |
+| G-0b | 축 덮개 점검 | 5 분 | `check_axis_coverage.py` exit 0 | 축을 고치거나 근거를 적는다 |
 | G-1 | 클럭 고정 | 15 분 | 부하 중 실측 = 요청값 | 아래 G-1 참고 |
 | G-2 | P-state · 메모리 클럭 | 15 분 | 메모리 클럭이 요청의 90 % 이상 | 실측값을 조건으로 인정 |
 | G-3 | 실효 피크 · ridge point | 30 분 | 스펙 대비 60~90 % | 재측정 |
@@ -104,6 +105,21 @@ GPU 는 UUID 로 지정한다. 인덱스는 `CUDA_VISIBLE_DEVICES` 와 컨테이
 ```bash
 nvidia-smi --query-gpu=index,uuid,name --format=csv
 ```
+
+## G-0b. 축 덮개 점검 (측정 전, 5분)
+
+GPU 가 바뀌면 벤더 프리셋도 바뀌고 **추천도 바뀐다.** 우리 축 밖의 값을
+추천하기 시작하면 그 축을 안 재고 있다는 뜻이다.
+
+```bash
+python3 -m venv /tmp/nvmmh && /tmp/nvmmh/bin/pip install nvidia-matmul-heuristics
+/tmp/nvmmh/bin/python scripts/baseline_vendor.py --extract /tmp/vendor.json
+python3 scripts/check_axis_coverage.py --vendor /tmp/vendor.json
+```
+
+종료 코드 **4** = 근거 없는 공간 밖 값이 있다. **측정 전에** 결론을 내라 —
+전수를 돌린 뒤에 알면 그 축은 다음 캠페인까지 비어 있다.
+자세한 절차: [`axis_coverage.md`](axis_coverage.md).
 
 ## G-1. 클럭 고정 (호스트에서)
 

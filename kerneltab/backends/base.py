@@ -43,6 +43,19 @@ class Backend(Protocol):
         """
         ...
 
+    def axis_space(self) -> dict[str, set]:
+        """열거하는 축 -> 그 축이 취하는 값 집합.
+
+        축 덮개 점검(`scripts/check_axis_coverage.py`)이 쓴다. 외부 휴리스틱이
+        **우리가 아예 안 재는 값**을 추천하는지 보려면 축 목록이 필요한데,
+        호출부가 `backends.sm80` 을 직접 import 하면 Protocol 규약이 깨진다.
+
+        ⚠️ 이 값은 "탐색 범위" 이면서 **안전장치**다. `stages=1` 은 컴파일도
+        되고 `can_implement()` 도 통과하는데 결과가 틀린다 — 축 목록에 1 이
+        없다는 것이 유일한 방어였다 (`decisions.md` 13-b).
+        """
+        ...
+
     def enumerate_runtime(self, p: Problem, cfg: KernelConfig) -> list[RuntimeConfig]:
         """이 (형상, 커널)에 대해 유효한 런타임 config 전부.
 
