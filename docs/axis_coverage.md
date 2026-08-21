@@ -43,6 +43,14 @@ regret 점수에는 "가장 가까운 config" 로 대체돼 들어가므로 **�
 emit_cpp -> nvcc -> can_implement() -> 실행 -> 참조 GEMM 과 원소 비교
 ```
 
+`tools/axis_probe_stages.cu` 가 그 절차의 최소 예다. 컨테이너 안에서:
+
+```bash
+docker run --rm --gpus all -v "$PWD":/work:ro <이미지> bash -c '
+  nvcc -std=c++17 -arch=sm_86 -I/opt/cutlass/include \
+       -I/opt/cutlass/tools/util/include /work/tools/axis_probe_stages.cu -o /tmp/p && /tmp/p'
+```
+
 ---
 
 ## 2026-08-21 A6000 점검 결과
