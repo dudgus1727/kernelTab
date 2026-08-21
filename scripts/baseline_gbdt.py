@@ -46,14 +46,20 @@ def geo(v):
 def main() -> int:
     import lightgbm as lgb
     import numpy as np
+    import pandas as pd
     import pyarrow.parquet as pq
 
     from kerneltab.core import paths
 
     ap = argparse.ArgumentParser()
-    ap.add_argument("--split", choices=("block", "kfold"), default="block")
+    ap.add_argument("--split", choices=("block", "kfold", "transfer"),
+                    default="block")
     ap.add_argument("--m-threshold", type=int, default=2048)
     ap.add_argument("--folds", type=int, default=5)
+    ap.add_argument("--eval-table", default=None,
+                    help="`--split transfer` 용. **다른 조건의 표**로 채점한다. "
+                         "학습은 기본 표(KERNELTAB_RESULTS_DIR)로 한다")
+    ap.add_argument("--eval-env-hash", default=None)
     a = ap.parse_args()
 
     env = json.loads(paths.ENV_JSON.read_text())
@@ -91,7 +97,59 @@ def main() -> int:
         return m, m.predict(X[~train_mask])
 
     per_shape = {}
-    if a.split == "block":
+    if a.split == "transfer":
+        # ★ **툴체인 전이** — 한 조건으로 학습하고 **다른 조건의 표**로 채점한다.
+        #
+        #    kfold/block 은 같은 조건 안에서 형상을 나눈다. 그것은 "안 본
+        #    형상에 일반화하는가" 를 잰다. 여기서 묻는 것은 다른 질문이다:
+        #    **"표의 유통기한이 있는가."** 툴체인이 바뀌면 12.4 로 만든
+        #    모델과 규칙을 다시 봐야 하는가.
+        #
+        #    학습에 **전 형상**을 쓴다 — 형상 일반화가 아니라 조건 전이를
+        #    격리해서 재려는 것이다. 같은 형상·같은 커널을 다른 툴체인에서
+        #    다시 잰 표로 채점한다.
+        if not a.eval_table:
+            print("--split transfer 에는 --eval-table 이 필요하다.")
+            return 2
+        m = lgb.LGBMRegressor(n_estimators=600, learning_rate=0.06,
+                              num_leaves=127, min_child_samples=40,
+                              subsample=0.8, colsample_bytree=0.8, verbose=-1)
+        m.fit(X, df._y)
+        imp = sorted(zip(feat, m.feature_importances_), key=lambda x: -x[1])[:12]
+
+        ev = pq.read_table(Path(a.eval_table)).to_pandas()
+        eeh = (a.eval_env_hash or "")[:8]
+        if eeh:
+            ev = ev[ev.env_hash.astype(str).str.startswith(eeh)]
+        ev = ev[(ev.status == "ok") & (ev.time_ms > 0)].copy()
+        ev["_shape"] = list(zip(ev.M, ev.N, ev.K))
+        # ⚠️ 피처를 **학습 때와 같은 순서·같은 처리**로 만든다. 컬럼이
+        #    하나라도 어긋나면 LightGBM 이 조용히 다른 것을 읽는다.
+        miss = [c for c in feat if c not in ev.columns]
+        if miss:
+            print(f"평가 표에 없는 피처: {miss}")
+            return 2
+        # ⚠️ **학습 때와 같은 범주 매핑**을 써야 한다. 평가 표에서 새로
+        #    `astype("category")` 를 하면 범주 순서가 달라지고, LightGBM 은
+        #    같은 코드를 **다른 값**으로 읽는다. 조용히 틀리는 종류다 —
+        #    다행히 여기서는 categorical_feature 불일치로 죽는다.
+        Xe = ev[feat].copy()
+        for c in Xe.columns:
+            if str(X[c].dtype) == "category":
+                Xe[c] = pd.Categorical(Xe[c], categories=X[c].cat.categories)
+                unseen = Xe[c].isna().sum() - ev[c].isna().sum()
+                if unseen > 0:
+                    print(f"  [주의] {c}: 학습에 없던 값 {unseen:,}행 -> 결측")
+            elif Xe[c].dtype == bool:
+                Xe[c] = Xe[c].astype(int)
+        ev["_p"] = m.predict(Xe)
+        print(f"전이: 학습 {len(df):,}행 ({eh[:8]}) -> "
+              f"평가 {len(ev):,}행 ({eeh or '전체'}), 형상 "
+              f"{ev._shape.nunique()}개")
+        for sh, g in ev.groupby("_shape"):
+            per_shape[sh] = {k: g.nsmallest(k, "_p").time_ms.min() / g.time_ms.min()
+                             for k in (1, 3, 5)}
+    elif a.split == "block":
         te = df.M > a.m_threshold
         print(f"블록 분할 M>{a.m_threshold}: 학습 {(~te).sum():,} / "
               f"검증 {te.sum():,} (검증 형상 {df[te]._shape.nunique()}개)")
@@ -120,9 +178,11 @@ def main() -> int:
                 imp = sorted(zip(feat, m.feature_importances_), key=lambda x: -x[1])[:12]
             print(f"  fold {f_}: 검증 형상 {d._shape.nunique()}개")
 
-    dm = pq.read_table(paths.RESULTS_DIR / "table.parquet",
+    dpath = Path(a.eval_table) if a.eval_table else paths.RESULTS_DIR / "table.parquet"
+    deh = (a.eval_env_hash or eh)[:8] if a.eval_table else eh[:8]
+    dm = pq.read_table(dpath,
                        columns=["env_hash", "M", "N", "K", "difficulty"]).to_pandas()
-    dm = dm[dm.env_hash.astype(str).str.startswith(eh[:8])].dropna(subset=["difficulty"])
+    dm = dm[dm.env_hash.astype(str).str.startswith(deh)].dropna(subset=["difficulty"])
     dmap = dm.groupby(["M", "N", "K"]).difficulty.first().to_dict()
     med = np.median(list(dmap.values()))
     hard = {s for s in per_shape if dmap.get(s, 0) >= med}

@@ -16,6 +16,7 @@ import argparse
 import json
 import statistics
 import sys
+import time
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,12 +34,71 @@ def _ts(s):
         return None
 
 
+def _count(eh: str) -> int:
+    n = 0
+    for r in records.iter_records(paths.RESULTS_DIR / "results.jsonl", eh):
+        if records.is_measurement(r):
+            n += 1
+    return n
+
+
+def _wait(a) -> int:
+    """완료 **또는 정지**에서 빠져나온다.
+
+    ⚠️ 완료 로그 한 줄에 의존하면 안 된다. 실제로 전수 완료를 몇 시간 늦게
+    알았다 — 감시는 걸어 뒀는데 **완료 대기를 안 걸었고**, 로그만 보는
+    감시는 프로세스가 조용히 죽으면 영원히 조용하다.
+
+    그래서 두 조건을 본다.
+
+    | 조건 | 종료 코드 |
+    |---|---|
+    | `sweep_done` 이 기록됐다 | 0 |
+    | `--stale-min` 동안 새 줄이 없다 (죽었거나 멈췄다) | 5 |
+
+    "진행 중" 신호가 끊기는 것만으로도 상태 변화를 알 수 있어야 한다.
+    """
+    env = json.loads(paths.ENV_JSON.read_text()) if paths.ENV_JSON.exists() else {}
+    eh = (a.env_hash or env.get("env_hash") or records.ALL)[:8]
+    last_n, last_change = _count(eh), time.time()
+    print(f"대기 시작  env_hash={eh}  측정 {last_n:,}줄  "
+          f"(폴링 {a.poll}s, 정지 판정 {a.stale_min}분)", flush=True)
+    while True:
+        time.sleep(a.poll)
+        done = any(r.get("event") == "sweep_done"
+                   for r in records.iter_records(
+                       paths.RESULTS_DIR / "sweep.jsonl", records.ALL)
+                   if str(r.get("env_hash") or "").startswith(eh))
+        n = _count(eh)
+        if n != last_n:
+            last_n, last_change = n, time.time()
+        idle = (time.time() - last_change) / 60
+        print(f"  {n:,}줄  마지막 변화 {idle:.0f}분 전"
+              + ("  [sweep_done]" if done else ""), flush=True)
+        if done and idle > 2:
+            print("완료.")
+            return 0
+        if idle > a.stale_min:
+            print(f"⛔ {a.stale_min}분 동안 새 줄이 없다 — 멈췄거나 죽었다.")
+            return 5
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--env-hash", default=None)
     ap.add_argument("--anchors", action="store_true",
                     help="앵커 판정도 함께 (느리다)")
+    ap.add_argument("--wait", action="store_true",
+                    help="끝날 때까지 기다린다. **완료 또는 정지**에서 빠져나온다 "
+                         "(0=완료, 5=정지, 2=시작 안 함). 완료 이벤트 하나에 "
+                         "의존하지 않는다")
+    ap.add_argument("--poll", type=int, default=120, help="--wait 폴링 간격(초)")
+    ap.add_argument("--stale-min", type=int, default=45,
+                    help="--wait: 이 시간(분) 동안 새 줄이 없으면 정지로 본다")
     a = ap.parse_args()
+
+    if a.wait:
+        return _wait(a)
 
     env = json.loads(paths.ENV_JSON.read_text()) if paths.ENV_JSON.exists() else {}
     eh = (a.env_hash or env.get("env_hash") or records.ALL)[:8]
