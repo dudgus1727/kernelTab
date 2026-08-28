@@ -103,9 +103,26 @@ DRIFT_STRIKES = 3
 #: 이동 기준과 별개로, 소킹 직후 기준값 대비 이 값을 넘으면 경고.
 #: 아주 느린 드리프트가 누적되는 것을 놓치지 않기 위함이다.
 DRIFT_ABS_WARN = 0.08
-#: 최근 구간에서 sw_power_cap 이 이 비율을 넘으면 즉시 경고
-#: (클럭 고정이 풀렸거나 다른 프로세스가 GPU 를 쓰고 있다)
+#: 최근 구간에서 sw_power_cap 이 이 비율을 넘으면 경고 **후보**로 본다.
+#:
+#: ⛔ 이 플래그만으로 판정하지 마라. GeForce 에서는 클럭을 부스트 상한 아래로
+#:    고정해 두면 "전력 때문에 더 못 올라간다" 가 자명하게 참이라 이 비트가
+#:    상시로 뜬다. RTX 5090 을 2392 MHz 로 고정하고 재니 플래그가 31.9 %
+#:    떴는데 **그 샘플들의 클럭이 전부 2392(목표값)** 였고 171 W 에서도 떴다.
+#:    클럭을 **낮췄더니 플래그가 늘었다** (20.4 % -> 31.9 %).
+#:    (docs/decisions.md 22, pending_fixes D-5)
+#:
+#: 그래서 실제 판정은 **클럭이 목표 아래로 내려갔는가**로 한다. 아래
+#: `CLOCK_DIP_TOL` 을 함께 넘을 때만 경고한다.
 POWER_CAP_TOL = 0.05
+
+#: 고정 클럭 대비 이 비율보다 더 내려가야 "딥" 으로 본다.
+#:
+#: 지원 클럭 목록은 이산값이라(5090 은 7~8 MHz 간격) 부스트 알고리즘이 한 칸
+#: 아래로 진동하는 것은 정상이다. 5090 에서 2392 고정 시 11.9 % 샘플이
+#: 2385 였는데, **그 구간의 전력이 오히려 낮았다**(중앙 323 W vs 342 W) —
+#: 전력이 아니라 입도다. 한 칸(0.3 %)은 넘기고 그보다 큰 이탈만 잡는다.
+CLOCK_DIP_TOL = 0.01
 #: status 분포를 이 주기로 로그에 남긴다
 STATUS_LOG_SECONDS = 3600
 
@@ -845,10 +862,29 @@ def main() -> int:
                             break
                     tel = telemetry_tail_stats(int(drift_period) + 60)
                     if tel and tel["sw_power_cap_frac"] > POWER_CAP_TOL:
-                        print(f"  !! sw_power_cap {100 * tel['sw_power_cap_frac']:.1f}% "
-                              f"(최근 {tel['n']}초, 클럭 {tel['clk_min']}~"
-                              f"{tel['clk_max']} MHz) — 클럭 고정이 풀렸거나 "
-                              f"다른 프로세스가 GPU 를 쓰고 있다", flush=True)
+                        # ★ 판정은 클럭 분포로 한다. 플래그만으로는 GeForce 에서
+                        #   상시 오경보가 난다 (위 POWER_CAP_TOL 주석 참조).
+                        #   24시간 캠페인에서 144회 오경보가 나면 진짜 클럭
+                        #   풀림을 놓친다.
+                        want = env.get("locked_mhz")
+                        dip = (want and tel["clk_min"]
+                               and (want - tel["clk_min"]) / want > CLOCK_DIP_TOL)
+                        if dip:
+                            print(f"  !! 클럭이 고정값 아래로 내려갔다: "
+                                  f"{tel['clk_min']}~{tel['clk_max']} MHz "
+                                  f"(고정 {want}, 최대 이탈 "
+                                  f"{100 * (want - tel['clk_min']) / want:.2f}%) "
+                                  f"— 고정이 풀렸거나 다른 프로세스가 GPU 를 쓴다. "
+                                  f"sw_power_cap {100 * tel['sw_power_cap_frac']:.1f}%",
+                                  flush=True)
+                        else:
+                            # 기록은 남기되 경고로 올리지 않는다.
+                            print(f"  [tel] sw_power_cap "
+                                  f"{100 * tel['sw_power_cap_frac']:.1f}% "
+                                  f"(최근 {tel['n']}초) — 클럭 {tel['clk_min']}~"
+                                  f"{tel['clk_max']} MHz 로 정상. "
+                                  f"고정 클럭 아래에서는 이 비트가 상시로 뜬다",
+                                  flush=True)
 
                 if time.time() - last_status_log > STATUS_LOG_SECONDS:
                     last_status_log = time.time()
