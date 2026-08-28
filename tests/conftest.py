@@ -141,6 +141,21 @@ def hw_a6000():
 
 
 @pytest.fixture
+def hw_5090():
+    """RTX 5090 을 2692 MHz / 13801 MHz 로 고정했을 때의 실효 스펙.
+
+    요청값이 아니라 **20분 부하 검증의 실측값**이다 (`-lgc 2700` 이 지원
+    클럭 목록의 2692 로 스냅됐다). 파생값은 전부 이 값 기준이다 —
+    실효 피크 234.306 / 실효 대역폭 1766.53 / ridge 132.6.
+    """
+    return Hardware(
+        name="NVIDIA GeForce RTX 5090", arch="sm_120", sm_count=170,
+        smem_per_block=101376, max_threads_per_sm=1536, regs_per_sm=65536,
+        peak_tflops_f16=234.306, bandwidth_gbps=1766.53, l2_bytes=100663296,
+    )
+
+
+@pytest.fixture
 def hw_other():
     """SM 개수만 다른 가상 GPU. 하드웨어 상수 하드코딩 검출용."""
     return Hardware(

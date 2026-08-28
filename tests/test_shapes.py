@@ -22,12 +22,14 @@ class TestLayerCounts:
         assert len(shapes_layer_b()) == 12      # 8 + 4
         assert len(shapes_layer_c(hw_a6000)) == 11
         assert len(shapes_layer_d()) == 5
-        assert len(shapes_layer_e()) == 5
+        # 층 E 는 2026-08-28 에 5 -> 4 로 줄었다 (512, 1024 제외 / 16384 추가).
+        # 5090 의 below_launch_overhead 문턱 아래라 순위가 안 나온다.
+        assert len(shapes_layer_e()) == 4
 
     def test_layer_sum_and_unique(self, hw_a6000):
         layers = all_layers(hw_a6000)
-        assert sum(len(v) for v in layers.values()) == 73
-        assert len(all_shapes(hw_a6000)) == 66     # 층 간 중복 7개 제거
+        assert sum(len(v) for v in layers.values()) == 72
+        assert len(all_shapes(hw_a6000)) == 65     # 층 간 중복 7개 제거
 
     def test_all_shapes_dedups(self, hw_a6000):
         shapes = all_shapes(hw_a6000)
@@ -112,3 +114,43 @@ class TestLayerD:
         """층 D 는 alignment 엣지케이스 전용이다. (8,8,8) 이 섞이면 목적이 흐려진다."""
         from kerneltab.core.config import alignments_for
         assert all(alignments_for(p) != (8, 8, 8) for p in shapes_layer_d())
+
+
+class TestBelowLaunchOverhead:
+    """★ 형상이 런치 오버헤드 아래로 내려가면 순위 정보가 사라진다.
+
+    `below_launch_overhead` 문턱은 `3 x launch_bracketed_grid_ms` 이고
+    RTX 5090 에서 12.29 us 다. SOL(하한)이 그 아래인 형상은 **어떤 config
+    로도** 문턱 위로 못 올라간다.
+
+    심각도가 균일하지 않다는 것이 핵심이다:
+
+        문턱의 100% 아래   측정해도 순위가 없다 — 결측과 같다
+        ★ 70~90%          느린 config 는 살고 빠른 config 만 잘린다.
+                          **정답 쪽만 검열**되므로 가장 나쁘다 — 남은 값으로
+                          순위를 매기면 틀린 답이 나오는데 결측으로 안 보인다
+
+    그래서 개수만 고정하지 않고 문턱 자체를 검사한다.
+    """
+
+    #: RTX 5090 (2692 MHz / 13801 MHz 고정) 실측 파생값
+    PEAK_TFLOPS = 234.306
+    BW_GBPS = 1766.53
+    THRESHOLD_US = 12.288        # 3 x launch_bracketed_grid_ms (4.096 us)
+
+    def _sol_us(self, p):
+        """speed-of-light 하한 (us). 실제 시간은 항상 이보다 크다."""
+        flops = 2.0 * p.M * p.N * p.K
+        nbytes = (p.M * p.K + p.K * p.N + p.M * p.N) * 2
+        return max(flops / (self.PEAK_TFLOPS * 1e12),
+                   nbytes / (self.BW_GBPS * 1e9)) * 1e6
+
+    def test_no_shape_below_launch_overhead(self, hw_5090):
+        bad = [(p, self._sol_us(p)) for p in all_shapes(hw_5090)
+               if self._sol_us(p) < self.THRESHOLD_US]
+        assert not bad, (
+            "SOL 하한이 below_launch_overhead 문턱 아래인 형상이 있다 — "
+            "그 형상은 측정해도 순위가 안 나온다:\n" +
+            "\n".join(f"  {p.M}x{p.N}x{p.K}  SOL {s:.2f} us "
+                       f"(문턱의 {s / self.THRESHOLD_US * 100:.0f}%)"
+                       for p, s in sorted(bad, key=lambda x: x[1])))
