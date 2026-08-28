@@ -727,3 +727,77 @@ ENV_HASH_KEYS_V2 += ("axis_space_hash",)   # canonical_hash(backend.axis_space()
 설정을 고치면 여전히 조용히 통과한다. 그것까지 덮으려면 생성된 소스의
 해시를 넣어야 하는데, 그러면 사실상 `manifest_hash` 로 되돌아간다.
 **완전한 해법은 없고, 축은 덮을 수 있다.**
+
+
+## D-4. ⛔ **`env_hash` 필드는 아직 구 정의다** — P-3 이 절반만 적용됐다
+
+`scripts/phase0_env.py` 는 해시를 **둘** 쓴다:
+
+```python
+env["env_hash"]    = canonical_hash(env)     # 694행 — 구 정의 (env 전체 해싱)
+env["env_hash_v2"] = env_hash_v2(env)        # 700행 — 신 정의 (키 15개만)
+```
+
+`core/env_hash.py` 의 docstring 은 신 정의를 **그 정의**로 소개하고 구 정의의
+문제(실행마다 변하는 값이 섞임)를 상세히 적어 두었다. 그런데 **파이프라인
+전체가 쓰는 것은 `env_hash` 이고 그것이 구 정의다.**
+
+```
+측정 줄        records.py 가 env_hash 로 필터한다
+재개           sweep.py resume_state(env_hash)
+표/번들        table.py, export.py, bundle.py 전부 env_hash
+env_hash_v2    sweep.py 의 정합성 대조에서만 쓰인다
+```
+
+### 실증 (2026-08-28, 5090 준비 중)
+
+조건을 완전히 고정하고(`--seed` 까지 고정) `phase0_env.py` 를 두 번 돌렸다:
+
+| | `env_hash` (쓰이는 것) | `env_hash_v2` (정의된 것) |
+|---|---|---|
+| 실행 2 | `47c31170` | `0dc1e84c` |
+| 실행 3 | **`1ce1b782`** ← 바뀐다 | `0dc1e84c` ← 동일 |
+
+해시 입력 15 개 중 달라진 것은 **하나도 없다.** 구 해시가 본 것 중 변한 것:
+
+```
+created_utc                  13:43:15 -> 14:13:32      실행 시각
+launch_overhead(async_small) 0.001704 -> 0.001664      ★ 측정값이다
+```
+
+**README 의 ⛔ 경고("측정 중 phase0_env 를 실행하지 마라 — 재실행하면 해시가
+바뀌어 98 만 건을 다시 잰다")가 아직 살아 있다.** P-3 은 새 함수를 만들었지만
+`env_hash` 필드를 그 함수로 바꾸지는 않았다.
+
+### 그리고 `env_hash_v2` 도 형상 그리드를 안 본다
+
+같은 실험에서 **층 B 의 M 과 층 E 의 사다리를 바꿨는데** `env_hash_v2` 가
+`0dc1e84c` 로 동일했다. D-3 의 축(`SPLIT_K`)과 같은 구멍이 형상에도 있다.
+
+```
+env_hash_v2 가 못 보는 것
+  탐색 축      SPLIT_K / STAGES / TB_TILES / WARP_TILES / SWIZZLE   (D-3)
+  ★ 형상 그리드  shapes_layer_a..e                                   (여기)
+  emit_cpp     템플릿 인자 순서, epilogue 설정                        (덮기 어렵다)
+```
+
+### 제안 — 셋을 한 번에, 캠페인 사이에
+
+```python
+ENV_HASH_KEYS_V2 += (
+    "axis_space_hash",     # canonical_hash(backend.axis_space())
+    "shape_grid_hash",     # canonical_hash([(p.M,p.N,p.K) for p in all_shapes(hw)])
+)
+env["env_hash"] = env_hash_v2(env)       # 구 정의를 버리고 신 정의로 통일
+```
+
+⚠️ 셋 다 파급이 크다.
+
+* `env_hash` 를 바꾸면 **A6000 번들의 기록된 해시는 구 정의**이므로 두 세대의
+  해시가 한 이름공간에 섞인다. 번들에 `env_hash_def_version` 이 있으니 그것으로
+  구분해야 한다.
+* `ENV_HASH_DEF_VERSION` 3 -> 4 가 필요하다.
+* **측정 도중에는 절대 하지 마라.** 재개 키가 바뀐다.
+
+**그때까지의 운용 규칙은 그대로다 — 측정이 시작되면 `phase0_env.py` 를 다시
+돌리지 않는다.** 지금 5090 캠페인의 `env_hash` 는 `1ce1b782` 로 고정한다.
