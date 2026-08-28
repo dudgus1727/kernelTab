@@ -463,6 +463,9 @@ def main() -> int:
                          "의 권장값(문턱의 40%%)을 쓴다")
     ap.add_argument("--seed", type=int, default=None, help="측정 순서 셔플 시드")
     ap.add_argument("--skip-example", action="store_true")
+    ap.add_argument("--force", action="store_true",
+                    help="기존 results/env.json 을 덮어쓴다. env_hash 가 바뀌면 "
+                         "재개 키가 갈리므로 측정 중에는 절대 쓰지 마라 (D-4)")
     args = ap.parse_args()
 
     # 물리 GPU 를 이 프로세스와 모든 자식(nvcc 산출물 포함)에 고정한다.
@@ -703,6 +706,47 @@ def main() -> int:
     env["env_hash_def_version"] = ENV_HASH_DEF_VERSION
 
     paths.ensure_dirs()
+
+    # ⛔ 기존 env.json 을 조용히 덮어쓰지 않는다 (D-4).
+    #
+    # `env_hash` 는 **구 정의**라 `created_utc` 와 `launch_overhead`(측정값)를
+    # 본다. 조건이 완전히 같아도 다시 돌리면 값이 바뀐다. 그런데 그 값이
+    # 재개 키이자 격리 경계다 — 측정 도중에 다시 돌리면 이미 잰 줄과 조건이
+    # 갈리고, 그 사실이 **아무 오류 없이** 진행된다.
+    #
+    # README 와 portability_audit 이 "측정 중 실행 금지" 를 적어 두었지만
+    # 문서는 지켜지지 않는다 (decisions 15). 코드로 막는다.
+    if paths.ENV_JSON.exists() and not args.force:
+        try:
+            prev = json.loads(paths.ENV_JSON.read_text())
+        except (OSError, json.JSONDecodeError):
+            prev = None
+        prev_hash = (prev or {}).get("env_hash")
+        if prev_hash and prev_hash != env["env_hash"]:
+            prev_v2 = (prev or {}).get("env_hash_v2") or "?"
+            same_cond = prev_v2 == env["env_hash_v2"]
+            print(
+                f"\n⛔ {paths.ENV_JSON} 을 덮어쓰면 env_hash 가 바뀐다.\n"
+                f"     기존  {prev_hash[:16]}  (env_hash_v2 {prev_v2[:16]})\n"
+                f"     새로  {env['env_hash'][:16]}  "
+                f"(env_hash_v2 {env['env_hash_v2'][:16]})\n"
+                f"\n   측정 조건은 "
+                + ("**같다** — env_hash_v2 가 일치한다.\n"
+                   "   그래도 env_hash 가 달라지는 것은 구 정의가 created_utc 와\n"
+                   "   launch_overhead(측정값)를 보기 때문이다 (pending_fixes D-4).\n"
+                   if same_cond else
+                   "**다르다** — env_hash_v2 도 달라졌다.\n"
+                   "   무엇이 달라졌는지 확인하라: "
+                   "core.env_hash.hash_inputs(env) 를 두 파일에 대해 비교한다.\n")
+                + "\n   ⛔ **측정 중이라면 진행하지 마라.** env_hash 는 재개 키이자\n"
+                  "      격리 경계다. 지금까지 잰 줄과 조건이 갈리고, 재개는\n"
+                  "      처음부터 다시 잰다.\n"
+                  "\n   기존 조건을 보존하려면 아무것도 하지 마라.\n"
+                  "   새 조건으로 시작하려면 기존 파일을 env.<조건>.json 으로\n"
+                  "   보관한 뒤 --force 를 준다.\n",
+                file=sys.stderr)
+            return 4
+
     paths.ENV_JSON.write_text(json.dumps(env, indent=2, ensure_ascii=False) + "\n")
     print(f"\n[env.json] {paths.ENV_JSON}  (env_hash={env['env_hash'][:16]}...)")
     print(f"[shuffle_seed] {seed}")
