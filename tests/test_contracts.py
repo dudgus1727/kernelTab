@@ -261,3 +261,43 @@ def test_축_덮개_KNOWN_에는_근거가_있다():
     for key, why in mod.KNOWN.items():
         assert len(why) > 120, f"{key} 의 근거가 너무 짧다: {why!r}"
         assert "확인" in why or "불일치" in why, f"{key} 에 확인 내용이 없다"
+
+
+def test_축을_순회하는_스크립트가_축을_다시_적지_않는다():
+    """축 값을 리터럴로 다시 적으면 `SPLIT_K` 를 고쳐도 그쪽만 옛날에 남는다.
+
+    실제로 밟았다. 2026-08-28 에 축 덮개 점검이 찾아낸 `split_k` 5 와 7 을
+    `SPLIT_K` 에 넣었는데 `smoke_splitk.py` 는
+    `for sk in (1, 2, 3, 4, 6, 8, 12, 16)` 를 그대로 들고 있었다. **스모크가
+    새 축을 한 번도 안 돌리고 "이상 없음" 을 찍었다.**
+
+    `stages=1` 사례가 보여주듯 축 목록은 탐색 범위이면서 안전장치다. 축을
+    순회하는 곳은 반드시 `backend.axis_space()` 에서 읽어야 한다
+    (decisions.md 12 — 같은 판정이 여러 곳에 있으면 하나는 어긋난다).
+    """
+    from kerneltab.backends import cutlass_v2
+
+    axes = {
+        "split_k": set(cutlass_v2.SPLIT_K),
+        "stages": set(cutlass_v2.STAGES),
+    }
+    bad = []
+    for f in _py_files():
+        rel = str(f.relative_to(REPO))
+        if rel.startswith("kerneltab/backends/") or rel.startswith("tests/"):
+            continue
+        for node in ast.walk(_tree(f)):
+            if not isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+                continue
+            vals = [e.value for e in node.elts
+                    if isinstance(e, ast.Constant) and isinstance(e.value, int)]
+            if len(vals) < 4 or len(vals) != len(node.elts):
+                continue
+            for name, axis in axes.items():
+                # 축과 **거의** 같은 리터럴 = 축의 사본이 낡은 것
+                if set(vals) < axis and len(vals) >= len(axis) - 3:
+                    bad.append(f"{_where(f, node)}  {name} 축의 옛 사본? {vals}")
+    assert not bad, (
+        "축 값을 리터럴로 다시 적은 곳이 있다:\n  " + "\n  ".join(bad)
+        + "\n  backend.axis_space()[<축>] 에서 읽어라. 축을 늘렸을 때 "
+          "여기만 옛날에 남으면 새 값이 한 번도 안 돌아간다.")

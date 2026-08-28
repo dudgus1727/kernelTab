@@ -76,7 +76,12 @@ def main() -> int:
             tbl = {}
             from kerneltab.core.config import dtype_bytes  # noqa: F401
             cfg_tile_k = krow["tile"]["k"]
-            for sk in (1, 2, 3, 4, 6, 8, 12, 16):
+            # ⛔ 축을 여기 다시 적지 마라. 예전에는 `(1,2,3,4,6,8,12,16)` 이
+            #    박혀 있었는데, 2026-08-28 에 축 덮개 점검이 찾아낸 5 와 7 을
+            #    `SPLIT_K` 에 넣었을 때 **이 목록만 옛날 상태로 남았다.**
+            #    스모크가 새 축을 한 번도 안 돌리고 "이상 없음" 을 찍는다.
+            #    (decisions 12 — 같은 판정이 여러 곳에 있으면 하나는 어긋난다)
+            for sk in sorted(backend.axis_space()["split_k"]):
                 for mode in ("serial", "parallel"):
                     if sk == 1 and mode != "serial":
                         continue
