@@ -23,5 +23,13 @@
     "bandwidth_gbps_at_mem_mhz": 10501,
     "bandwidth_gbps_spec": 1008.0,
     "mem_bus_bits": 384
+  },
+  "NVIDIA GeForce RTX 5090": {
+    "peak_tflops_f16": 209.5,
+    "source": "170 SM x 256 FP16 FMA/clk/SM x 2 flop x 2.407 GHz boost = 209.5 TFLOP/s (dense, FP32 누산). 2407 MHz 는 **정격 부스트 스펙값**이다 — 관측된 부하 중 클럭(2880~2902)도 최대 클럭(3105)도 아니다. FP32 누산이 FP16 누산의 절반인 것을 mma.sync.m16n8k16 으로 직접 실측해 확정했다 (메모리 접근 없는 루프): FP32누산 244.6 vs FP16누산 485.1 TFLOP/s, 비율 1.983. 두 모드에서 역산한 클럭이 2810/2787 MHz 로 일치하므로 FP32 누산 = 256 FMA/clk/SM, FP16 누산 = 512. GeForce Ada(4090)와 같은 반감이고 A6000(프로 SKU, 반감 없음)과 다르다. 교차검증: cuBLAS 8192^3 FP32누산 실측 242.2 TFLOP/s 는 2880 MHz 에서의 실효 피크 250.6 대비 96.6%. 데이터시트 헤드라인(FP4 희소 3352 AI TOPS 계열)을 그대로 쓰면 안 된다. 512-bit GDDR7 @ 28 Gbps = 1792 GB/s",
+    "peak_tflops_f16_at_mhz": 2407,
+    "bandwidth_gbps_at_mem_mhz": 14001,
+    "bandwidth_gbps_spec": 1792.0,
+    "mem_bus_bits": 512
   }
 }
