@@ -680,3 +680,50 @@ grep 한다"** 를 절차로 둔다.
 ```bash
 grep -rn 'from kerneltab' docker/     # 경로를 옮긴 커밋에서 반드시
 ```
+
+
+## D-3. **탐색 축이 `env_hash` 에 안 들어간다** — 지금은 `shuffle_seed` 의 우연에 기대고 있다
+
+5090 캠페인에서 `SPLIT_K` 에 5, 7 을 추가한 뒤 `phase0_env.py` 를 다시 돌렸다.
+`env_hash` 가 `d0b680b2` -> `47c31170` 으로 바뀌었다. **그런데 축이 바뀌어서가
+아니었다.**
+
+```
+해시 입력 15 개 중 달라진 키:  ['shuffle_seed']
+  shuffle_seed: 1780292639 -> 340178505      (매 실행 os.urandom)
+★ SPLIT_K 는 ENV_HASH_KEYS 에 아예 없다
+```
+
+즉 `--seed 1780292639` 로 고정해서 다시 돌렸다면 **축이 8 개에서 10 개로
+바뀌었는데도 같은 `env_hash`** 가 나왔을 것이다. 그러면 서로 다른 탐색 공간에서
+잰 데이터가 같은 조건 식별자를 공유한다 — 격리 경계가 뚫린다.
+
+`backends/cutlass_v2.py` 의 docstring 이 "이 파일을 고치면 사람이 직접 판단해
+재측정하라" 고 경고하고 있지만, **그것은 문서이지 강제가 아니다** (15 번).
+지금 우리를 구한 것은 설계가 아니라 시드가 무작위라는 우연이다.
+
+### 제안 — `manifest_hash` 가 아니라 `axis_space()` 를 넣는다
+
+`manifest_hash`(소스 tree_hash)를 해시 키에서 뺀 이유는 명확하다 — 오타
+수정에도 해시가 바뀌어 측정 도중 아무것도 못 고치게 된다. 하지만
+`Backend.axis_space()` 는 **정확히 맞는 입도**다:
+
+```python
+ENV_HASH_KEYS_V2 += ("axis_space_hash",)   # canonical_hash(backend.axis_space())
+```
+
+* 주석·docstring·로그 문구를 고쳐도 안 바뀐다
+* `TB_TILES` / `STAGES` / `SPLIT_K` / `WARP_TILES` / `SWIZZLE` 가 바뀌면 **반드시** 바뀐다
+* 이미 Protocol 에 있는 메서드다 (C-3 에서 추가했다). 새로 만들 것이 없다
+
+⚠️ `ENV_HASH_DEF_VERSION` 을 3 -> 4 로 올려야 하고, 그러면 **A6000 번들의
+기록된 해시를 오늘 다시 계산하면 다른 값이 나온다.** 기록된 값 자체는 안
+변하지만(파일에 박혀 있다) 재현 절차가 갈라지므로 버전 표에 남겨야 한다.
+그래서 이것은 캠페인 사이에 할 일이지 캠페인 도중에 할 일이 아니다.
+
+### 그리고 `emit_cpp` 는 여전히 안 덮인다
+
+`axis_space()` 는 축만 본다. `emit_cpp()` 의 템플릿 인자 순서나 epilogue
+설정을 고치면 여전히 조용히 통과한다. 그것까지 덮으려면 생성된 소스의
+해시를 넣어야 하는데, 그러면 사실상 `manifest_hash` 로 되돌아간다.
+**완전한 해법은 없고, 축은 덮을 수 있다.**
