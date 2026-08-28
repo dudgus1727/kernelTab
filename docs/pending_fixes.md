@@ -801,3 +801,31 @@ env["env_hash"] = env_hash_v2(env)       # 구 정의를 버리고 신 정의로
 
 **그때까지의 운용 규칙은 그대로다 — 측정이 시작되면 `phase0_env.py` 를 다시
 돌리지 않는다.** 지금 5090 캠페인의 `env_hash` 는 `1ce1b782` 로 고정한다.
+
+
+## D-5. `verify_clock_lock` 의 판정이 A6000 전용이다
+
+```python
+swpc = thr.get("sw_power_cap", 0) / n
+if swpc > 0.10:      verdict = "lower"
+elif max(pw) <= 250: verdict = "raise"
+else:                verdict = "hold"
+```
+
+5090 에서 이 판정은 **클럭이 완벽하게 유지되는데도 "낮춰라"** 를 낸다.
+`sw_power_cap` 이 뜬 51 개 샘플의 클럭이 전부 목표값이었고 전력은 171 W
+에서도 떴다 (`decisions.md` 22).
+
+`max(pw) <= 250` 도 A6000 의 300 W 캡 기준이다. 5090 은 600 W 캡이라
+250 W 는 41 % 에 불과한데 "여유 있으니 올려라" 가 나온다.
+
+**제안:** 판정 입력을 클럭 분포로 바꾼다.
+
+```
+목표 미만 비율      clk < expect 인 샘플 비율
+★ 최대 이탈 폭      (expect - min(clk)) / expect
+   지원 클럭 한 스텝 이내면 부스트 입도이므로 정상으로 본다
+```
+
+스로틀 플래그는 **기록은 하되 판정에 쓰지 않는다.** 전력 캡 관련 비트의
+의미가 SKU 마다 다르다.
