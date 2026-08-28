@@ -1,11 +1,18 @@
-"""SM80/86/89 백엔드 — CUTLASS 2.x GEMM API (device::GemmUniversal).
+"""CUTLASS 2.x 백엔드 — `device::GemmUniversal` (ThreadblockShape / WarpShape).
 
 3.x API(CollectiveBuilder / GemmUniversalAdapter / CuTe)는 SM90 이상 전용이라
 sm_86 에서 동작하지 않는다. CUTLASS 최신 릴리스를 쓰되 API 계열은 2.x 다.
 
-ArchTag 는 sm_86 에서도 `arch::Sm80` 이 정상이다. ArchTag 는 "이 기능을
-지원하는 최소 SM"을 뜻하고 Sm86 태그는 2.x GEMM 경로에 존재하지 않는다.
-실제 타겟 SM 은 nvcc -arch 플래그가 결정한다.
+## 이름이 `sm80.py` 가 아닌 이유
+
+이 파일이 정하는 것은 **API 계열**이지 타겟 SM 이 아니다. `ArchTag` 로 쓰는
+`cutlass::arch::Sm80` 은 "이 기능을 지원하는 최소 SM" 을 뜻할 뿐이고,
+**실제 타겟 SM 은 `nvcc -arch` 플래그가 결정한다.** `Sm86` 태그는 2.x GEMM
+경로에 아예 존재하지 않는다.
+
+sm_120(Blackwell)을 넣으면서 그 사실이 드러났다 — 옛 이름이었다면
+"Blackwell 을 SM80 백엔드가 처리한다" 가 된다. 같은 2.x 커널이 sm_86 과
+sm_120 에서 **수치까지 동일하게** 도는 것을 확인했다 (12/12 참조 대조).
 
 ⚠️  이 파일을 수정하면 `env_hash` 를 **수동으로 갱신해야 한다**
 --------------------------------------------------------------------------
@@ -36,7 +43,7 @@ from __future__ import annotations
 
 from math import ceil
 
-from kerneltab.core.types import Hardware, KernelConfig, Problem, RuntimeConfig, Sm80Ext
+from kerneltab.core.types import Hardware, KernelConfig, Problem, RuntimeConfig, CutlassV2Ext
 
 # ---------------------------------------------------------------------------
 # 탐색 축
@@ -159,8 +166,11 @@ def warp_k_options(tile_k: int) -> list[int]:
     return [tile_k] if tile_k <= 32 else [tile_k, tile_k // 2]
 
 
-class Sm80Backend:
-    arch_family = ("sm_80", "sm_86", "sm_89")
+class CutlassV2Backend:
+    #: 이 백엔드가 담당하는 arch. **API 계열이 같으면 같은 백엔드다** —
+    #: sm_120 은 세대가 다르지만 2.x GEMM 경로가 그대로 성립한다
+    #: (빌드 298/300, 참조 대조 12/12, split-K serial/parallel 포함).
+    arch_family = ("sm_80", "sm_86", "sm_89", "sm_120")
 
     # -- 열거 -------------------------------------------------------------
     def enumerate_ext(self, hw: Hardware) -> list:
@@ -173,7 +183,7 @@ class Sm80Backend:
                             for st in STAGES:
                                 out.append((
                                     (tm, tn, tk),
-                                    Sm80Ext(
+                                    CutlassV2Ext(
                                         warp_m=wm, warp_n=wn, warp_k=wk,
                                         stages=st,
                                         swizzle_type=swz_type, swizzle_n=swz_n,
@@ -181,13 +191,13 @@ class Sm80Backend:
                                 ))
         return out
 
-    def ext_from_dict(self, d: dict) -> Sm80Ext:
+    def ext_from_dict(self, d: dict) -> CutlassV2Ext:
         """kernels.jsonl 의 ext 딕셔너리 -> ext 객체.
 
-        호출부가 Sm80Ext 를 직접 import 하지 않고 KernelConfig 를 복원할 수
+        호출부가 CutlassV2Ext 를 직접 import 하지 않고 KernelConfig 를 복원할 수
         있게 해준다.
         """
-        return Sm80Ext(**d)
+        return CutlassV2Ext(**d)
 
     def enumerate_runtime(self, p: Problem, cfg: KernelConfig) -> list[RuntimeConfig]:
         out = []
@@ -210,7 +220,7 @@ class Sm80Backend:
             cols = tile_n + Padding(8)
             kFragmentsPerIteration = 2 if (warps_k == 1 and align_c == 8) else 1
         """
-        e: Sm80Ext = cfg.ext  # type: ignore[assignment]
+        e: CutlassV2Ext = cfg.ext  # type: ignore[assignment]
         mainloop = e.stages * cfg.tile_k * (cfg.tile_m + cfg.tile_n) * dtype_bytes
 
         warps_m = cfg.tile_m // e.warp_m
@@ -234,7 +244,7 @@ class Sm80Backend:
         rc: RuntimeConfig | None = None,
         p: Problem | None = None,
     ) -> int:
-        e: Sm80Ext = cfg.ext  # type: ignore[assignment]
+        e: CutlassV2Ext = cfg.ext  # type: ignore[assignment]
         im, in_, ik = INSTRUCTION_SHAPE
         per_warp_kgroup = (e.warp_m // im) * (e.warp_n // in_)
         kgroups = e.warp_k // ik
@@ -258,7 +268,7 @@ class Sm80Backend:
         self, cfg: KernelConfig, hw: Hardware, dtype_bytes: int
     ) -> str | None:
         """컴파일/실행 가능성만 본다. 느릴 것 같다는 이유로 거르지 않는다."""
-        e: Sm80Ext = cfg.ext  # type: ignore[assignment]
+        e: CutlassV2Ext = cfg.ext  # type: ignore[assignment]
 
         if cfg.tile_m % e.warp_m or cfg.tile_n % e.warp_n:
             return "tile_divisible_by_warp"
@@ -352,7 +362,7 @@ class Sm80Backend:
         갈린다. 분석 시점에 이 둘을 같은 축의 연속값으로 다루면 잘못된
         결론이 나오므로 명시적으로 기록한다.
         """
-        e: Sm80Ext = cfg.ext  # type: ignore[assignment]
+        e: CutlassV2Ext = cfg.ext  # type: ignore[assignment]
         return "pipelined" if e.stages == 2 else "multistage"
 
     def is_valid_kernel(self, cfg: KernelConfig, hw: Hardware, dtype_bytes: int) -> bool:
@@ -422,7 +432,7 @@ class Sm80Backend:
 
     # -- 식별자 / 코드 생성 ------------------------------------------------
     def kernel_id(self, cfg: KernelConfig) -> str:
-        e: Sm80Ext = cfg.ext  # type: ignore[assignment]
+        e: CutlassV2Ext = cfg.ext  # type: ignore[assignment]
         sw = "id" if e.swizzle_type == "identity" else "hz"
         return (
             f"{cfg.arch.replace('_', '')}"
@@ -434,7 +444,7 @@ class Sm80Backend:
         )
 
     def emit_cpp(self, cfg: KernelConfig) -> str:
-        e: Sm80Ext = cfg.ext  # type: ignore[assignment]
+        e: CutlassV2Ext = cfg.ext  # type: ignore[assignment]
         kid = self.kernel_id(cfg)
         if e.swizzle_type == "identity":
             swizzle = (
@@ -447,7 +457,7 @@ class Sm80Backend:
             swizzle = "kt::HorizontalThreadblockSwizzle"
 
         im, in_, ik = INSTRUCTION_SHAPE
-        return f"""// 자동 생성 — 수정하지 말 것. backends/sm80.py:emit_cpp()
+        return f"""// 자동 생성 — 수정하지 말 것. backends/cutlass_v2.py:emit_cpp()
 // kernel_id: {kid}
 #include "cutlass/cutlass.h"
 #include "cutlass/gemm/device/gemm_universal.h"

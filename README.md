@@ -23,7 +23,7 @@ core/
 backends/
   __init__.py    get_backend() 레지스트리
   base.py        Backend Protocol
-  sm80.py        CUTLASS 2.x API 구현 (sm_80 / sm_86 / sm_89)
+  cutlass_v2.py  CUTLASS 2.x API 구현 (sm_80 / sm_86 / sm_89 / sm_120)
   # sm90.py      3.x API 용. 나중에 추가.
 hwspec/
   known.json     GPU 이름 -> (peak_tflops_f16, bandwidth_gbps)
@@ -281,7 +281,7 @@ sigma_rel(t) = 0.000374 / t + 0.00044      # 절대 지터 + 상대 성분
 
 아키텍처 전용 축(SM80 의 warp tile / stages / swizzle, SM90 의 cluster /
 schedule / tile scheduler)은 `ext` 뒤로 숨긴다. `core/`, `build/`, `measure/`
-는 `Sm80Ext` 를 직접 참조하지 않고 Backend Protocol 로만 통신한다.
+는 `CutlassV2Ext` 를 직접 참조하지 않고 Backend Protocol 로만 통신한다.
 
 ### split-K 에 3, 6, 12 를 포함한다
 

@@ -112,13 +112,13 @@ ENV_HASH_KEYS_V2 = (
 
 > #### ⚠️ 이 선택의 대가 — 반드시 문서·코드 양쪽에 남길 것
 >
-> **`backends/sm80.py`(커널 생성 코드)를 수정하면 `env_hash` 가 바뀌지
+> **`backends/cutlass_v2.py`(커널 생성 코드)를 수정하면 `env_hash` 가 바뀌지
 > 않는다.** `cutlass_commit` 도 `protocol` 도 그 변화를 잡지 못하므로,
 > 같은 `env_hash` 아래에 서로 다른 커널로 잰 데이터가 섞일 수 있다.
 >
 > → 그 파일을 고칠 때는 **조건이 달라졌는지 사람이 직접 판단**하고,
 > 달라졌다면 `phase0_env.py` 를 다시 돌려 `env_hash` 를 갱신한 뒤
-> 재측정해야 한다. 이 경고를 `backends/sm80.py` 모듈 docstring 상단에
+> 재측정해야 한다. 이 경고를 `backends/cutlass_v2.py` 모듈 docstring 상단에
 > 넣어 두었다 (어떤 변경이 조건을 바꾸는지 목록 포함).
 >
 > 같은 이유로 `measure/kt_kernel_impl.h`, `measure/kt_swizzle.h`,

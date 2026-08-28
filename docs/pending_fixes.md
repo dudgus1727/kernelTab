@@ -612,9 +612,9 @@ strict/nearest 격차(1.080 vs 1.102) **전부**를 만든다. 벤더 품질 문
 
 1. `scripts/baseline_vendor.py --extract` 를 **다음 캠페인의 형상 그리드**에
    대해 먼저 돌린다
-2. 추천된 축 값의 집합과 `backends/sm80.py` 의 축을 대조한다
+2. 추천된 축 값의 집합과 `backends/cutlass_v2.py` 의 축을 대조한다
 3. 벤더가 N건 이상 요청하는데 없는 값은 축 추가를 검토한다
-4. 추가하면 `env_hash` 를 갱신해야 한다 (`sm80.py` 상단 경고)
+4. 추가하면 `env_hash` 를 갱신해야 한다 (`cutlass_v2.py` 상단 경고)
 
 `docs/next_campaign.md` 의 축 설계 절에서 이 점검을 참조하게 하라.
 
@@ -634,3 +634,49 @@ STAGES:   [1, 2, 3, 4, 5, 6, 7, 8]           + 1  (CUTLASS 가 받는지 확인 
 `--extract` 산출물이 저장소에 없어서 재채점할 때마다 별도 venv 와 네트워크가
 필요했다. kernelRule 은 `datasets/baselines/vendor-a6000-c63710df.json` 으로
 저장했다. `docs/baselines/` 에 두면 표만으로 재현된다.
+
+---
+
+## D-1. `peak_tflops_f16_at_mhz` 가 없으면 실효 피크 보정이 **조용히 생략된다**
+
+`scripts/phase0_env.py:589`
+
+```python
+peak_ref = peak_reference_mhz(hw.name)
+peak_eff = hw.peak_tflops_f16
+if lock.locked and lock.mhz and peak_ref:          # <-- 셋 중 하나만 없어도
+    peak_eff = round(hw.peak_tflops_f16 * lock.mhz / peak_ref, 3)
+```
+
+`known.json` 에 `peak_tflops_f16_at_mhz` 를 빠뜨리면 `peak_ref` 가 `None` 이
+되어 **스펙 피크가 그대로 `peak_tflops_f16_effective` 로 들어간다.** 경고도
+오류도 없다. ridge point 가 틀리고 `is_memory_bound` 가 전 형상에서 틀린다.
+
+README 가 "없으면 보정이 조용히 생략된다" 고 이미 적어 두었는데 **코드는
+그대로다.** 14 번(조용히 아무것도 안 함) 계열이다.
+
+**제안:** 클럭을 고정했는데(`lock.locked`) `peak_ref` 가 없으면 실패하거나
+최소한 경고한다. 새 GPU 를 추가할 때 가장 밟기 쉬운 함정이다.
+
+## D-2. `docker/Dockerfile` 의 자체 점검은 **테스트가 덮지 않는다**
+
+`449c3f6` 이 `paths.py` 를 `build/` -> `core/` 로 옮기면서 `tests/test_paths.py`
+는 같이 고쳤지만 `docker/Dockerfile` 의 자체 점검은 빠뜨렸다:
+
+```
+ImportError: cannot import name 'paths' from 'kerneltab.build'
+```
+
+**그 커밋 이후 이 이미지는 어느 호스트에서도 빌드되지 않았다.** 5090 캠페인에서
+처음 빌드를 시도하며 발견했다. A6000 이미지는 그 이전에 만들어진 것이다.
+
+15 번(문서로 적은 규율은 지켜지지 않는다)과 같은 계열인데, 여기는 **테스트를
+붙일 자리가 없는** 곳이다 — Dockerfile 은 import 를 문자열로 들고 있다.
+
+**제안:** 근본 대책은 CI 에서 이미지 빌드를 돌리는 것이지만 비용이 크다
+(11.9 GB 베이스 + CUTLASS 클론). 최소한 **"import 경로를 옮길 때 `docker/` 도
+grep 한다"** 를 절차로 둔다.
+
+```bash
+grep -rn 'from kerneltab' docker/     # 경로를 옮긴 커밋에서 반드시
+```

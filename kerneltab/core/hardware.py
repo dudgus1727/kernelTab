@@ -56,6 +56,10 @@ NVCC_ARCH = {
     "sm_89": "sm_89",
     "sm_90": "sm_90a",
     "sm_100": "sm_100a",
+    # sm_120(Blackwell GeForce). `a` 접미어는 3.x 블록스케일 커널용이고
+    # 우리는 2.x 경로만 쓰므로 plain sm_120 이 맞다. 실제로 plain 으로
+    # 빌드해 sm_120 cubin 이 나오고 참조 대조도 통과했다.
+    "sm_120": "sm_120",
 }
 
 # hwspec/ 은 패키지 밖의 데이터 디렉토리다. core.paths 가 저장소 루트와

@@ -196,10 +196,10 @@ def test_A6000_계수는_허용된_곳에서만_이름으로_쓴다():
 def test_백엔드를_직접_import_하지_않는다():
     """호출부는 `get_backend()` 만 쓴다.
 
-    `check_axis_coverage.py` 가 축 목록이 필요해서 `backends.sm80` 을
+    `check_axis_coverage.py` 가 축 목록이 필요해서 `backends.cutlass_v2` 을
     직접 import 했었다. Protocol 에 `axis_space()` 를 넣어 없앴다.
     """
-    #: 백엔드 **자체를 검증하는** 스크립트. sm80 의 예측 함수가 실측과
+    #: 백엔드 **자체를 검증하는** 스크립트. cutlass_v2 의 예측 함수가 실측과
     #: 맞는지 보는 것이 목적이라 그 함수를 직접 부를 수밖에 없다.
     allowed = {"scripts/validate_constraints.py"}
     bad = []
@@ -227,13 +227,13 @@ def test_axis_space_가_모듈_상수와_같다():
     축 목록은 탐색 범위이면서 **안전장치**다 (`stages=1` — decisions.md
     13-b). 두 벌이 되면 한쪽만 고쳐진다.
     """
-    from kerneltab.backends import get_backend, sm80
+    from kerneltab.backends import cutlass_v2, get_backend
 
     sp = get_backend("sm_86").axis_space()
-    assert sp["stages"] == set(sm80.STAGES)
-    assert sp["split_k"] == set(sm80.SPLIT_K)
-    assert sp["warp_tile"] == {tuple(t) for t in sm80.WARP_TILES}
-    assert sp["tb_tile"] == {tuple(t) for t in sm80.TB_TILES}
+    assert sp["stages"] == set(cutlass_v2.STAGES)
+    assert sp["split_k"] == set(cutlass_v2.SPLIT_K)
+    assert sp["warp_tile"] == {tuple(t) for t in cutlass_v2.WARP_TILES}
+    assert sp["tb_tile"] == {tuple(t) for t in cutlass_v2.TB_TILES}
 
 
 def test_stages_1_은_축에_없다():
@@ -243,9 +243,9 @@ def test_stages_1_은_축에_없다():
     열거기의 `explain_kernel()` 도 `valid` 로 판정한다 — 이 목록이 유일한
     방어다. 근거는 `docs/axis_coverage.md`, `decisions.md` 13-b.
     """
-    from kerneltab.backends import sm80
+    from kerneltab.backends import cutlass_v2
 
-    assert 1 not in sm80.STAGES, (
+    assert 1 not in cutlass_v2.STAGES, (
         "stages=1 을 축에 넣었다. CUTLASS 2.x OpClassTensorOp 에서 수치가 "
         "틀린다 — can_implement() 는 통과시키므로 열거기로는 못 거른다.")
 

@@ -20,7 +20,7 @@ __all__ = [
     "KernelConfig",
     "Problem",
     "RuntimeConfig",
-    "Sm80Ext",
+    "CutlassV2Ext",
 ]
 
 
@@ -73,11 +73,11 @@ class KernelConfig:
     align_b: int
     align_c: int
     arch: str  # "sm_86" 등
-    ext: object  # Sm80Ext | (미래) Sm90Ext
+    ext: object  # CutlassV2Ext | (미래) Sm90Ext
 
 
 @dataclass(frozen=True, slots=True)
-class Sm80Ext:
+class CutlassV2Ext:
     """SM80/86/89 (CUTLASS 2.x API) 전용 확장 필드."""
 
     warp_m: int

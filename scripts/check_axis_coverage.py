@@ -79,7 +79,7 @@ def main() -> int:
         return 2
     data = json.loads(path.read_text())
     meta = data.pop("_meta", {})
-    # 축 목록은 **백엔드에서** 읽는다. backends.sm80 을 직접 import 하면
+    # 축 목록은 **백엔드에서** 읽는다. backends.cutlass_v2 을 직접 import 하면
     # Protocol 규약이 깨진다 (decisions.md 12).
     space = get_backend(a.arch).axis_space()
     outside: dict[tuple, Counter] = defaultdict(Counter)   # (축,값) -> 형상별 수

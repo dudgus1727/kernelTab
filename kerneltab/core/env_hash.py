@@ -19,7 +19,7 @@
 소스 `tree_hash` 를 포함하므로 **코드 한 글자만 바뀌어도 해시가 바뀐다.**
 측정 도중 오타 수정조차 불가능해진다 — 규율이 아니라 실용성의 문제다.
 
-> ⚠️ **대가가 있다.** `backends/sm80.py`, `measure/kt_kernel_impl.h`,
+> ⚠️ **대가가 있다.** `backends/cutlass_v2.py`, `measure/kt_kernel_impl.h`,
 > `measure/kt_swizzle.h`, `measure/kt_ctx.cu` 를 고쳐도 `env_hash` 가
 > 바뀌지 않는다. 그 파일들은 커널 생성/측정 루프의 실체이므로, 고칠 때는
 > **조건이 달라졌는지 사람이 직접 판단**하고 달라졌으면 `phase0_env.py` 를

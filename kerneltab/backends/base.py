@@ -2,7 +2,7 @@
 
 아키텍처마다 다른 것(warp tile / stages / cluster / schedule, smem 공식,
 C++ 코드 생성)은 전부 백엔드 뒤에 숨긴다. core/, build/, measure/ 는
-Sm80Ext 같은 구체 타입을 절대 직접 참조하지 않고 이 Protocol 로만 통신한다.
+CutlassV2Ext 같은 구체 타입을 절대 직접 참조하지 않고 이 Protocol 로만 통신한다.
 
 smem_bytes 가 백엔드에 있는 이유: SM90 은 TMA 배리어와 epilogue 스테이징이
 추가되어 SM80 의 `stages * tile_k * (tile_m + tile_n) * dtype_bytes` 공식이
@@ -39,7 +39,7 @@ class Backend(Protocol):
         """직렬화된 ext 딕셔너리로부터 ext 객체를 복원한다.
 
         kernels.jsonl 을 읽어 KernelConfig 를 다시 만들 때 쓴다. 호출부가
-        구체 타입(Sm80Ext 등)을 import 하지 않게 하기 위한 것이다.
+        구체 타입(CutlassV2Ext 등)을 import 하지 않게 하기 위한 것이다.
         """
         ...
 
@@ -48,7 +48,7 @@ class Backend(Protocol):
 
         축 덮개 점검(`scripts/check_axis_coverage.py`)이 쓴다. 외부 휴리스틱이
         **우리가 아예 안 재는 값**을 추천하는지 보려면 축 목록이 필요한데,
-        호출부가 `backends.sm80` 을 직접 import 하면 Protocol 규약이 깨진다.
+        호출부가 `backends.cutlass_v2` 을 직접 import 하면 Protocol 규약이 깨진다.
 
         ⚠️ 이 값은 "탐색 범위" 이면서 **안전장치**다. `stages=1` 은 컴파일도
         되고 `can_implement()` 도 통과하는데 결과가 틀린다 — 축 목록에 1 이

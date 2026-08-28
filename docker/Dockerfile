@@ -203,7 +203,7 @@ ENV PYTHONUNBUFFERED=1 \
 # 배포되는 것보다 낫다.
 RUN python3 -c "import kerneltab, pyarrow, pandas, pynvml; \
 from kerneltab.backends import get_backend; \
-from kerneltab.build import paths; \
+from kerneltab.core import paths; \
 from kerneltab.core.hardware import known_spec; \
 assert get_backend('sm_86'); \
 assert (paths.PKG_ROOT/'measure'/'kt_ctx.cu').exists(), 'measure/*.cu 누락'; \
@@ -226,5 +226,7 @@ CMD ["help"]
 #     --build-arg KERNELTAB_COMMIT=$(git rev-parse HEAD) -t $TAG .
 #
 # V="-v $PWD/data:/data --user $(id -u):$(id -g)"
-# docker run --rm --gpus "\"device=$G\"" $V $TAG \
+# 호스트 드라이버가 보고하는 CUDA 가 이미지보다 낮으면
+# -e NVIDIA_DISABLE_REQUIRE=1 이 필요하다 (docs/container.md 8절).
+# docker run --rm -e NVIDIA_DISABLE_REQUIRE=1 --gpus "\"device=$G\"" $V $TAG \
 #     detect --gpu $G --externally-locked-mhz 1350 --externally-locked-mem-mhz 7601

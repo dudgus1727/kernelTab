@@ -287,3 +287,53 @@ cuBLAS 대비 (형상별 최고 커널):
 
 **CUDA 13 이 드리프트를 고치지 않았다.** 대책이 여전히 필요하고 세그먼트는
 더 작아야 한다. 자세한 것은 `docs/next_campaign.md` 6 절.
+
+
+---
+
+## 8. `NVIDIA_DISABLE_REQUIRE=1` — 호스트 드라이버가 이미지보다 낮을 때
+
+RTX 5090 호스트(드라이버 590.48.01)에서 이미지를 처음 띄울 때 이렇게 죽는다:
+
+```
+nvidia-container-cli: requirement error: unsatisfied condition: cuda>=13.3,
+please update your driver to a newer version, or use an earlier cuda container
+```
+
+이미지가 선언한 `NVIDIA_REQUIRE_CUDA` 는 **논리곱**이다:
+
+```
+cuda>=13.3   AND   (... brand=nvidia,driver>=590,driver<591 ...)
+   ^ 실패            ^ 590.48.01 은 통과한다
+```
+
+드라이버 조건은 만족하는데 `cuda>=13.3` 이 걸린다 — 호스트 드라이버가
+보고하는 CUDA 가 **13.1** 이기 때문이다. 그리고 이것은 **forward-compat 이
+해결하라고 있는 바로 그 조건**이다. `nvidia-container-cli` 가 이미지 안의
+compat 계층을 보지 못하는 것이 한계다.
+
+```bash
+docker run --rm -e NVIDIA_DISABLE_REQUIRE=1 --gpus "\"device=$G\"" ... $TAG ...
+```
+
+확인한 것:
+
+```
+컨테이너 안 nvidia-smi 헤더    "CUDA Version: 13.3"   (호스트는 13.1)
+ldconfig                       libcuda.so.1 => /usr/local/cuda-13.3/compat/libcuda.so.1
+compat 실체                    libcuda.so.610.43.02
+cuDriverGetVersion             13030  (compat) / 13010 (LD_LIBRARY_PATH 로 우회 시)
+호스트 클럭 고정               컨테이너 안에서도 2692 MHz / 14001 로 보인다
+```
+
+### ⛔ 이미지에 `ENV` 로 박지 마라
+
+```
+모든 호스트에서 안전 검사가 꺼진다
+진짜 불일치(compat 없이 구형 드라이버)도 조용히 통과한다
+manifest_hash 가 바뀌어 env_hash 도 흔들린다
+```
+
+**실행 시점에만 준다.** A6000 호스트(580)에서는 걸리지 않았고 5090
+호스트(590 / CUDA 13.1)에서는 걸린다 — 호스트마다 다른 조건이므로 호스트
+쪽 실행 명령에 두는 것이 맞다.

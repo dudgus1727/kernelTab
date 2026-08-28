@@ -5,7 +5,7 @@
 무엇이 달라지는지 즉시 드러나야 한다.
 """
 
-from kerneltab.backends.sm80 import (
+from kerneltab.backends.cutlass_v2 import (
     SPLIT_K,
     epilogue_thread_map_ok,
     mainloop_smem_thread_map_ok,

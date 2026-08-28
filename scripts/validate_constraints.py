@@ -19,7 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from kerneltab.backends import get_backend
-from kerneltab.backends.sm80 import (
+from kerneltab.backends.cutlass_v2 import (
     epilogue_thread_map_ok,
     mainloop_smem_thread_map_ok,
 )
