@@ -337,3 +337,35 @@ manifest_hash 가 바뀌어 env_hash 도 흔들린다
 **실행 시점에만 준다.** A6000 호스트(580)에서는 걸리지 않았고 5090
 호스트(590 / CUDA 13.1)에서는 걸린다 — 호스트마다 다른 조건이므로 호스트
 쪽 실행 명령에 두는 것이 맞다.
+
+
+---
+
+## 9. rootless docker 에서는 `--user` 를 **주지 마라**
+
+이 문서의 실행 예시는 전부 `--user $(id -u):$(id -g)` 를 쓴다. 그것은
+**rootful docker 기준**이다 — 거기서는 컨테이너의 root 가 호스트의 root 라
+`--user` 없이 돌리면 결과 파일이 root 소유로 생겨 지울 수도 없다.
+
+**rootless 에서는 정반대다.** 호스트 사용자(uid 1007)가 컨테이너 사용자
+네임스페이스 안에서 **uid 0** 으로 매핑된다. 그래서:
+
+```
+--user 1007:1007 로 돌리면
+  -> 컨테이너 안 uid 1007 = 호스트 subuid 558752+1007 (전혀 다른 uid)
+  -> 볼륨(호스트 1007 소유)에 쓰기 권한이 없다
+
+  ⛔ /data/results 에 쓸 수 없다 (uid=1007 gid=1007).
+```
+
+`--user` 를 빼면 컨테이너 안에서 root 로 돌지만 호스트에서는 그냥 나 자신이다:
+
+```bash
+docker run --rm -e NVIDIA_DISABLE_REQUIRE=1 --gpus "\"device=$G\"" \
+    -v $PWD/data:/data $TAG detect --gpu $G ...
+# 컨테이너 안:  uid=0(root)
+# 호스트에서 본 산출물:  -rw-r--r-- 1 1007 1007 ... env.json     ★ 정상
+```
+
+`entrypoint.sh` 의 쓰기 검사가 이것을 잡아 준다 — 그 검사가 없었으면
+`detect` 가 한참 돌다가 엉뚱한 곳에서 죽었을 것이다.
