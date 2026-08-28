@@ -127,3 +127,45 @@ python3 -m venv /tmp/nvmmh && /tmp/nvmmh/bin/pip install nvidia-matmul-heuristic
 /tmp/nvmmh/bin/python scripts/baseline_vendor.py --extract /tmp/vendor.json
 python3 scripts/check_axis_coverage.py --vendor /tmp/vendor.json
 ```
+
+
+---
+
+## 2026-08-28 RTX 5090 점검 결과 — **구멍이 바뀐다**
+
+```
+추천 594개 / 형상 67개
+공간 밖 106개 (17.8%)
+
+        축          값   추천수   형상  판정
+   split_k          5      85     20   ★ 진짜 구멍
+   split_k          7       7      3   ★ 진짜 구멍
+    stages          1      14      3   남의 공간 (KNOWN)
+```
+
+**A6000 과 다르다.**
+
+| | A6000 (2026-08-21) | RTX 5090 (2026-08-28) |
+|---|---|---|
+| 공간 밖 비율 | 6.0 % (35/582) | **17.8 %** (106/594) |
+| `split_k=5` | 18 회 / 7 형상 | **85 회 / 20 형상** |
+| `split_k=7` | — (없음) | **7 회 / 3 형상** |
+| `warp_tile=(128,32)` | 2 회 / 2 형상 | — (없음) |
+
+같은 코드, 같은 형상 그리드 계열인데 **벤더 프리셋이 바뀌니 구멍이 바뀐다.**
+`RTX_A6000` -> `RTX_5090` 프리셋이 다른 커널 계열을 겨냥하기 때문이다.
+이것이 "GPU 가 바뀌면 재점검한다" 의 실증이다.
+
+### 확인 절차를 끝까지 갔다
+
+`stages=1` 전례 때문에 `can_implement` 통과를 근거로 삼지 않는다.
+
+```
+유효성   split_k=5 -> 67 형상 중 54개,  split_k=7 -> 54개
+         (이미 축에 있는 split_k=12 는 14개뿐이다)
+수치     serial 5/7, parallel 5/7 (리덕션 포함), 서로 다른 커널 2종
+         전부 참조값과 **정확히 일치** (최대 상대오차 0)
+```
+
+**둘 다 진짜 구멍이다.** `split_k` 는 런타임 인자라 커널 재빌드가 필요 없고,
+축을 8 -> 10 으로 늘리면 런타임 config 격자가 **+25 %** 늘어난다.
