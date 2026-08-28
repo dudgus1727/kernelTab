@@ -78,7 +78,14 @@ DRIFT_SHAPES = [
     Problem(512, 512, 512),      # ~15 us. 런치 오버헤드에 가장 민감
     Problem(4096, 4096, 4096),   # ~2.8 ms. 계산 처리율 쪽
 ]
-DRIFT_SHAPE = DRIFT_SHAPES[-1]   # 하위 호환
+DRIFT_SHAPE = DRIFT_SHAPES[-1]   # 하위 호환. `_probe_ref` 의 기본 형상.
+
+#: ★ **드리프트 판정을 이끄는 형상.** 가장 짧은 것이어야 한다.
+#:
+#: 이것이 `DRIFT_SHAPE`(= 가장 긴 것)와 다르다는 점이 핵심이다. 런치당 상수
+#: 오버헤드는 긴 커널에서 안 보인다 — A6000 이 4096³ 하나로 감시하다 512³ 의
+#: +1380 % 오염을 통째로 놓쳤다.
+DRIFT_MONITOR_SHAPE = DRIFT_SHAPES[0]
 
 #: max_rel_error 가 이 값을 넘으면 numerical_fail.
 #: 입력이 1/4 배수라 fp32 누산이 정확하므로 split-K 가 없는 경우 0 에 가깝다.
@@ -1297,18 +1304,32 @@ def drift_check(ctx, kern, kernel_id, probe, env,
     드리프트를 +5.06 % 로 봤는데, 같은 조건의 512³ 측정은 +1380 % 오염되어
     있었다. 런치당 상수 오버헤드는 긴 커널에서 안 보인다.
 
-    돌려주는 값은 **작은 형상** 쪽이다 — 감시의 민감도가 거기서 나온다.
+    돌려주는 값은 **작은 형상**(`DRIFT_MONITOR_SHAPE`) 쪽이다 — 감시의
+    민감도가 거기서 나온다.
+
+    ⛔ 2026-08-29 까지 이 함수는 docstring 과 반대로 동작했다. 작은 형상을
+    `extra` 에 **기록만** 하고 판정을 이끄는 반환값은 `DRIFT_SHAPE`(4096³,
+    가장 긴 것)였다. 커밋 제목이 "작은 형상 감시" 였는데 감시는 큰 형상으로
+    하고 있었다 — **A6000 이 실패한 방식 그대로다.** 5090 캠페인 G-7 준비 중에
+    발견했다 (decisions.md 19 — 정의를 바꾼 것과 그 정의를 쓰는 것은 다르다).
     """
-    extra = {}
-    for q in DRIFT_SHAPES[:-1]:
+    times = {}
+    for q in DRIFT_SHAPES:
         mq = _probe_shape(ctx, kern, q)
         if mq is not None:
-            extra[f"time_ms_{q.M}"] = mq.time_ms
-            extra[f"n_reps_{q.M}"] = mq.n_reps
+            times[(q.M, q.N, q.K)] = mq
+    extra = {f"time_ms_{q.M}": times[(q.M, q.N, q.K)].time_ms
+             for q in DRIFT_SHAPES if (q.M, q.N, q.K) in times}
+    extra.update({f"n_reps_{q.M}": times[(q.M, q.N, q.K)].n_reps
+                  for q in DRIFT_SHAPES if (q.M, q.N, q.K) in times})
 
     p = DRIFT_SHAPE
-    m = _probe_shape(ctx, kern, p)
-    if m is None:
+    m = times.get((p.M, p.N, p.K))
+    mon = DRIFT_MONITOR_SHAPE
+    m_mon = times.get((mon.M, mon.N, mon.K))
+    # ★ 감시 프로브가 없으면 판정할 수 없다. 큰 형상으로 대신하지 마라 —
+    #   그러면 조용히 둔감한 감시로 돌아간다.
+    if m is None or m_mon is None:
         return
     snap = probe.snapshot()
     with DRIFT.open("a") as f:
@@ -1317,6 +1338,10 @@ def drift_check(ctx, kern, kernel_id, probe, env,
             "problem": {"M": p.M, "N": p.N, "K": p.K},
             "time_ms": m.time_ms, "time_std_ms": m.time_std_ms,
             "n_reps": m.n_reps,
+            # ★ 어느 값이 판정을 이끌었는지 기록에 남긴다. 이것이 없으면
+            #   나중에 "무엇을 감시했나" 를 파일만 보고 알 수 없다.
+            "monitor_shape": {"M": mon.M, "N": mon.N, "K": mon.K},
+            "monitor_time_ms": m_mon.time_ms,
             **extra,
             "sm_clock_mhz": snap["sm_clock_mhz"],
             "gpu_temp_c": snap["gpu_temp_c"], "power_w": snap["power_w"],
@@ -1326,7 +1351,7 @@ def drift_check(ctx, kern, kernel_id, probe, env,
             "soak_elapsed_s": (thermal or {}).get("soak_elapsed_s"),
             "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         }) + "\n")
-    return m.time_ms
+    return m_mon.time_ms
 
 
 def reproducibility(ctx, kernels, jobs, probe, env, launch_overhead_ms,

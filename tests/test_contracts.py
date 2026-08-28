@@ -301,3 +301,44 @@ def test_축을_순회하는_스크립트가_축을_다시_적지_않는다():
         "축 값을 리터럴로 다시 적은 곳이 있다:\n  " + "\n  ".join(bad)
         + "\n  backend.axis_space()[<축>] 에서 읽어라. 축을 늘렸을 때 "
           "여기만 옛날에 남으면 새 값이 한 번도 안 돌아간다.")
+
+
+def test_드리프트_감시는_가장_짧은_형상으로_한다():
+    """감시 지표를 잘못 고르면 **오염을 보고도 못 본다.**
+
+    A6000 은 4096³ 하나로 감시하며 "+5.06 % 니 견딜 만하다" 고 판단했는데,
+    같은 시각 512³ 측정은 **+1380 % 오염**돼 있었다. 런치당 상수 오버헤드는
+    긴 커널에서 안 보인다.
+
+    그 교훈으로 `DRIFT_SHAPES` 에 작은 형상을 넣었는데, **`drift_check` 은
+    작은 형상을 기록만 하고 판정을 이끄는 반환값은 큰 형상이었다.** 커밋
+    제목이 "작은 형상 감시" 였고 docstring 도 "돌려주는 값은 작은 형상" 이라고
+    적혀 있었는데 코드가 반대였다 (2026-08-29, 5090 G-7 준비 중 발견).
+
+    그래서 **감시 형상이 가장 짧은 것인지**를 코드로 고정한다.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_reh", REPO / "scripts" / "rehearse.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+
+    def work(p):
+        return p.M * p.N * p.K
+
+    assert m.DRIFT_MONITOR_SHAPE in m.DRIFT_SHAPES
+    smallest = min(m.DRIFT_SHAPES, key=work)
+    assert m.DRIFT_MONITOR_SHAPE == smallest, (
+        f"드리프트 감시 형상이 가장 짧은 것이 아니다: "
+        f"{m.DRIFT_MONITOR_SHAPE} (가장 짧은 것은 {smallest}).\n"
+        "  런치당 상수 오버헤드는 긴 커널에서 안 보인다 — "
+        "A6000 이 4096³ 로 감시하다 512³ 의 +1380% 오염을 놓쳤다.")
+
+    # 그리고 `drift_check` 이 그 형상의 값을 돌려주는지 소스로 확인한다.
+    src = (REPO / "scripts" / "rehearse.py").read_text()
+    fn = src[src.index("def drift_check("):]
+    fn = fn[:fn.index("\ndef ", 1)]
+    assert "return m_mon.time_ms" in fn, (
+        "drift_check 이 감시 형상의 값을 돌려주지 않는다. "
+        "기록만 하고 판정을 큰 형상으로 하면 감시가 둔감해진다.")
