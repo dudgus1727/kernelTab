@@ -18,6 +18,10 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+
 from kerneltab.core import anchors
 
 EH = "c63710df" + "0" * 56
@@ -357,3 +361,86 @@ def test_슬라이스_이동이_중앙값_평균_눈금을_함께_낸다(tmp_pat
     assert mean == pytest.approx(-100 * 0.4 * tick / lo, rel=1e-6)
     assert 0 < abs(mean) < tick_pct, (
         "평균이 눈금 미만의 이동을 잡아야 이 검사가 의미가 있다")
+
+
+# --------------------------------------------------------------------------
+# 2026-08-29 (5090 G-7) — 산문 grep 판정과 앵커 형상
+# --------------------------------------------------------------------------
+
+def test_실패는_구조화된_종류로_분류된다():
+    """산문을 grep 해서 판정을 재구성하면 **설명구가 오분류된다.**
+
+    `gate_g7.py` 가 `[f for f in rep.failures if "세그먼트 간 편차" in f]` 로
+    1번 항목을 판정했다. 그런데 2번(절대값 이동)의 실패 메시지에
+    **"세그먼트 간 편차가 작아도 전체가 함께 드리프트한다"** 라는 설명구가
+    들어 있어서, 실패 1건이 1번과 2번 양쪽으로 세어졌다. **"세그먼트 편차는
+    문제없다" 고 설명하는 문장이 세그먼트 편차 실패가 됐다.**
+
+    그래서 `failure_kinds` 로 판정한다. 이 검사는 두 가지를 고정한다:
+      1. 모든 `failures` 항목이 `failure_kinds` 에도 있다 (누락 금지)
+      2. 절대값 실패 메시지가 세그먼트 실패로 분류되지 않는다
+    """
+    from kerneltab.core import anchors
+
+    rep = anchors.AnchorReport(env_hash="x", n_rows=0)
+    msg = ("짧은 앵커의 절대값이 라운드 0->3 사이에 7.03% 움직였다 "
+           "(노이즈 바닥 6.63%). 세그먼트 간 편차가 작아도 전체가 함께 "
+           "드리프트한다는 뜻이다.")
+    rep.failures.append(msg)
+    rep.failure_kinds.append((anchors.FAIL_ABS_MOVE, msg))
+
+    assert rep.failed(anchors.FAIL_SEGMENT_SPREAD) == [], (
+        "절대값 실패가 세그먼트 편차 실패로 분류됐다 — 산문 grep 의 함정이다")
+    assert rep.failed(anchors.FAIL_ABS_MOVE) == [msg]
+    assert len(rep.failures) == len(rep.failure_kinds), (
+        "failures 에만 넣고 failure_kinds 에 안 넣으면 판정에서 조용히 빠진다")
+
+
+def test_gate_g7_이_산문을_grep_하지_않는다():
+    """`gate_g7.py` 가 실패 문자열을 부분 문자열로 찾으면 안 된다."""
+    src = (REPO / "scripts" / "gate_g7.py").read_text()
+    # 주석에 옛 코드를 예시로 남겨 두었으므로 주석을 뺀 본문만 본다.
+    body = "\n".join(ln for ln in src.splitlines()
+                     if not ln.lstrip().startswith("#"))
+    assert "in f]" not in body and "rep.failures if" not in body, (
+        "gate_g7 이 rep.failures 를 문자열로 걸러 판정한다. "
+        "rep.failed(anchors.FAIL_*) 를 써라 — 설명구가 오분류된다.")
+    assert "rep.failed(" in body, "구조화된 판정(rep.failed)을 쓰지 않는다"
+
+
+def test_앵커_형상이_런치_오버헤드_문턱_위에_있다():
+    """앵커가 런치 오버헤드에 지배되면 값이 이산적으로 튄다.
+
+    5090 에서 `DRIFT_SHAPES` 가 512³ 였을 때 앵커가 12.288 / 14.336 us 를
+    오갔다 — 각각 브래킷 오버헤드(4.096 us)의 **정확히 3.0 배와 3.5 배**다.
+    그 앵커 하나가 G-7 세 항목을 실패시켰다.
+
+    형상 그리드에서는 같은 이유로 512³ 를 뺐는데 **앵커 목록은 그대로
+    뒀다.** 둘을 함께 봐야 한다.
+
+    여기서는 SOL(하한)이 문턱의 **3배 이상**인지 본다. 문턱 자체가
+    `3 x launch_overhead` 이므로, SOL 이 그 3배면 런치 오버헤드의 9배다.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_reh_shapes", REPO / "scripts" / "rehearse.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+
+    # RTX 5090 (2392 MHz / 13801 MHz 고정) 기준. 가장 빡빡한 조건이다.
+    PEAK, BW, THRESHOLD_US = 208.194e12, 1766.53e9, 12.288
+
+    def sol_us(p):
+        return max(2.0 * p.M * p.N * p.K / PEAK,
+                   (p.M * p.K + p.K * p.N + p.M * p.N) * 2 / BW) * 1e6
+
+    bad = [(p, sol_us(p)) for p in m.DRIFT_SHAPES
+           if sol_us(p) < 3 * THRESHOLD_US]
+    assert not bad, (
+        "앵커 형상이 런치 오버헤드 구간에 너무 가깝다:\n  " + "\n  ".join(
+            f"{p.M}x{p.N}x{p.K}  SOL {s:.2f} us "
+            f"(문턱 {THRESHOLD_US:.2f} us 의 {s / THRESHOLD_US:.1f}배)"
+            for p, s in bad)
+        + "\n  런치 오버헤드에 지배되면 값이 이산적으로 튀어 앵커가 못 쓰게 된다. "
+          "형상 그리드를 고칠 때 DRIFT_SHAPES 도 함께 봐라.")

@@ -95,8 +95,15 @@ def main() -> int:
     checks, verdicts, diffs = [], [], []
 
     # --- 1, 2: core/anchors 가 판정한다 ------------------------------------
-    seg_fail = [f for f in rep.failures if "세그먼트 간 편차" in f]
-    abs_fail = [f for f in rep.failures if "절대값" in f or "단조" in f]
+    # ⛔ 산문을 grep 하지 마라. 예전에는 이렇게 했다:
+    #        seg_fail = [f for f in rep.failures if "세그먼트 간 편차" in f]
+    #    절대값 실패 메시지에 "**세그먼트 간 편차가 작아도** 전체가 함께
+    #    드리프트한다" 라는 설명구가 들어 있어서, 그 한 건이 1번과 2번 **양쪽**
+    #    실패로 세어졌다. "세그먼트 편차는 문제없다" 고 설명하는 문장이
+    #    세그먼트 편차 실패가 된 것이다 (2026-08-29, 5090 G-7).
+    #    판정은 구조화된 종류로 한다. 산문은 사람에게만 보여준다.
+    seg_fail = rep.failed(anchors.FAIL_SEGMENT_SPREAD)
+    abs_fail = rep.failed(anchors.FAIL_ABS_MOVE, anchors.FAIL_MONOTONIC)
     checks.append(("1. 세그먼트 간 편차 (sB/sW)", not seg_fail,
                    f"짧은 앵커 최대 변동폭 {rep.worst_short:.2f}%"))
     checks.append(("2. 라운드 간 절대값 추이", not abs_fail,

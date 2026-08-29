@@ -145,6 +145,22 @@ class AbsMove:
     judged: bool
 
 
+#: 실패의 **구조화된 종류.** 소비하는 쪽(`gate_g7.py`)이 이것으로 판정한다.
+#:
+#: ⛔ 산문(`failures` 의 문자열)을 grep 해서 판정을 재구성하지 마라.
+#:    실제로 밟았다 — 절대값 실패 메시지에 "세그먼트 간 편차가 작아도" 라는
+#:    **설명구**가 들어 있어서, `gate_g7` 의
+#:    `[f for f in rep.failures if "세그먼트 간 편차" in f]` 가 그것을
+#:    세그먼트 편차 실패로 분류했다. 실패 1건이 2건으로 세어졌고,
+#:    **"세그먼트 편차는 문제없다" 고 설명하는 문장이 세그먼트 편차 실패가
+#:    됐다** (2026-08-29, 5090 G-7).
+#:
+#:    산문은 사람에게만 보여라. 판정은 코드로 한다.
+FAIL_SEGMENT_SPREAD = "segment_spread"   # 1. 세그먼트 간 편차 (sB/sW)
+FAIL_ABS_MOVE = "abs_move"               # 2. 라운드 간 절대값 추이
+FAIL_MONOTONIC = "monotonic"             # 2. 라운드마다 단조 증가
+
+
 @dataclass
 class AnchorReport:
     env_hash: str
@@ -163,7 +179,14 @@ class AnchorReport:
     n_slices: int = 0
     round_source: str = "none"       # "recorded" | "timestamp" | "none"
     failures: list[str] = field(default_factory=list)
+    #: `(종류, 사람이 읽을 설명)`. 종류는 위 `FAIL_*` 상수다.
+    #: `failures` 는 사람용이고 이쪽이 판정용이다.
+    failure_kinds: list[tuple[str, str]] = field(default_factory=list)
     tol_pct: float = DEFAULT_TOL_PCT
+
+    def failed(self, *kinds: str) -> list[str]:
+        """이 종류의 실패만 돌려준다. **판정은 반드시 이것으로 하라.**"""
+        return [msg for kind, msg in self.failure_kinds if kind in kinds]
 
     @property
     def ok(self) -> bool:
@@ -338,10 +361,11 @@ def analyze(rows: list[dict], rnd: list[int | None], env_hash: str,
                                     noise1[k], 100 * NOISE.sigma(overall),
                                     ratio, judged, ok))
         if judged and not ok:
-            rep.failures.append(
-                f"`{k[0][-24:]}`@{k[1]} 의 세그먼트 간 편차가 노이즈로 "
-                f"설명되지 않는다 (sB={s_b:.2f}%, sW="
-                f"{'n/a' if s_w is None else format(s_w, '.2f') + '%'})")
+            msg = (f"`{k[0][-24:]}`@{k[1]} 의 세그먼트 간 편차가 노이즈로 "
+                   f"설명되지 않는다 (sB={s_b:.2f}%, sW="
+                   f"{'n/a' if s_w is None else format(s_w, '.2f') + '%'})")
+            rep.failures.append(msg)
+            rep.failure_kinds.append((FAIL_SEGMENT_SPREAD, msg))
 
     # --- 측정 노이즈가 모델과 맞는가 (교차 검증) --------------------------
     # `core/noise.py` 의 sigma_rel(t) = 0.000374/t + 0.00044 는 **다른**
@@ -384,10 +408,11 @@ def analyze(rows: list[dict], rnd: list[int | None], env_hash: str,
                                      len(by_round[q])))
         prev = mu
     if len(by_round) >= 4 and mono >= len(by_round) - 1:
-        rep.failures.append(
-            "라운드마다 단조 증가한다 — 세그먼트 밖에 다른 누적이 있다. "
-            "프로세스 재시작이 완전히 리셋하지 못한다는 뜻이므로 드라이버 "
-            "수준 상태를 의심해야 한다.")
+        msg = ("라운드마다 단조 증가한다 — 세그먼트 밖에 다른 누적이 있다. "
+               "프로세스 재시작이 완전히 리셋하지 못한다는 뜻이므로 드라이버 "
+               "수준 상태를 의심해야 한다.")
+        rep.failures.append(msg)
+        rep.failure_kinds.append((FAIL_MONOTONIC, msg))
 
     # --- 절대값 추이 ------------------------------------------------------
     # 비율만 보면 **모든 세그먼트가 함께 나빠지는** 경우를 놓친다. 편차는
@@ -429,13 +454,24 @@ def analyze(rows: list[dict], rnd: list[int | None], env_hash: str,
         floor = max([ABS_FLOOR_K * x for x in succ] + [tol_pct])
         rep.abs_worst, rep.abs_floor = worst, floor
         if worst > floor:
-            rep.failures.append(
-                f"짧은 앵커의 절대값이 라운드 {f}->{la} 사이에 {worst:.2f}% "
-                f"움직였다 (노이즈 바닥 {floor:.2f}%). 세그먼트 간 편차가 "
-                f"작아도 전체가 함께 드리프트한다는 뜻이다.")
+            msg = (f"짧은 앵커의 절대값이 라운드 {f}->{la} 사이에 {worst:.2f}% "
+                   f"움직였다 (노이즈 바닥 {floor:.2f}%). 세그먼트 간 편차가 "
+                   f"작아도 전체가 함께 드리프트한다는 뜻이다.")
+            rep.failures.append(msg)
+            rep.failure_kinds.append((FAIL_ABS_MOVE, msg))
 
     # --- 세그먼트 안 이동 (참고) ------------------------------------------
-    # 이것은 노이즈 바닥의 정의 그 자체이므로 실패 조건으로 쓰지 않는다.
+    # 이것은 노이즈 바닥의 정의 그 자체이므로 **이 함수에서는** 실패 조건으로
+    # 쓰지 않는다.
+    #
+    # ⚠️ 그 서술은 **눈금이 큰 환경의 이야기다.** A6000 은 눈금이 1.024 us 라
+    #    14 us 앵커에서 한 눈금이 7.3 % 였고, 그 크기의 이동은 원리적으로
+    #    분해할 수 없었다. 5090 은 눈금이 32 ns 다 — 14.336 -> 12.288 us 의
+    #    이동은 **64 눈금**이고 인공물이 아니라 실제 신호다.
+    #
+    #    판정하기 전에 **"이 변동이 몇 눈금인가" 를 먼저 계산하라.** 아래
+    #    `within_slice` 는 눈금 비율을 함께 담으므로 `gate_g7.py` 가 그것으로
+    #    판단한다.
     #
     # ⚠️ **중앙값과 평균을 함께 낸다.** 짧은 앵커의 시간은 타이머 눈금
     #    (1.024 us)에 양자화돼 있고, 14 us 커널에서 한 눈금은 7.3 % 다.
