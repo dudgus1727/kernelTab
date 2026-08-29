@@ -787,9 +787,16 @@ env_hash_v2 가 못 보는 것
 ENV_HASH_KEYS_V2 += (
     "axis_space_hash",     # canonical_hash(backend.axis_space())
     "shape_grid_hash",     # canonical_hash([(p.M,p.N,p.K) for p in all_shapes(hw)])
+    "anchor_shape_hash",   # canonical_hash(rehearse.DRIFT_SHAPES)   <- 아래 참조
 )
 env["env_hash"] = env_hash_v2(env)       # 구 정의를 버리고 신 정의로 통일
 ```
+
+**앵커 형상도 같은 구멍이다.** 5090 G-7 에서 `DRIFT_SHAPES` 를 512³ ->
+2048³ 로 바꿨는데 `env_hash` 도 `env_hash_v2` 도 안 바뀌었다. 앵커는 재현성
+판정의 입력이고 드리프트 감시의 눈이므로 **측정 조건이다.** 옛 앵커
+(`anchors.drift512.jsonl`)를 손으로 옮겨 분리해야 했다 — 해시가 잡아 줬다면
+그럴 필요가 없다.
 
 ⚠️ 셋 다 파급이 크다.
 
