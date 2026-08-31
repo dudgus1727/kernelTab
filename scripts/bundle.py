@@ -165,6 +165,38 @@ def _export_agg_status() -> str:
     return AGG_STATUS
 
 
+def _transfer_notes(env: dict, hw, layers: dict) -> dict:
+    """다른 GPU 번들과 비교할 때 **먼저 읽어야 하는 것**.
+
+    두 표를 그냥 겹치면 "규칙이 나빠서 전이가 실패했다" 와 "애초에 다른
+    것을 비교했다" 를 구분할 수 없다. 무엇이 다른지 번들이 들고 다닌다.
+    """
+    from kerneltab.core.features import arith_intensity
+    from kerneltab.core.shapes import all_shapes
+    from kerneltab.backends import get_backend
+
+    ridge = hw.peak_tflops_f16 * 1e12 / (hw.bandwidth_gbps * 1e9)
+    axis = get_backend(hw.arch).axis_space()
+    shapes = all_shapes(hw)
+    return {
+        "ridge_point": round(ridge, 3),
+        "why": ("형상 그리드와 config 축이 GPU 마다 다르다. 전이 실험에서는 "
+                "common_shapes_only 와 config 교집합을 **둘 다** 잡아라. "
+                "그리고 ridge point 가 다르면 같은 형상의 is_memory_bound 가 "
+                "뒤집힌다 — 규칙이 그것을 입력으로 쓰면 GPU 마다 다른 것을 "
+                "배운다."),
+        "n_shapes": len(shapes),
+        "shapes": [[p.M, p.N, p.K] for p in shapes],
+        "axis_space": {k: sorted(v) if not isinstance(next(iter(v), None), tuple)
+                       else sorted(list(x) for x in v)
+                       for k, v in axis.items()},
+        # 이 표 안에서 각 형상이 어느 쪽인가. 상대 번들의 ridge 로 다시
+        # 계산하면 뒤집히는 형상을 바로 셀 수 있다.
+        "arith_intensity": {f"{p.M}x{p.N}x{p.K}": round(arith_intensity(p), 2)
+                            for p in shapes},
+    }
+
+
 def _noise_coefficients(env_hash: str) -> dict:
     """**이 캠페인의 앵커에서** 잰 노이즈 바닥 계수.
 
@@ -566,9 +598,18 @@ CUTLASS (NVIDIA, BSD-3-Clause) 는 이 번들에 포함되지 않는다.
         # 이력을 들고 다녀야** 한다. 이미 받아간 사람이 자기 사본이
         # 구버전인지 확인할 수 있어야 한다.
         "corrections": _load_corrections(),
+        # ★ 조건 식별자. `env_hash` 는 구 정의라 `created_utc` 와 측정값을
+        #   봐서 같은 조건에서 다시 돌려도 값이 바뀐다 (pending_fixes D-4).
+        #   **두 번들의 조건을 비교할 때는 `env_hash_v2` 를 써라.**
+        #   그것이 없으면 "이 두 표가 같은 조건인가" 를 파일만 보고 알 수 없다.
+        "env_hash_v2": env.get("env_hash_v2"),
+        "env_hash_def_version": env.get("env_hash_def_version"),
         # 측정 노이즈 바닥. 소비 쪽이 재계산 없이 정답 허용치를 정할 수
         # 있어야 한다. 형상마다 다르므로 고정 1% 를 쓰면 안 된다.
         "noise_floor": _noise_coefficients(env["env_hash"]),
+        # ★ 전이 실험 안내. 이 셋이 없으면 소비 쪽이 "전이 실패" 와
+        #   "다른 것을 비교했다" 를 구분하지 못한다.
+        "transfer_notes": _transfer_notes(env, hw, layers),
         # 표에 실제로 있는 컬럼. 스키마 버전만으로는 "이 번들에 그 컬럼이
         # 있나" 를 확인할 수 없다 — 버전이 같아도 export 시점이 다를 수 있다.
         "table_columns": _table_columns(out),
