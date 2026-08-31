@@ -117,7 +117,9 @@ python3 -m venv /tmp/nvmmh && /tmp/nvmmh/bin/pip install nvidia-matmul-heuristic
 python3 scripts/check_axis_coverage.py --vendor /tmp/vendor.json
 ```
 
-종료 코드 **4** = 근거 없는 공간 밖 값이 있다. **측정 전에** 결론을 내라 —
+종료 코드 **4** = 근거 없는 공간 밖 값이 있다. **5** = 벤더가 CUTLASS 3.x 를
+추천한다 (축을 넓혀도 안 없어진다 — `baseline_vendor.py` 의 target 을 보라).
+**측정 전에** 결론을 내라 —
 전수를 돌린 뒤에 알면 그 축은 다음 캠페인까지 비어 있다.
 자세한 절차: [`axis_coverage.md`](axis_coverage.md).
 

@@ -8,7 +8,10 @@ python3 scripts/check_axis_coverage.py \
     --vendor docs/baselines/vendor_a6000_828baa64.json
 ```
 
-종료 코드 **4** 면 근거 없는 공간 밖 값이 있다는 뜻이다. 캠페인 전에
+종료 코드 **4** 면 근거 없는 공간 밖 값이 있다는 뜻이다. **5** 면 벤더가
+CUTLASS **3.x** 커널을 추천하고 있다는 뜻이고, 이쪽은 축을 넓혀도 안
+없어진다 (API 차이다 — `decisions.md` 27, `consumer_contract.md` 12절).
+호출하는 쪽은 `!= 0` 으로 보라. 캠페인 전에
 결론을 내라.
 
 ---
