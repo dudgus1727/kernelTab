@@ -24,8 +24,14 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+from kerneltab.backends import get_backend
 from kerneltab.core import paths
-from kerneltab.core.env_hash import ENV_HASH_DEF_VERSION, env_hash_v2
+from kerneltab.core.shapes import all_shapes
+from kerneltab.core.env_hash import (
+    ENV_HASH_DEF_VERSION,
+    canonical_hash as _chash,
+    env_hash_v2,
+)
 from kerneltab.core.hardware import (
     bandwidth_from_api,
     bandwidth_reference_mhz,
@@ -351,6 +357,30 @@ def sanity_check_example(cutlass_root: Path, arch_flag: str) -> dict:
         "checks_failed": failed,
         "best_tflops": round(max(gflops) / 1000, 2) if gflops else None,
         "stdout_tail": out[-1500:],
+    }
+
+
+def _measurement_target_hashes(hw) -> dict:
+    """**무엇을 재는가**를 해시로 요약한다 (`env_hash` 정의 4).
+
+    셋은 서로 다른 축이다:
+
+    * `axis_space_hash`  — config 공간 (`SPLIT_K`, `STAGES`, tile/warp, swizzle)
+    * `shape_grid_hash`  — 형상 그리드. 층 C 는 `sm_count` 에서 M 을 역산한다
+    * `anchor_shape_hash` — 드리프트 감시/앵커 형상. 재현성 판정의 입력이다
+
+    `manifest_hash`(소스 tree_hash)를 쓰지 않는 이유는 입도다 — 주석 한 줄에도
+    바뀌면 측정 중 오타 수정조차 못 한다. 이 셋은 측정 대상만 정확히 덮는다.
+    """
+    from scripts.rehearse import DRIFT_SHAPES
+
+    backend = get_backend(hw.arch)
+    axis = {k: sorted(sorted(x) if isinstance(x, tuple) else x for x in v)
+            for k, v in backend.axis_space().items()}
+    return {
+        "axis_space_hash": _chash(axis),
+        "shape_grid_hash": _chash([[p.M, p.N, p.K] for p in all_shapes(hw)]),
+        "anchor_shape_hash": _chash([[p.M, p.N, p.K] for p in DRIFT_SHAPES]),
     }
 
 
@@ -693,14 +723,33 @@ def main() -> int:
         # tree_hash 를 포함해서 한 글자만 고쳐도 값이 바뀌고, 그러면
         # 측정 도중 오타 수정조차 못 한다. 사후 추적용으로 기록만 한다.
         "manifest": _safe_manifest(),
+        # --- 정의 4: 측정 대상 자체를 해시에 넣는다 (D-3) ------------------
+        # 축·형상·앵커가 바뀌면 **다른 조건**이다. 예전에는 이 셋이 해시에
+        # 없어서, `SPLIT_K` 를 8 -> 10 으로 늘려도 해시가 그대로였다.
+        **_measurement_target_hashes(hw),
     }
-    env["env_hash"] = canonical_hash(env)
+    # 구 정의(`env` 전체 해싱)를 버리고 **신 정의로 통일한다** (D-4).
+    #
+    # 구 정의는 `created_utc` 와 `launch_overhead`(측정값)를 봐서 조건이
+    # 완전히 같아도 다시 돌리면 값이 바뀌었다. 그 값이 재개 키이자 격리
+    # 경계였다. `env_hash_v2` 는 P-3 에서 만들어졌지만 **아무 데서도 안
+    # 쓰였다** — 함수도 테스트도 문서도 있는데 호출부가 없었다
+    # (`docs/decisions.md` 19).
+    #
+    # ⚠️ 옛 번들(`env_hash_def_version` 이 None 또는 3)은 구 정의 값을
+    #    들고 있다. 그 값은 번들 안 `env.json` 으로 재계산되므로 유효하다.
+    #    세대는 `env_hash_def_version` 으로 구분한다.
+    env["env_hash"] = env_hash_v2(env)
+    # 구 정의도 기록은 남긴다 — 옛 데이터와 대조할 때 필요하다.
+    env["env_hash_legacy"] = canonical_hash(
+        {k: v for k, v in env.items() if k != "env_hash"})
     # P-3: 측정 조건에만 의존하는 해시. 구 해시는 실행마다 변하는 값
     # (created_utc, host.*, launch_overhead 측정값)을 포함해서, 조건이
     # 같아도 다시 돌리면 값이 바뀐다. 재개가 끊기고 같은 조건의 데이터가
     # 갈라진다 — 이 캠페인에서 실제로 겪었다.
     # 구 해시는 그대로 두어 기존 98만 줄의 조회를 깨뜨리지 않는다.
-    env["env_hash_v2"] = env_hash_v2(env)
+    # 하위 호환. 정의 4 부터는 `env_hash` 와 같은 값이다.
+    env["env_hash_v2"] = env["env_hash"]
     # 정의 버전을 함께 적는다. 없으면 이 값이 어떤 키 목록으로 계산된
     # 것인지 나중에 알 수 없다 (core/env_hash.py 의 ENV_HASH_DEF_VERSION).
     env["env_hash_def_version"] = ENV_HASH_DEF_VERSION
@@ -722,6 +771,25 @@ def main() -> int:
         except (OSError, json.JSONDecodeError):
             prev = None
         prev_hash = (prev or {}).get("env_hash")
+        prev_def = (prev or {}).get("env_hash_def_version")
+        if prev_hash and prev_def not in (None, ENV_HASH_DEF_VERSION):
+            # ★ "조건이 다르다" 와 "정의가 바뀌었다" 는 대응이 다르다.
+            #   정의가 바뀌면 기존 결과의 해시는 **옛 정의로** 기록돼 있어
+            #   재개가 그것들을 다른 조건으로 본다. 조건은 그대로인데도.
+            print(
+                f"\n⛔ `env_hash` **정의**가 바뀌었다 "
+                f"(def_version {prev_def} -> {ENV_HASH_DEF_VERSION}).\n"
+                f"     기존 {prev_hash[:16]}  (정의 {prev_def})\n"
+                f"     새로 {env['env_hash'][:16]}  "
+                f"(정의 {ENV_HASH_DEF_VERSION})\n"
+                "\n   측정 조건이 같아도 값이 달라진다 — 해시 키 목록이 바뀌었다.\n"
+                "   기존 결과는 옛 정의 해시로 기록돼 있으므로, 재개하면\n"
+                "   **그것들을 다른 조건으로 보고 처음부터 다시 잰다.**\n"
+                "\n   ⛔ 측정 중이라면 진행하지 마라.\n"
+                "   새 정의로 시작하려면 기존 결과를 보관한 뒤 --force 를 준다.\n"
+                "   (docs/pending_fixes.md D-3/D-4)\n",
+                file=sys.stderr)
+            return 4
         if prev_hash and prev_hash != env["env_hash"]:
             prev_v2 = (prev or {}).get("env_hash_v2") or "?"
             same_cond = prev_v2 == env["env_hash_v2"]

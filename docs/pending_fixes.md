@@ -682,7 +682,12 @@ grep -rn 'from kerneltab' docker/     # 경로를 옮긴 커밋에서 반드시
 ```
 
 
-## D-3. **탐색 축이 `env_hash` 에 안 들어간다** — 지금은 `shuffle_seed` 의 우연에 기대고 있다
+## D-3. **탐색 축이 `env_hash` 에 안 들어간다**
+> ## ✅ 해결 (2026-09-01, `env_hash` 정의 4)
+>
+> `axis_space_hash` / `shape_grid_hash` / `anchor_shape_hash` 를 키에 넣었다.
+> 셋 다 `REQUIRED_V2` 라 비면 예외다 — `None` 을 허용하면 넣은 의미가 없다.
+ — 지금은 `shuffle_seed` 의 우연에 기대고 있다
 
 5090 캠페인에서 `SPLIT_K` 에 5, 7 을 추가한 뒤 `phase0_env.py` 를 다시 돌렸다.
 `env_hash` 가 `d0b680b2` -> `47c31170` 으로 바뀌었다. **그런데 축이 바뀌어서가
@@ -729,7 +734,19 @@ ENV_HASH_KEYS_V2 += ("axis_space_hash",)   # canonical_hash(backend.axis_space()
 **완전한 해법은 없고, 축은 덮을 수 있다.**
 
 
-## D-4. ⛔ **`env_hash` 필드는 아직 구 정의다** — P-3 이 절반만 적용됐다
+## D-4. ⛔ **`env_hash` 필드는 아직 구 정의다**
+> ## ✅ 해결 (2026-09-01, `env_hash` 정의 4)
+>
+> `env["env_hash"] = env_hash_v2(env)` 로 통일하고 구 정의는
+> `env_hash_legacy` 로 기록만 남긴다. 파급을 먼저 확인했다 —
+> `load_bundle` 은 `env_hash` 를 **데이터로 읽기만** 하고 재계산·대조하지
+> 않으므로 **이미 릴리즈된 번들은 재생성 불필요**다. 세대는
+> `env_hash_def_version`(None / 3 / 4)으로 구분한다.
+>
+> ⚠️ 정정: "구 정의는 재현 불가능" 은 **다시 측정할 때 값이 달라진다**는
+> 뜻이지 기록을 못 푼다는 뜻이 아니었다. 번들 안 `env.json` 으로
+> 재계산하면 기록값과 일치한다 (A6000 `828baa644b7dc088` 확인).
+ — P-3 이 절반만 적용됐다
 
 `scripts/phase0_env.py` 는 해시를 **둘** 쓴다:
 
@@ -811,6 +828,13 @@ env["env_hash"] = env_hash_v2(env)       # 구 정의를 버리고 신 정의로
 
 
 ## D-5. `verify_clock_lock` 의 판정이 A6000 전용이다
+> ## ✅ 해결 (2026-09-01)
+>
+> 판정 입력을 **클럭 분포**(목표 미만 비율 + 최대 이탈 폭)로 바꿨다.
+> 지원 클럭 한 칸(`CLOCK_DIP_TOL = 1 %`) 이내면 부스트 입도로 본다.
+> 전력 여유는 절대 와트가 아니라 **카드 상한 대비 비율**로 본다.
+> `sw_power_cap` 은 기록만 하고 판정에 쓰지 않는다.
+
 
 ```python
 swpc = thr.get("sw_power_cap", 0) / n

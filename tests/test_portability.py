@@ -178,6 +178,10 @@ class TestManifestInEnv:
         "shuffle_seed": 1234,
         "cutlass": {"commit": "c" * 40},
         "cuda": {"nvcc_version": "13.3.73", "driver_user_mode": "610.43.02"},
+        # 정의 4 (D-3): 무엇을 재는가. 축/형상/앵커가 바뀌면 다른 조건이다.
+        "axis_space_hash": "a" * 64,
+        "shape_grid_hash": "s" * 64,
+        "anchor_shape_hash": "k" * 64,
     }
 
     def test_manifest_does_not_change_hash(self):

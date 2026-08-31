@@ -51,6 +51,11 @@ REQUIRED_V2: tuple[str, ...] = (
     "nvcc_arch_flag",
     "cutlass.commit",
     "cuda.nvcc_version",
+    # 정의 4. 비면 서로 다른 탐색 공간이 같은 해시를 받는다 — 이 셋을
+    # 넣은 이유 자체가 그것이므로 `None` 을 허용하면 의미가 없다.
+    "axis_space_hash",
+    "shape_grid_hash",
+    "anchor_shape_hash",
 )
 
 #: 해시 **정의**의 버전. 키 목록이 바뀌면 반드시 올린다.
@@ -67,7 +72,9 @@ REQUIRED_V2: tuple[str, ...] = (
 #: |---|---|
 #: | 2 | 최초 (P-3). `env` 전체 해싱을 대체 |
 #: | 3 | `cuda.driver_user_mode` 추가 (아래 참조) |
-ENV_HASH_DEF_VERSION = 3
+#: | 4 | **탐색 축 / 형상 그리드 / 앵커 형상**을 넣고, `env_hash` 필드를
+#:      이 정의로 통일 (D-3, D-4). 아래 참조 |
+ENV_HASH_DEF_VERSION = 4
 
 #: 해시에 들어가는 것. `(env 키, 하위 경로)` — 하위 경로는 점으로 구분한다.
 ENV_HASH_KEYS_V2: tuple[str, ...] = (
@@ -92,6 +99,25 @@ ENV_HASH_KEYS_V2: tuple[str, ...] = (
     # 확인되지 않았다. 짧은 커널에서 런치 경로가 지배한다는 것은 이미 안다
     # (docs/measurement_drift.md). 영향이 있다면 이것은 측정 조건이다.
     "cuda.driver_user_mode",
+    # --- 정의 4 에서 추가 (D-3, D-4) ---------------------------------------
+    #
+    # ⛔ 이 셋이 없어서 **측정 대상이 바뀌어도 해시가 안 바뀌었다.**
+    #
+    #    5090 캠페인 준비 중 `SPLIT_K` 를 8 -> 10 으로 늘리고 형상 그리드의
+    #    층 B/E 를 바꿨는데 `env_hash_v2` 가 그대로였다. 해시가 바뀐 것은
+    #    **`shuffle_seed` 가 매 실행 무작위였기 때문**이고, `--seed` 를
+    #    고정했다면 서로 다른 탐색 공간의 데이터가 **같은 조건 식별자**를
+    #    공유했을 것이다. 우리를 구한 것은 설계가 아니라 우연이었다.
+    #
+    #    앵커 형상도 같은 구멍이었다 — `DRIFT_SHAPES` 를 512³ -> 2048³ 로
+    #    바꿨는데 해시가 그대로라 옛 앵커를 손으로 분리해야 했다.
+    #
+    # `manifest_hash`(소스 tree_hash)를 넣지 않는 이유는 그대로다 — 오타
+    # 수정에도 바뀌어 측정 중 아무것도 못 고치게 된다. 이 셋은 **정확히
+    # 측정 대상만** 덮는 입도다.
+    "axis_space_hash",      # canonical_hash(backend.axis_space())
+    "shape_grid_hash",      # canonical_hash([(M,N,K), ...])
+    "anchor_shape_hash",    # canonical_hash(rehearse.DRIFT_SHAPES)
 )
 
 #: 별칭. 코드에서는 이쪽을 쓴다 — `_V2` 라는 이름이 정의 버전과 어긋난다.

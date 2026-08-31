@@ -50,7 +50,7 @@ def start_telemetry(device: int):
     p = subprocess.Popen(
         ["nvidia-smi", "-i", str(device),
          "--query-gpu=timestamp,clocks.sm,clocks.mem,temperature.gpu,"
-         "power.draw,clocks_throttle_reasons.active",
+         "power.draw,clocks_throttle_reasons.active,power.limit",
          "--format=csv", "-l", "1"],
         stdout=f, stderr=subprocess.DEVNULL)
     return p, f
@@ -69,6 +69,11 @@ def parse_telemetry() -> list[dict]:
                 "temp": int(parts[3]),
                 "power": float(parts[4].split()[0]),
                 "bits": int(parts[5], 16),
+                # 카드마다 다르다 (A6000 300 W, RTX 5090 600 W). 절대
+                # 와트로 판정하면 한 카드의 값이 다른 카드에서 틀린다.
+                "power_limit": (float(parts[6].split()[0])
+                                if len(parts) > 6 and parts[6][:1].isdigit()
+                                else None),
             })
         except (ValueError, IndexError):
             continue
@@ -187,18 +192,48 @@ def main() -> int:
     print(f"              전체 min={min(ts):.4f} max={max(ts):.4f} "
           f"변동폭={100 * (max(ts) - min(ts)) / statistics.median(ts):.2f}%")
 
+    # ⛔ **`sw_power_cap` 으로 판정하지 마라** (D-5, docs/decisions.md 22).
+    #
+    #    옛 판정은 `swpc > 0.10 -> lower` 였고 A6000 에서 만들어졌다
+    #    (미고정 51 % / 고정 0 %). GeForce 에서는 **클럭을 부스트 상한
+    #    아래로 고정해 두면 "전력 때문에 더 못 올라간다" 가 자명하게
+    #    참**이라 이 비트가 상시로 뜬다. RTX 5090 을 2392 MHz 로 고정하고
+    #    재니 플래그가 31.9 % 떴는데 **그 샘플들의 클럭이 전부 2392(목표값)**
+    #    였고 171 W 에서도 떴다. 클럭을 **낮췄더니 플래그가 늘었다**
+    #    (20.4 % -> 31.9 %).
+    #
+    #    판정은 **클럭이 목표 아래로 얼마나 내려갔는가**로 한다.
+    dip_frac = sum(1 for c in clks if c < expect) / n
+    worst_dip = (expect - min(clks)) / expect if clks else 0.0
+    # 지원 클럭은 이산값이라(5090 은 7~8 MHz 간격) 한 칸 아래로 진동하는
+    # 것은 정상이다. 5090 에서 2392 고정 시 11.9 % 샘플이 2385 였는데
+    # **그 구간의 전력이 오히려 낮았다** — 전력이 아니라 부스트 입도다.
+    STEP_TOL = 0.01          # 한 칸(약 0.3 %)을 넉넉히 덮는다
+    # 전력 여유는 **카드 상한 대비 비율**로 본다. 옛 `max(pw) <= 250` 은
+    # A6000 의 300 W 캡 기준이라 600 W 캡에서는 41 % 인데도 "올려라" 가
+    # 나왔다.
+    limits = [t["power_limit"] for t in tel if t.get("power_limit")]
+    cap = max(limits) if limits else None
+    head = (1 - max(pw) / cap) if cap else None
+
     print("\n판정:")
+    print(f"  클럭      목표 미만 {100 * dip_frac:.1f}%   최대 이탈 "
+          f"{100 * worst_dip:.2f}%   (한 칸 허용 {100 * STEP_TOL:.0f}%)")
+    print(f"  전력      최대 {max(pw):.1f}W" +
+          (f" / 상한 {cap:.0f}W = {100 * max(pw) / cap:.0f}%" if cap else ""))
+    print(f"  스로틀    sw_power_cap {100 * swpc:.1f}% "
+          f"— **판정에 쓰지 않는다** (기록만)")
     verdict = "hold"
-    if swpc > 0.10:
+    if worst_dip > STEP_TOL:
         verdict = "lower"
-        print(f"  !! sw_power_cap {100 * swpc:.1f}% > 10% — 클럭을 더 내려야 한다.")
-    elif max(pw) <= 250:
+        print(f"  !! 클럭이 목표보다 {100 * worst_dip:.2f}% 아래로 내려갔다 "
+              f"(지원 클럭 한 칸을 넘는다) — 더 내려야 한다.")
+    elif cap and head is not None and head > 0.5 and dip_frac < 0.05:
         verdict = "raise"
-        print(f"  sw_power_cap {100 * swpc:.1f}% <= 10% 이고 최대 전력 "
-              f"{max(pw):.1f}W <= 250W 로 여유 있음 — 클럭을 올려볼 수 있다.")
+        print(f"  전력이 상한의 {100 * max(pw) / cap:.0f}% 뿐이고 클럭 이탈도 "
+              f"거의 없다 — 클럭을 올려볼 수 있다.")
     else:
-        print(f"  sw_power_cap {100 * swpc:.1f}% <= 10%, 최대 전력 {max(pw):.1f}W "
-              f"— 현재 값 유지가 적절하다.")
+        print("  이탈이 지원 클럭 한 칸 이내다 — 현재 값 유지가 적절하다.")
 
     OUT.write_text(json.dumps({
         "expect_mhz": expect, "samples": n, "measurements": len(times),
@@ -209,6 +244,9 @@ def main() -> int:
         "mem_clk_min": min(mem), "mem_clk_max": max(mem),
         "mem_clk_median": statistics.median(mem),
         "throttle_seconds": dict(thr), "sw_power_cap_frac": swpc,
+        # ★ 판정 입력. sw_power_cap_frac 은 기록만 한다 (D-5).
+        "clk_dip_frac": dip_frac, "clk_worst_dip": worst_dip,
+        "power_limit_w": cap,
         "time_first_quartile_ms": first_q, "time_last_quartile_ms": last_q,
         "time_min_ms": min(ts), "time_max_ms": max(ts),
         "verdict": verdict,

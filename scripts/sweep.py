@@ -34,6 +34,7 @@ import random
 import subprocess
 import sys
 import time
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -97,6 +98,44 @@ def segment_plan(seg_kernels: int, env: dict) -> dict:
     payload["jobs_per_segment"] = {int(k): v
                                    for k, v in payload["jobs_per_segment"].items()}
     return payload
+
+
+def report_foreign_rows(env_hash: str) -> None:
+    """`results.jsonl` 에 **다른 조건의 행**이 몇 개나 있는지 밝힌다.
+
+    재개는 `env_hash` 로 필터하므로 다른 조건의 행은 자동으로 무시된다 —
+    설계상 맞다. 문제는 **조용하다는 것**이다. 정의가 바뀌었거나
+    `phase0_env` 를 다시 돌렸으면 지금까지 잰 것이 통째로 "다른 조건" 이
+    되어 처음부터 다시 재는데, 진행률만 보고 있으면 알 수 없다.
+
+    A6000 에서 98 만 건을 그렇게 날릴 뻔했다 (`docs/pending_fixes.md` D-4).
+    세는 데 몇 초 걸리고, 그 몇 초가 33 시간을 지킨다.
+    """
+    path = paths.RESULTS_DIR / "results.jsonl"
+    if not path.exists():
+        return
+    seen: Counter = Counter()
+    with path.open() as f:
+        for line in f:
+            i = line.find('"env_hash"')
+            if i == -1:
+                continue
+            j = line.find('"', line.find(":", i) + 1)
+            seen[line[j + 1:j + 9]] += 1
+    mine = env_hash[:8]
+    foreign = {k: v for k, v in seen.items() if k != mine}
+    if not foreign:
+        return
+    total = sum(foreign.values())
+    print(f"\n⚠️ results.jsonl 에 **다른 조건의 행 {total:,}개**가 있다 "
+          f"(현재 {mine}):")
+    for k, v in sorted(foreign.items(), key=lambda kv: -kv[1]):
+        print(f"     {k}  {v:>10,}행")
+    print(f"     현재 조건 {mine} 은 {seen.get(mine, 0):,}행.")
+    print("   재개는 현재 조건만 이어서 잰다 — 위 행들은 **다시 재지 않고**\n"
+          "   분석에서도 env_hash 로 분리된다. 그것이 의도라면 정상이다.\n"
+          "   ⛔ 의도가 아니라면(정의 변경, phase0_env 재실행) **지금 멈춰라** —\n"
+          "      진행하면 처음부터 다시 잰다 (pending_fixes D-4).\n")
 
 
 def resume_state(env_hash: str | None, n_seg: int) -> tuple[set[int], int]:
@@ -198,6 +237,9 @@ def main() -> int:
     #   * 셔플 시드가 seed^(rnd+1) 이라 **라운드 0 의 순서가 반복**된다
     #   * sweep.jsonl 의 라운드 번호가 겹쳐 사후 분석이 헷갈린다
     # 데이터 정확성 문제는 아니다 — 측정된 작업은 건너뛴다.
+    # ★ 재개 전에 다른 조건의 행을 먼저 밝힌다. 조용히 넘어가면 정의가
+    #   바뀌었거나 phase0_env 를 다시 돌린 것을 진행률만 보고는 모른다.
+    report_foreign_rows(env["env_hash"])
     done, rnd = resume_state(env.get("env_hash"), n_seg)
     if done or rnd:
         print(f"재개: 라운드 {rnd} 부터, 완료 세그먼트 {len(done)}/{n_seg}")

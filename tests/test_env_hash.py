@@ -27,6 +27,9 @@ def env():
     return {
         "hardware": {"name": "GPU", "sm_count": 84, "peak_tflops_f16": 116.1},
         "nvcc_arch_flag": "sm_86",
+        "axis_space_hash": "a" * 64,
+        "shape_grid_hash": "s" * 64,
+        "anchor_shape_hash": "k" * 64,
         "protocol": {"target_ms": 20.0, "min_reps_floor": 5},
         "soak": {"enabled": False},
         "segments": {"kernels": 500, "warmup_seconds": 20},
@@ -138,6 +141,9 @@ class TestRequiredFields:
         e = {
             "hardware": {"name": "X", "arch": "sm_86"},
             "nvcc_arch_flag": "sm_86",
+            "axis_space_hash": "a" * 64,
+            "shape_grid_hash": "s" * 64,
+            "anchor_shape_hash": "k" * 64,
             "cutlass": {"commit": "c" * 40},
             "cuda": {"nvcc_version": "13.3.73"},
         }
@@ -188,7 +194,7 @@ class TestDefinitionVersion:
     """
 
     #: (정의 버전, 키 목록 해시). 키를 고쳤으면 **둘 다** 갱신하라.
-    FROZEN = (3, "40c8c9040f60b957")
+    FROZEN = (4, "2c7d2bd066385aba")
 
     def test_키를_고치면_버전을_올려야_한다(self):
         ver, digest = self.FROZEN
@@ -212,7 +218,13 @@ class TestDefinitionVersion:
     def test_유저모드가_다르면_해시가_다르다(self):
         base = {
             "hardware": {"name": "X", "arch": "sm_86"},
+            "axis_space_hash": "a" * 64,
+            "shape_grid_hash": "s" * 64,
+            "anchor_shape_hash": "k" * 64,
             "nvcc_arch_flag": "sm_86",
+            "axis_space_hash": "a" * 64,
+            "shape_grid_hash": "s" * 64,
+            "anchor_shape_hash": "k" * 64,
             "cutlass": {"commit": "c" * 40},
             "cuda": {"nvcc_version": "13.3.73", "driver_user_mode": "610.43.02"},
         }
@@ -223,7 +235,13 @@ class TestDefinitionVersion:
     def test_커널모드가_달라도_해시는_같다(self):
         base = {
             "hardware": {"name": "X", "arch": "sm_86"},
+            "axis_space_hash": "a" * 64,
+            "shape_grid_hash": "s" * 64,
+            "anchor_shape_hash": "k" * 64,
             "nvcc_arch_flag": "sm_86",
+            "axis_space_hash": "a" * 64,
+            "shape_grid_hash": "s" * 64,
+            "anchor_shape_hash": "k" * 64,
             "cutlass": {"commit": "c" * 40},
             "cuda": {"nvcc_version": "13.3.73", "driver_user_mode": "610.43.02",
                      "driver_kernel_mode": "580.173.02"},
@@ -231,3 +249,66 @@ class TestDefinitionVersion:
         other = copy.deepcopy(base)
         other["cuda"]["driver_kernel_mode"] = "575.00.00"
         assert env_hash_v2(base) == env_hash_v2(other)
+
+
+# --------------------------------------------------------------------------
+# 정의 4 (D-3, D-4) — 측정 대상이 바뀌면 해시가 바뀐다
+# --------------------------------------------------------------------------
+
+class TestDefinition4:
+    """축 / 형상 / 앵커가 해시 입력에 있어야 한다.
+
+    ⛔ 정의 3 까지는 없었다. 5090 준비 중 `SPLIT_K` 를 8 -> 10 으로 늘리고
+       형상 그리드를 바꿨는데 `env_hash_v2` 가 **그대로였다.** 해시가 바뀐
+       것은 `shuffle_seed` 가 매 실행 무작위였기 때문이고, `--seed` 를
+       고정했다면 서로 다른 탐색 공간이 같은 조건 식별자를 공유했을 것이다.
+       **우리를 구한 것은 설계가 아니라 우연이었다.**
+    """
+
+    BASE = {
+        "hardware": {"name": "G", "arch": "sm_120", "sm_count": 170},
+        "nvcc_arch_flag": "sm_120",
+        "protocol": {"target_ms": 20.0},
+        "soak": {"enabled": False},
+        "segments": {"kernels": 1616},
+        "clock_locked": True, "locked_mhz": 2392,
+        "mem_clock_locked": True, "locked_mem_mhz": 13801,
+        "peak_tflops_f16_effective": 208.194,
+        "bandwidth_gbps_effective": 1766.53,
+        "shuffle_seed": 1,
+        "cutlass": {"commit": "c" * 40},
+        "cuda": {"nvcc_version": "13.3.73", "driver_user_mode": "610.43.02"},
+        "axis_space_hash": "a" * 64,
+        "shape_grid_hash": "s" * 64,
+        "anchor_shape_hash": "k" * 64,
+    }
+
+    @pytest.mark.parametrize("key", ["axis_space_hash", "shape_grid_hash",
+                                     "anchor_shape_hash"])
+    def test_바뀌면_해시가_바뀐다(self, key):
+        base = env_hash_v2(dict(self.BASE))
+        other = env_hash_v2({**self.BASE, key: "z" * 64})
+        assert base != other, (
+            f"{key} 를 바꿨는데 env_hash 가 그대로다 — 서로 다른 측정 대상이 "
+            "같은 조건 식별자를 공유한다 (pending_fixes D-3)")
+
+    @pytest.mark.parametrize("key", ["axis_space_hash", "shape_grid_hash",
+                                     "anchor_shape_hash"])
+    def test_비어_있으면_실패한다(self, key):
+        """`None` 을 허용하면 이 셋을 넣은 의미가 없다."""
+        with pytest.raises(EnvHashIncomplete):
+            env_hash_v2({**self.BASE, key: None})
+
+    def test_정의_버전이_4다(self):
+        assert ENV_HASH_DEF_VERSION == 4
+
+    def test_shuffle_seed_에_기대지_않는다(self):
+        """시드를 고정해도 축이 다르면 해시가 달라야 한다.
+
+        이것이 정의 4 의 요점이다 — 예전에는 시드가 무작위라 **우연히**
+        해시가 갈렸다.
+        """
+        a = env_hash_v2({**self.BASE, "shuffle_seed": 42})
+        b = env_hash_v2({**self.BASE, "shuffle_seed": 42,
+                         "axis_space_hash": "z" * 64})
+        assert a != b
