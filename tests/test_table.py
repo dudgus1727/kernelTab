@@ -164,8 +164,24 @@ class TestEnvHash:
 
 
 class TestOkOnly:
-    def test_default_filters_failures(self, table):
+    """★ 기본값이 `ok_only=False` 다 (2026-09-01 변경, 이전 `True`).
+
+    `status != "ok"` 는 결측이 아니다 (`consumer_contract.md` 9절).
+    `high_outlier_frac` 비율은 하드웨어에 의존해서(A6000 10.65 % vs
+    RTX 5090 22.28 %) 기본으로 거르면 **더 빠른 GPU 의 표가 더 얇아
+    보인다.** C-2 가 같은 이유로 `export.py` 집계를 `all` 로 바꿨는데
+    로더 기본값만 남아 있었다.
+    """
+
+    def test_기본값은_거르지_않는다(self, table):
         X = load_for_ranking(table)
+        assert len(X) == 3 * 5, (
+            "로더가 기본으로 status 를 거른다 — 기본값은 ok_only=False 여야 "
+            "한다 (consumer_contract 9절)")
+
+    def test_명시하면_거른다(self, table):
+        # status-filter: 기본값이 아니라 **명시했을 때** 걸러지는지 확인한다
+        X = load_for_ranking(table, ok_only=True)
         assert len(X) == 3 * 4          # config 5개 중 1개가 numerical_fail
 
     def test_can_keep_failures(self, table):

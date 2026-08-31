@@ -50,16 +50,43 @@ MARKER_LOOKBACK = 4
 
 
 def _status_comparisons(tree):
-    """`... status ... == "ok"` (또는 `!=`) 형태의 비교를 찾는다."""
+    """status 를 `"ok"` 로 거르는 자리를 찾는다.
+
+    두 형태를 본다:
+
+    1. `... status ... == "ok"` (또는 `!=`) — 비교
+    2. **`status.get("ok")` / `status["ok"]`** — 조회
+
+    ⛔ 2 번을 빼먹었더니 `validate_table.py` 가 `status.get("ok") / tot < 0.80`
+       으로 게이트하는 것을 **다섯 번째 사례로 놓쳤다.** `ok` 비율은
+       하드웨어에 의존해서(A6000 10.65 % vs 5090 22.21 %), 그것으로 게이트하면
+       **더 빠른 GPU 일수록 표가 나쁘다고 판정한다.**
+       검사가 잡는 형태가 좁으면 같은 실수가 다른 문법으로 되돌아온다.
+    """
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Compare):
+        if isinstance(node, ast.Compare):
+            consts = [c.value for c in [node.left, *node.comparators]
+                      if isinstance(c, ast.Constant)]
+            if "ok" in consts:
+                src = ast.dump(node)
+                if "'status'" in src or "attr='status'" in src:
+                    yield node
             continue
-        consts = [c.value for c in [node.left, *node.comparators]
-                  if isinstance(c, ast.Constant)]
-        if "ok" not in consts:
+        # status.get("ok") / status.get("ok", 0)
+        if (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "get"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and node.args[0].value == "ok"
+                and "status" in ast.dump(node.func.value)):
+            yield node
             continue
-        src = ast.dump(node)
-        if "'status'" in src or "attr='status'" in src:
+        # status["ok"]
+        if (isinstance(node, ast.Subscript)
+                and isinstance(node.slice, ast.Constant)
+                and node.slice.value == "ok"
+                and "status" in ast.dump(node.value)):
             yield node
 
 

@@ -400,6 +400,9 @@ def main() -> int:
                 "launch_infeasible"}
     usable = sum(v for k, v in status.items() if k not in UNUSABLE)
     usable_frac = usable / max(tot, 1)
+    # status-filter: 게이트가 아니라 **경고용 정보**다. 소비 쪽이
+    # `status == "ok"` 로 거를 때 얼마나 버리는지 알려주려고 센다.
+    # 판정은 바로 위 `usable_frac` 이 한다.
     ok_frac = status.get("ok", 0) / max(tot, 1)
     print(f"\n  쓸 수 있는 시간이 있는 행: {usable:,} / {tot:,} "
           f"= {100 * usable_frac:.2f}%   (`ok` 만 세면 {100 * ok_frac:.1f}%)")

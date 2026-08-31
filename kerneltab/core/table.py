@@ -163,7 +163,7 @@ def _read(path: str | Path, env_hash: str | None, ok_only: bool):
 def load_for_ranking(
     path: str | Path,
     env_hash: str | None = None,
-    ok_only: bool = True,
+    ok_only: bool = False,
     keep_outcomes: bool = False,
     unknown_columns: str = "warn",
 ) -> pd.DataFrame:
@@ -174,8 +174,26 @@ def load_for_ranking(
     env_hash
         측정 조건. 지정하지 않았는데 표에 여러 조건이 섞여 있으면 예외.
     ok_only
-        `status == "ok"` 만 남긴다 (기본). 실패는 결측이 아니라 명시 기록이므로
-        규칙 입력에서는 빼는 것이 맞다.
+        `status == "ok"` 만 남긴다. **기본값은 `False`** — 2026-09-01 에
+        `True` 에서 바꿨다.
+
+        `status != "ok"` 는 **결측이 아니다** (`consumer_contract.md` 9절).
+        특히 `high_outlier_frac` 은 시간이 유효한데 산포가 넓다는 품질
+        표시일 뿐이고, 그 비율은 **하드웨어에 크게 의존한다**:
+
+            A6000 10.65 %   ->   RTX 5090 22.28 %
+
+        짧은 커널에 반복이 많아서(시간 예산 프로토콜) 생기므로, 커널이
+        빠른 GPU 일수록 커진다. 기본으로 거르면 **더 빠른 GPU 의 표가
+        더 얇아 보인다** — 그리고 빠지는 것이 짧은 형상, 즉 순위 학습이
+        가장 어려운 쪽에 몰린다.
+
+        C-2 가 같은 이유로 `export.py` 의 집계를 `all` 로 바꿨는데
+        (정적 top-1 이 1.394 -> 1.115 로 **결론이 뒤집혔다**), 로더
+        기본값만 남아 있었다. 문서가 설명해도 **기본값을 쓰는 코드는
+        그 문서를 안 읽는다.**
+
+        거르고 싶으면 `ok_only=True` 를 **명시**하고 이유를 남겨라.
     keep_outcomes
         True 면 `OUTCOME_COLS` 를 남긴다. **권장하지 않는다.** 진단용.
     unknown_columns
@@ -194,7 +212,7 @@ def load_for_ranking(
 def load_for_scoring(
     path: str | Path,
     env_hash: str | None = None,
-    ok_only: bool = True,
+    ok_only: bool = False,
 ) -> pd.DataFrame:
     """채점용. 정답을 포함한다. **규칙 함수에 넘기면 안 된다.**
 
