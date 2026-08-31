@@ -306,3 +306,58 @@ regret 차이가 노이즈일 수 있어 전체 평균에 섞으면 결론이 �
   `docs/next_campaign.md` 의 층 B 확대가 여기에 직접 걸린다.
 * 벤더 휴리스틱은 **우리 커널 공간에 맞춰 매핑한 것**이다. 벤더가 자기
   라이브러리 안에서 내는 실제 성능은 이보다 좋을 수 있다 (C/A 참조).
+
+
+---
+
+## 벤더 휴리스틱은 **2.x 파라미터만 낸다** (2026-09-01 확인)
+
+우리 표는 CUTLASS 2.x 커널만 담는다. 벤더가 3.x 전용 커널을 추천하면
+`baseline_vendor.py` 가 그것을 "가장 가까운 config" 로 대체해 채점하므로
+**의도와 다른 커널이 채점된다.** 그래서 확인했다 — GPU 를 쓰지 않는다.
+
+### `nvMatmulHeuristicsTarget` 에 `CUTLASS` 와 `CUTLASS3` 가 따로 있다
+
+```
+['CUTLASS', 'CUTLASS3', 'GENERIC', 'NVFUSER', 'TRITON', ...]
+```
+
+**`baseline_vendor.py` 는 `CUTLASS` 를 쓴다** (2.x). 같은 형상·같은 GPU 로
+두 타겟을 비교하면 차이가 분명하다:
+
+| target | GPU | 대표 추천 |
+|---|---|---|
+| **CUTLASS** | RTX 5090 | `cta(128 128 32) warp(64 64 32) instr(16 8 16) ... **cluster(1 1)**` |
+| **CUTLASS** | H100 | `cta(128 128 32) warp(64 64 32) instr(16 8 16) ... **cluster(1 1)**` |
+| CUTLASS3 | RTX 5090 | `cta(128 128 64) ... swizz(1) **cluster(1 4)**` |
+| CUTLASS3 | H100 | `cta(128 128 64) ... **instr(64 8 16)** **cluster(2 1)**` |
+
+`CUTLASS3` 만 3.x 를 드러낸다 — **cluster shape** 와 H100 의
+`instr(64 8 16)`(wgmma). `CUTLASS` 는 어느 GPU 에서도 `cluster(1 1)` 이고
+`instr` 이 `16 8 16`(mma.m16n8k16)이다.
+
+### 전 형상에서 확인했다
+
+| | 추천 수 | `cluster` 분포 | `instr` 분포 |
+|---|---:|---|---|
+| RTX 5090 (66 형상) | 612 | **`{(1,1): 612}`** | **`{(16,8,16): 612}`** |
+| A6000 (65 형상) | 594 | **`{(1,1): 594}`** | **`{(16,8,16): 594}`** |
+
+**두 GPU 의 필드 집합이 같다.** `GemmConfig` 구조체에 `cluster_m/n` 이
+있기는 하지만 `target=CUTLASS` 에서는 항상 1 이다.
+
+### 결론 — 벤더 비교는 **같은 config 공간 안에서** 이뤄진다
+
+`nvidia-matmul-heuristics` 는 `target=CUTLASS` 에서 2.x 파라미터만 낸다.
+따라서 `baseline_vendor` 의 regret 은 3.x 커널로 오염되지 않는다.
+
+그리고 **축 덮개 결과의 해석도 정해진다.** `split_k` 5·7 을 넣은 뒤 남은
+공간 밖은 **17/612 = 2.8 %** 이고 **전부 `stages=1`** 이다 —
+API 차이가 아니라 우리가 의도적으로 뺀 값이다 (수치가 틀린다,
+`decisions.md` 13-b). A6000 의 6.0 % 와 5090 의 17.8 % 라는 차이는
+**축 구멍이었고 그것을 메웠다.**
+
+> ⚠️ `GemmConfig` 에 `cluster_m/n` 이 있으므로, 나중에 `CUTLASS3` 타겟을
+> 쓰거나 라이브러리가 바뀌면 이 결론이 무효가 된다.
+> `scripts/check_axis_coverage.py` 가 `cluster != (1,1)` 을 만나면
+> 알려주도록 해 두었다.

@@ -90,6 +90,14 @@ def extract(out_path: str, count: int) -> int:
                             "warp": [g.warp_tile_m, g.warp_tile_n, g.warp_tile_k],
                             "split_k": g.split_k, "swizzle": g.swizzle_factor,
                             "cta_order": g.cta_order,
+                            # ★ 3.x 표식. `target=CUTLASS` 에서는 항상
+                            #   cluster(1,1) / instr(16,8,16) 이어야 한다.
+                            #   아니면 3.x 커널을 추천하는 것이고, 우리 표
+                            #   (2.x 공간)와 다른 공간을 채점하게 된다.
+                            #   (docs/baselines.md — 2026-09-01 확인)
+                            "cluster": [g.cluster_m, g.cluster_n],
+                            "instr": [g.instr_tile_m, g.instr_tile_n,
+                                      g.instr_tile_k],
                             "pred_ms": (rt or 0) * 1000.0, "raw": str(kern)})
                 continue
             mo = PAT.search(kern)

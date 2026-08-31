@@ -365,3 +365,53 @@ ans = b.answer_set(df_one_shape)      # b.coef 를 알아서 넘긴다
 
 실제 표에서 A6000 계수로 채점하면 `8x4096x4096` 의 정답 집합이 **1 개 대신
 1,477 개**가 된다. 순위 정보가 통째로 사라진다.
+
+
+---
+
+## 12. 이 표는 **CUTLASS 2.x 공간 안의** 최적이다
+
+### 설계 선택
+
+세 캠페인(A6000 x2, RTX 5090)을 **CUTLASS 2.x API 로 통일**했다. 세대 간
+전이를 재려면 config 공간이 같아야 하는데, 3.x 는 SM90 이상 전용이라
+Ampere 와 **공통 공간이 없다**. 2.x 는 sm_80 부터 sm_120 까지 같은
+파라미터(threadblock/warp tile, stages, swizzle, split-K)로 표현된다.
+
+### 대가
+
+**Hopper/Blackwell 의 3.x 전용 기능이 이 공간에 없다:**
+
+```
+TMA (Tensor Memory Accelerator)
+cluster_shape (thread block cluster)
+warp specialization / 스케줄 종류 (cooperative, pingpong)
+tile scheduler (persistent, stream-K)
+```
+
+따라서 **"이 config 가 최적" 은 2.x 안에서의 최적이다.** 실무에서 그 GPU 를
+쓸 때 3.x 커널이 더 빠를 수 있다 — 특히 Hopper 이상에서.
+
+### 소비하는 쪽에 대한 함의
+
+**이 표로 학습한 규칙은 2.x 필드로만 계산된다.** TMA 나 cluster 같은 물리는
+표에 **없으므로 표현되지 않는다.** 규칙이 그것을 배우지 못하는 것이 아니라
+**애초에 입력에 없다.**
+
+> ⛔ "이 표로 GPU 물리를 다 안다" 로 읽지 마라. 이 표가 답하는 질문은
+> **"2.x config 공간 안에서 무엇을 고를 것인가"** 이지 "이 GPU 에서 가장
+> 빠른 GEMM 은 무엇인가" 가 아니다.
+
+### 벤더 비교도 같은 공간이다
+
+`nvidia-matmul-heuristics` 는 `target=CUTLASS` 에서 **2.x 파라미터만 낸다**
+(전 형상 확인: 5090 612 건 / A6000 594 건 모두 `cluster(1,1)`,
+`instr(16,8,16)`). 라이브러리에 `CUTLASS3` 타겟이 따로 있고 그쪽만 cluster 와
+wgmma 를 낸다. 자세한 것은 `docs/baselines.md`.
+
+**따라서 벤더 regret 은 우리와 같은 공간 안에서 계산된다** — 3.x 커널로
+오염되지 않는다. `scripts/check_axis_coverage.py` 가 `cluster != (1,1)` 또는
+`instr != (16,8,16)` 인 추천을 만나면 경고한다.
+
+> 3.x 로 재측정하는 것은 **별도 연구의 자리**다. 이번 캠페인 계열이 아니다 —
+> 그렇게 하면 A6000·4090 과의 비교가 깨진다.

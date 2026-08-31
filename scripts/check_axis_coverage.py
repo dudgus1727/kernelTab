@@ -99,6 +99,26 @@ def main() -> int:
 
     print(f"입력   {path.name}  ({meta.get('gpu', '?')}, "
           f"env_hash {str(meta.get('env_hash', '?'))[:8]}, count={meta.get('count')})")
+    # ★ 3.x 커널을 추천하고 있지 않은가 (docs/baselines.md).
+    #    우리 표는 CUTLASS 2.x 공간이다. 벤더가 3.x 를 추천하면
+    #    "가장 가까운 config" 로 대체돼 **의도와 다른 커널이 채점된다** —
+    #    그리고 그것은 축 구멍이 아니라 **API 차이**라 축을 넓혀도 안 없어진다.
+    #    2026-09-01 확인 시점에는 target=CUTLASS 가 전부 (1,1)/(16,8,16) 이었다.
+    _x = [(sh, c) for sh, lst in data.items() for c in lst
+          if (c.get("cluster") and tuple(c["cluster"]) != (1, 1))
+          or (c.get("instr") and tuple(c["instr"]) != (16, 8, 16))]
+    if _x:
+        print(f"\n⛔ 3.x 전용 파라미터를 가진 추천 {len(_x)}건 "
+              f"(cluster != (1,1) 또는 instr != (16,8,16)):")
+        for sh, c in _x[:5]:
+            print(f"     {sh:22s} cluster={c.get('cluster')} "
+                  f"instr={c.get('instr')}")
+        print("   벤더가 CUTLASS 3.x 커널을 추천한다. 우리 표는 2.x 공간이라\n"
+              "   이 추천들은 '가장 가까운 config' 로 대체되어 채점된다 —\n"
+              "   ★ 축 구멍이 아니라 API 차이다. 축을 넓혀도 안 없어진다.\n"
+              "   docs/baselines.md 의 '벤더 휴리스틱은 2.x 파라미터만 낸다' 를\n"
+              "   다시 확인하고, baseline_vendor 의 target 을 점검하라.\n")
+
     print(f"추천   {n_rec:,}개 / 형상 {len(data)}개")
     print("축     " + ", ".join(f"{k} {len(v)}" for k, v in sorted(space.items())))
 
