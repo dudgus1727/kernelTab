@@ -299,7 +299,7 @@ CUTLASS GEMM 의 (형상 x config) -> 성능 표.
 
 **`env_hash` 가 다르면 측정 조건이 다르다. 절대 시간을 직접 비교하지 마라.**
 
-스펙 시트 값(154.8 TFLOP/s, 768 GB/s)은 이 데이터에 적용되지 않는다.
+스펙 시트 값({b.get('peak_tflops_f16_spec', '?')} TFLOP/s, {b.get('bandwidth_gbps_spec', '?')} GB/s)은 이 데이터에 적용되지 않는다.
 클럭을 고정해 측정했고, 컴퓨트 워크로드는 P2 상태로 동작해 메모리 클럭이
 P0 최대치에 도달하지 못한다.
 
@@ -592,6 +592,12 @@ CUTLASS (NVIDIA, BSD-3-Clause) 는 이 번들에 포함되지 않는다.
         "locked_mem_mhz": env.get("locked_mem_mhz"),
         "peak_tflops_f16_effective": env.get("peak_tflops_f16_effective"),
         "bandwidth_gbps_effective": env.get("bandwidth_gbps_effective"),
+        # 스펙 시트 값. **이 데이터에 적용되지 않는다** — 클럭을 고정했고
+        # 컴퓨트 워크로드는 P2 로 동작한다. 릴리즈 노트가 "쓰지 마라" 를
+        # 적을 때 필요하다. 예전에는 그 문장에 A6000 값(154.8 / 768)이
+        # **하드코딩**돼 있어서 다른 GPU 번들에도 A6000 스펙이 실렸다.
+        "peak_tflops_f16_spec": env.get("peak_tflops_f16_spec"),
+        "bandwidth_gbps_spec": env.get("bandwidth_gbps_spec"),
         "ridge_point": round(hw.peak_tflops_f16 * 1e12 / (hw.bandwidth_gbps * 1e9), 3),
         "protocol": env.get("protocol"),
         # 정정 이력. 번들이 코드와 분리되어 유통되므로 **파일 자체가
