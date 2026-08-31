@@ -223,3 +223,66 @@ class TestManifestInEnv:
         assert not missing, (
             f"합성 env 에 없는 해시 키: {missing}. ENV_HASH_KEYS_V2 가 "
             "늘어났으면 위 ENV 도 함께 채워라.")
+
+
+# --------------------------------------------------------------------------
+# D-2 — Dockerfile 의 자체 점검은 테스트가 덮지 않는다
+# --------------------------------------------------------------------------
+
+class TestDockerfileSelfCheck:
+    """`docker/Dockerfile` 의 import 검증 줄이 실제 모듈 경로와 맞는가.
+
+    ⛔ `449c3f6` 이 `paths.py` 를 `build/` -> `core/` 로 옮기면서
+       `tests/test_paths.py` 는 고쳤지만 **Dockerfile 은 빠뜨렸다.**
+       그 커밋 이후 이미지는 **어느 호스트에서도 빌드되지 않았다** —
+       5090 캠페인에서 처음 빌드를 시도하며 발견했다.
+
+       `ImportError: cannot import name 'paths' from 'kerneltab.build'`
+
+    ⚠️ **이 검사는 완전하지 않다.** import 경로만 본다 — apt 패키지,
+       빌드 인자(`ARG`), `COPY` 대상, `pip` lock 변경은 못 잡는다.
+       근본 대책은 CI 에서 이미지를 실제로 빌드하는 것이고, 그 전까지
+       이 검사가 **가장 흔한 종류**(경로 이동)를 막는다.
+       "테스트가 있으니 안전하다" 로 오해하지 마라.
+    """
+
+    DOCKERFILE = REPO / "docker" / "Dockerfile"
+
+    def _imports(self):
+        """Dockerfile 안 `from kerneltab... import ...` 를 뽑는다."""
+        import re
+
+        text = self.DOCKERFILE.read_text(encoding="utf-8")
+        # RUN python3 -c "..." 는 줄바꿈이 `\` 로 이어진다
+        joined = text.replace("\\\n", " ")
+        return re.findall(r"from\s+(kerneltab[\w.]*)\s+import\s+([\w, ]+)",
+                          joined)
+
+    def test_import_줄이_있다(self):
+        assert self._imports(), (
+            "Dockerfile 에서 kerneltab import 검증 줄을 못 찾았다 — "
+            "자체 점검이 사라졌거나 이 검사의 패턴이 낡았다")
+
+    def test_모든_import_가_실제로_존재한다(self):
+        import importlib
+
+        bad = []
+        for mod, names in self._imports():
+            try:
+                m = importlib.import_module(mod)
+            except ImportError as e:
+                bad.append(f"{mod} — {e}")
+                continue
+            for name in (n.strip() for n in names.split(",") if n.strip()):
+                if hasattr(m, name):
+                    continue
+                # `from pkg import sub` 형태의 서브모듈일 수 있다
+                try:
+                    importlib.import_module(f"{mod}.{name}")
+                except ImportError:
+                    bad.append(f"{mod}.{name} 가 없다")
+        assert not bad, (
+            "Dockerfile 의 자체 점검이 없는 것을 import 한다:\n  "
+            + "\n  ".join(bad)
+            + "\n\n  이미지가 빌드되지 않는다. 경로를 옮겼으면 docker/ 도 "
+              "함께 고쳐라:  grep -rn 'from kerneltab' docker/")

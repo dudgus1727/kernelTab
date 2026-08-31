@@ -619,6 +619,28 @@ def main() -> int:
     # 메모리 바운드인지 판정이 틀린다. 실효 피크를 함께 기록한다.
     peak_ref = peak_reference_mhz(hw.name)
     peak_eff = hw.peak_tflops_f16
+    # ⛔ 클럭을 고정했는데 기준 클럭이 없으면 **실패한다** (D-1).
+    #
+    #    예전에는 `if ... and peak_ref:` 가 조용히 거짓이 되어 **스펙 피크가
+    #    그대로** `peak_tflops_f16_effective` 로 들어갔다. 경고도 오류도 없다.
+    #    ridge point 가 틀리고 `is_memory_bound` 가 전 형상에서 틀린다.
+    #
+    #    새 GPU 를 `known.json` 에 추가할 때 가장 밟기 쉬운 함정이다 —
+    #    `peak_tflops_f16` 만 넣고 `_at_mhz` 를 빠뜨리면 아무 일도 안 일어난
+    #    것처럼 보인다. 5090 은 그 값이 없었으면 234.3 대신 209.5 가 쓰였다.
+    #    (docs/decisions.md 14 — 조용히 아무것도 안 하는 것을 금지한다)
+    if lock.locked and lock.mhz and not peak_ref:
+        print(
+            f"\n⛔ 클럭을 {lock.mhz} MHz 로 고정했는데 기준 클럭이 없어\n"
+            f"   실효 피크를 보정할 수 없다.\n"
+            f"\n   {paths.HWSPEC_DIR / 'known.json'} 의 '{hw.name}' 에\n"
+            f"   `peak_tflops_f16_at_mhz` 를 넣어라. 그 값은 `peak_tflops_f16`\n"
+            f"   ({hw.peak_tflops_f16} TFLOP/s)이 성립하는 **스펙 부스트 클럭**\n"
+            f"   이고, `source` 에 출처를 함께 적어라.\n"
+            f"\n   보정 없이 진행하면 스펙 피크가 그대로 실효 피크로 들어가\n"
+            f"   ridge point 와 is_memory_bound 가 전 형상에서 틀린다.\n",
+            file=sys.stderr)
+        return 4
     if lock.locked and lock.mhz and peak_ref:
         peak_eff = round(hw.peak_tflops_f16 * lock.mhz / peak_ref, 3)
         print("\n--- 실효 피크 (클럭 고정 보정) ---")
