@@ -384,13 +384,35 @@ def main() -> int:
     tot = sum(status.values())
     for k, v in status.most_common():
         print(f"  {k!s:24s} {v:9,d}  {100 * v / max(tot, 1):6.2f}%")
+    # ⛔ **`ok` 비율로 게이트하지 마라.** `consumer_contract.md` 9 절이
+    #    "status != ok 는 결측이 아니다" 라고 정해 두었고 C-2 가 `export.py`
+    #    를 그렇게 고쳤는데(`AGG_STATUS = "all"`), **여기만 남아 있었다.**
+    #
+    #    `high_outlier_frac` 는 시간이 유효한데 산포가 넓다는 **품질 표시**다.
+    #    그 비율은 하드웨어에 크게 의존한다 — A6000 10.65 % vs RTX 5090
+    #    22.21 %. 짧은 커널에 반복이 많아서(시간 예산 프로토콜) 생기는 것이고,
+    #    5090 은 커널이 빨라 그 구간이 넓다. `ok` 로 게이트하면 **더 빠른
+    #    GPU 일수록 표가 나쁘다고 판정한다.**
+    #
+    #    판정은 "**쓸 수 있는 시간이 있는가**" 로 한다.
+    # status-filter: 시간이 유효하지 않은 것만 뺀다 (consumer_contract 9절)
+    UNUSABLE = {"build_fail", "runtime_fail", "oom", "numerical_fail",
+                "launch_infeasible"}
+    usable = sum(v for k, v in status.items() if k not in UNUSABLE)
+    usable_frac = usable / max(tot, 1)
     ok_frac = status.get("ok", 0) / max(tot, 1)
-    if ok_frac < 0.80:
-        c.fail(f"ok 비율이 {100 * ok_frac:.1f}% 로 낮다")
-    elif ok_frac < 0.90:
-        c.warn(f"ok 비율 {100 * ok_frac:.1f}%")
+    print(f"\n  쓸 수 있는 시간이 있는 행: {usable:,} / {tot:,} "
+          f"= {100 * usable_frac:.2f}%   (`ok` 만 세면 {100 * ok_frac:.1f}%)")
+    if usable_frac < 0.80:
+        c.fail(f"쓸 수 있는 행이 {100 * usable_frac:.1f}% 로 낮다")
+    elif usable_frac < 0.90:
+        c.warn(f"쓸 수 있는 행 {100 * usable_frac:.1f}%")
     else:
-        c.ok(f"ok 비율 {100 * ok_frac:.1f}%")
+        c.ok(f"쓸 수 있는 행 {100 * usable_frac:.1f}%")
+    if ok_frac < 0.85:
+        c.warn(f"`ok` 비율 {100 * ok_frac:.1f}% — 소비 쪽이 "
+               "`status == \"ok\"` 로 거르면 그만큼 버린다. "
+               "consumer_contract 9/11 절에 적혀 있는지 확인하라")
 
     return finish(c)
 
