@@ -63,6 +63,9 @@ class NoiseCoefWarning(UserWarning):
 
 __all__ = [
     "A6000_MEASURED",
+    "NoiseCoefUnavailable",
+    "TICK_PLAUSIBLE_MS",
+    "coef_from_anchors",
     "EVENT_TICK_MS",
     "SIGMA_ABS_MS",
     "SIGMA_REL",
@@ -218,7 +221,23 @@ def from_bundle(info: dict) -> NoiseCoef:
                 f"{str(c.get('env_hash', '?'))[:8]}"))
 
 
-#: 관측 추정 눈금이 이 범위 밖이면 못 믿는다 (A6000 눈금 대비 배수).
+class NoiseCoefUnavailable(RuntimeError):
+    """앵커에서 계수를 뽑을 수 없다. **A6000 값으로 대체하지 않는다.**"""
+
+
+#: 관측 추정 눈금의 **물리적으로 가능한 범위** (ms). 1 ns ~ 10 us.
+#:
+#: ⛔ 예전에는 `(0.2, 5.0)` 이었고 **A6000 눈금(1.024 us)의 배수**였다.
+#:    허용 범위가 205~5120 ns 였고, RTX 5090 의 실측 눈금 **32 ns 가 범위
+#:    밖**이라 버려진 뒤 A6000 값으로 **대체**됐다. 32 배 더 좋은 타이머를
+#:    관측하고도 조용히 무시한 것이다 (docs/decisions.md 25).
+#:
+#:    범위는 첫 환경의 값 배수가 아니라 **절대값**으로 정의한다. 물리적으로
+#:    가능한 범위는 환경과 무관하다. 그리고 범위 밖이면 **대체하지 말고
+#:    실패한다** — 조용한 대체가 정확히 그 사고를 만들었다.
+TICK_PLAUSIBLE_MS = (1e-6, 0.01)
+
+#: 하위 호환. 새 코드는 `TICK_PLAUSIBLE_MS` 를 쓴다.
 TICK_PLAUSIBLE = (0.2, 5.0)
 
 
@@ -247,8 +266,140 @@ def coef_from_observed(values, name: str) -> NoiseCoef:
                      f"(관측 추정 버림 — {why})")
 
 
+def coef_from_anchors(rows, name: str) -> NoiseCoef:
+    """**그 캠페인의 앵커에서** 계수 셋을 전부 뽑는다.
+
+    `coef_from_observed()` 와 다르다 — 그쪽은 눈금만 관측값으로 바꾸고
+    `sigma_abs_ms` / `sigma_rel` 은 **항상 A6000** 이다. docstring 이 그
+    근거로 "짧은 형상에서 지배하는 것은 눈금 항" 을 들었는데, **A6000
+    에서만 맞는 말이었다.** 5090 은 눈금이 32 배 작아져 전제가 뒤집혔다.
+
+    `rows` 는 `results/anchors.jsonl` 의 행들 — `kernel_id`, `problem`,
+    `time_ms` 가 필요하다. 한 `env_hash` 로 이미 걸러서 넘겨라.
+
+    ## 방법 (저장소의 강건 추정을 그대로)
+
+    * 조합 = `(kernel_id, 형상)`. 조합별 중앙값 `t` 와 표준편차를 낸다
+    * **짧은 절반**에서 절대 표준편차의 중앙값 -> `sigma_abs_ms`
+    * **긴 절반**에서 상대 표준편차의 중앙값 -> `sigma_rel`
+    * 전체 값에서 최소 간격 -> `tick_ms`
+
+    짧은/긴 경계를 고정 시간(예: 0.1 ms)으로 두지 않는다 — 앵커 형상이
+    환경마다 다르다. 5090 은 2048³/4096³, A6000 은 512³/4096³ 였다.
+
+    ## `sigma_abs_ms` 가 0 으로 나오면
+
+    "없다" 가 아니라 **"이 표본으로는 분해 못 한다"** 다. 5090 에서는 짧은
+    앵커 6 개 중 4 개가 32 회 측정에서 값이 하나였다. 허용치는 과소평가보다
+    과대평가가 안전하므로 **눈금의 절반**으로 잡는다.
+    """
+    import statistics
+
+    by = {}
+    for r in rows:
+        p = r.get("problem") or {}
+        k = (r.get("kernel_id"), p.get("M"), p.get("N"), p.get("K"))
+        t = r.get("time_ms")
+        if k[0] is None or not t:
+            continue
+        by.setdefault(k, []).append(float(t))
+    groups = [(statistics.median(v), statistics.pstdev(v), v)
+              for v in by.values() if len(v) >= 2]
+    if len(groups) < 2:
+        raise NoiseCoefUnavailable(
+            f"{name}: 앵커 조합이 {len(groups)}개뿐이라 계수를 뽑을 수 없다.\n"
+            "  A6000 값으로 대체하지 않는다 — 그러면 정답 집합이 조용히 "
+            "틀린다 (docs/pending_fixes.md D-6).")
+    groups.sort(key=lambda g: g[0])
+    half = len(groups) // 2
+    short, long_ = groups[:half] or groups[:1], groups[half:] or groups[-1:]
+
+    sigma_abs = statistics.median([g[1] for g in short])
+    sigma_rel = statistics.median([g[1] / g[0] for g in long_ if g[0]])
+    tick, cover = tick_grid(sorted({x for g in groups for x in g[2]}))
+
+    lo, hi = TICK_PLAUSIBLE_MS
+    if not tick or not (lo <= tick <= hi):
+        raise NoiseCoefUnavailable(
+            f"{name}: 관측 눈금이 물리적 범위 밖이다 "
+            f"({'추정 실패' if not tick else format(tick * 1e6, '.4g') + ' ns'}, "
+            f"허용 {lo * 1e6:g}~{hi * 1e6:g} ns).\n"
+            "  **A6000 값으로 대체하지 않는다.** 앵커가 충분한지, 값이 "
+            "중앙값 보간으로 격자를 벗어나지 않았는지 확인하라.")
+
+    note = f", 눈금 격자 설명력 {cover * 100:.0f}%"
+    if sigma_abs <= 0:
+        sigma_abs = tick / 2
+        note += " / sigma_abs 관측 0 -> 눈금의 절반으로 보수적 대체"
+    return NoiseCoef(
+        sigma_abs_ms=sigma_abs, sigma_rel=sigma_rel, tick_ms=tick,
+        source=(f"{name} 앵커 {len(groups)}조합 x "
+                f"{min(len(g[2]) for g in groups)}~"
+                f"{max(len(g[2]) for g in groups)}회{note}"))
+
+
 def tick_ms_observed(values) -> float | None:
-    """관측된 값들에서 양자를 추정한다. 서로 다른 값의 최소 간격."""
+    """관측된 값들에서 양자를 추정한다. 서로 다른 값의 최소 간격.
+
+    ⚠️ **최소 간격만으로는 못 믿는다.** 값 하나가 격자를 벗어나면(중앙값
+    보간, 부동소수 잡음) 추정이 절반 이하로 내려간다. 판정에는
+    `tick_grid()` 를 써라 — 그쪽은 후보가 값들을 실제로 설명하는지 본다.
+    """
     xs = sorted({round(float(v), 9) for v in values})
     gaps = [b - a for a, b in itertools.pairwise(xs) if b - a > 1e-9]
     return min(gaps) if gaps else None
+
+
+#: 눈금 후보가 값들을 이 비율 이상 설명해야 채택한다.
+TICK_COVER_MIN = 0.95
+
+
+def tick_grid(values, cover_min: float = TICK_COVER_MIN):
+    """`(눈금, 설명력)`. **값들이 실제로 그 격자 위에 있는지 확인한다.**
+
+    `tick_ms_observed()` 는 최소 간격만 본다. 그러면 값 하나가 격자를
+    벗어나기만 해도(중앙값 보간, 부동소수 잡음) 추정이 절반이 된다.
+
+    ## 두 가지를 한다
+
+    1. **정수 ns 로 스냅한다.** 하드웨어 타이머 양자는 정수 나노초다.
+       5090 앵커의 최소 간격은 `16.0038 ns` 였는데 `.0038` 은 부동소수
+       잡음이다. 스냅하지 않으면 그 오차가 배수만큼 증폭된다 — 0.72 ms
+       짜리 값은 그 눈금의 45,000 배라 오차가 180 ns(11 눈금)까지 쌓이고,
+       설명력이 3 % 로 나온다. **격자가 맞는데도.**
+    2. **후보가 값들을 설명하는지 센다.** 설명력이 기준을 넘는 것 중
+       **가장 거친** 것을 고른다 — 세밀한 쪽은 항상 설명력이 높기 때문이다
+       (8 ns 격자는 16 ns 격자 위의 값도 전부 설명한다).
+
+    RTX 5090 앵커 36 고유값:  8 ns -> 100 %,  **16 ns -> 100 %**,
+    32 ns -> 81 %,  48 ns -> 42 %.  가장 거친 100 % 인 16 ns 를 고른다.
+    """
+    xs = sorted({float(v) for v in values})
+    if len(xs) < 2:
+        return None, 0.0
+    base = tick_ms_observed(xs)
+    if not base:
+        return None, 0.0
+
+    def cover(cand):
+        if cand <= 0:
+            return 0.0
+        return sum(1 for x in xs
+                   if abs(x / cand - round(x / cand)) < 0.02) / len(xs)
+
+    best = (None, 0.0)
+    seen = set()
+    for mult in range(1, 9):
+        ns = round(base * mult * 1e6)        # 정수 ns 로 스냅
+        if ns <= 0 or ns in seen:
+            continue
+        seen.add(ns)
+        cand = ns * 1e-6
+        frac = cover(cand)
+        if frac >= cover_min:
+            best = (cand, frac)              # 더 거친 후보가 통과하면 그것
+    if best[0] is None:
+        return base, cover(base)
+    return best
+
+

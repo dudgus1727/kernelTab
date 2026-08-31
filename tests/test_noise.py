@@ -9,6 +9,10 @@ import itertools
 
 import pytest
 
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+
 from kerneltab.core import noise
 from kerneltab.core.noise import (
     A6000_MEASURED,
@@ -148,3 +152,97 @@ class TestTimerTick:
 
     def test_0_이하는_무한대(self):
         assert tick_pct(0) == float("inf")
+
+
+# --------------------------------------------------------------------------
+# D-6 (2026-09-01) — 번들이 A6000 계수를 싣던 문제
+# --------------------------------------------------------------------------
+
+class TestCoefFromAnchors:
+    """계수는 **그 캠페인의 앵커에서** 나와야 한다.
+
+    `scripts/bundle.py::_noise_coefficients()` 가 docstring 은 "앵커에서 잰"
+    이라면서 `noise.coefficients()` — A6000 모듈 상수 — 를 돌려줬다. 그대로
+    5090 번들에 실렸으면 짧은 형상의 정답 집합이 **1,477 배** 넓어진다
+    (`8x4096x4096` 에서 정답 1 개 대신 1,477 개).
+    """
+
+    def _rows(self, times_by_group):
+        return [{"kernel_id": k, "problem": {"M": m, "N": 4096, "K": 4096},
+                 "time_ms": t}
+                for (k, m), ts in times_by_group.items() for t in ts]
+
+    def test_짧은_긴_앵커에서_각각_뽑는다(self):
+        from kerneltab.core import noise
+
+        # 짧은 조합은 절대 산포가, 긴 조합은 상대 산포가 지배하도록 만든다.
+        rows = self._rows({
+            ("k_short_a", 512): [0.100000, 0.100016, 0.100032],
+            ("k_short_b", 512): [0.110000, 0.110016, 0.110032],
+            ("k_long_a", 4096): [1.000000, 1.000800, 1.001600],
+            ("k_long_b", 4096): [1.200000, 1.200960, 1.201920],
+        })
+        c = noise.coef_from_anchors(rows, "테스트")
+        assert c.tick_ms == pytest.approx(16e-6, rel=0.01)
+        assert c.sigma_abs_ms > 0
+        assert c.sigma_rel > 0
+        assert "테스트" in c.source and "앵커" in c.source
+
+    def test_앵커가_부족하면_A6000_으로_대체하지_않고_실패한다(self):
+        from kerneltab.core import noise
+
+        with pytest.raises(noise.NoiseCoefUnavailable):
+            noise.coef_from_anchors([], "빈 앵커")
+
+    def test_눈금이_물리적_범위_밖이면_실패한다(self):
+        """⛔ 대체하지 않는다. 조용한 대체가 D-6 을 만들었다."""
+        from kerneltab.core import noise
+
+        rows = self._rows({
+            ("a", 512): [1e-9, 2e-9, 3e-9],      # 눈금 1e-9 ms = 1 fs
+            ("b", 4096): [4e-9, 5e-9, 6e-9],
+        })
+        with pytest.raises(noise.NoiseCoefUnavailable):
+            noise.coef_from_anchors(rows, "말도 안 되는 눈금")
+
+    def test_TICK_PLAUSIBLE_은_절대_범위여야_한다(self):
+        """A6000 눈금의 배수로 정의하면 32 ns 가 범위 밖이 된다."""
+        from kerneltab.core import noise
+
+        lo, hi = noise.TICK_PLAUSIBLE_MS
+        for tick_ns in (16, 32, 1024):       # 5090 / 초기추정 / A6000
+            assert lo <= tick_ns * 1e-6 <= hi, (
+                f"{tick_ns} ns 가 허용 범위 밖이다 — "
+                "범위를 첫 환경의 값 배수로 정의하지 마라 (decisions 25)")
+
+
+class TestTickGrid:
+    """눈금은 **격자를 설명하는지** 확인해서 고른다."""
+
+    def test_부동소수_잡음을_정수_ns_로_스냅한다(self):
+        from kerneltab.core import noise
+
+        # 16 ns 격자 위의 값들 + 최소 간격에 실린 미세 잡음
+        xs = [16e-6 * n for n in (1, 2, 3, 5, 8, 45000)]
+        tick, cover = noise.tick_grid(xs)
+        assert tick == pytest.approx(16e-6, rel=1e-9)
+        assert cover == 1.0
+
+    def test_거친_격자를_선호한다(self):
+        """8 ns 는 16 ns 격자도 전부 설명한다 — 그래도 16 을 골라야 한다."""
+        from kerneltab.core import noise
+
+        xs = [16e-6 * n for n in (1, 2, 3, 4, 7, 11)]
+        tick, cover = noise.tick_grid(xs)
+        assert tick == pytest.approx(16e-6, rel=1e-9)
+
+
+def test_bundle_이_모듈_상수를_그대로_싣지_않는다():
+    """`_noise_coefficients()` 가 `noise.coefficients()` 를 돌려주면 안 된다."""
+    src = (REPO / "scripts" / "bundle.py").read_text()
+    fn = src[src.index("def _noise_coefficients("):]
+    fn = fn[:fn.index("\ndef ", 1)]
+    assert "coef_from_anchors" in fn, (
+        "번들이 이 캠페인의 앵커에서 계수를 뽑지 않는다 — "
+        "A6000 값이 실리면 정답 집합이 짧은 형상에서 1,000 배 넓어진다 (D-6)")
+    assert "return noise.coefficients()" not in fn

@@ -165,10 +165,35 @@ def _export_agg_status() -> str:
     return AGG_STATUS
 
 
-def _noise_coefficients() -> dict:
-    """앵커에서 잰 노이즈 바닥 계수. 없으면 core.noise 의 기본값."""
-    from kerneltab.core import noise
-    return noise.coefficients()
+def _noise_coefficients(env_hash: str) -> dict:
+    """**이 캠페인의 앵커에서** 잰 노이즈 바닥 계수.
+
+    ⛔ 예전에는 docstring 이 "앵커에서 잰" 이라고 하면서 `noise.coefficients()`
+       — 즉 **A6000 모듈 상수**를 돌려줬다. 그대로 5090 번들에 실렸으면
+       83 us 형상의 노이즈 바닥이 0.084 % 대신 1.234 % 가 되고
+       `answer_set()` 의 정답 집합이 **15 배** 넓어진다. 순위 정보가
+       사라지는 바로 그 형상들이다 (`docs/pending_fixes.md` D-6).
+
+    앵커에서 못 뽑으면 **실패한다.** A6000 값으로 조용히 대체하지 않는다 —
+    그 조용한 대체가 이 문제를 만들었다 (`docs/decisions.md` 25).
+    """
+    from kerneltab.core import noise, records
+
+    path = paths.RESULTS_DIR / "anchors.jsonl"
+    if not path.exists():
+        raise SystemExit(
+            f"⛔ {path} 가 없다. 노이즈 계수를 이 캠페인의 앵커에서 뽑아야 "
+            "한다 — A6000 값으로 대체하면 정답 집합이 틀린다 (D-6).")
+    rows = list(records.iter_records(path, env_hash))
+    coef = noise.coef_from_anchors(rows, f"env_hash={env_hash[:8]}")
+    out = coef.as_dict()
+    out.update(
+        env_hash=env_hash,
+        n_anchor_rows=len(rows),
+        model="noise_floor(t) = max(sigma_abs_ms/t + sigma_rel, tick_ms/t)",
+        model_note=noise.coefficients()["model_note"],
+    )
+    return out
 
 
 def measurement_running() -> bool:
@@ -543,7 +568,7 @@ CUTLASS (NVIDIA, BSD-3-Clause) 는 이 번들에 포함되지 않는다.
         "corrections": _load_corrections(),
         # 측정 노이즈 바닥. 소비 쪽이 재계산 없이 정답 허용치를 정할 수
         # 있어야 한다. 형상마다 다르므로 고정 1% 를 쓰면 안 된다.
-        "noise_floor": _noise_coefficients(),
+        "noise_floor": _noise_coefficients(env["env_hash"]),
         # 표에 실제로 있는 컬럼. 스키마 버전만으로는 "이 번들에 그 컬럼이
         # 있나" 를 확인할 수 없다 — 버전이 같아도 export 시점이 다를 수 있다.
         "table_columns": _table_columns(out),
