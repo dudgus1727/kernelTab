@@ -31,5 +31,13 @@
     "bandwidth_gbps_at_mem_mhz": 14001,
     "bandwidth_gbps_spec": 1792.0,
     "mem_bus_bits": 512
+  },
+  "NVIDIA H100 NVL": {
+    "peak_tflops_f16": 623.9,
+    "source": "132 SM x 1324 FP16 FMA/clk/SM x 2 flop x 1.785 GHz boost = 623.9 TFLOP/s (dense, FP32 누산, ★ mma.sync 경로). FMA/clk/SM 은 tools/peak_mma_probe.cu 로 직접 실측했다 (메모리 접근 없는 mma.sync.aligned.m16n8k16 루프, clock64 기준, warp 4~24 / 독립누산기 4~16 스윕에서 1323.4~1324.0 로 포화): FP32 누산 1324.0, FP16 누산 1365.1, 비율 1.031 — ★ H100 은 FP32 누산 반감이 **없다** (A6000 같은 데이터센터/프로 SKU 계열, GeForce Ada/Blackwell 과 다르다). 두 모드의 역산 클럭이 1587/1587 MHz 로 일치해 측정이 건전하다. ⚠️ 이 값은 **CUTLASS 2.x(mma.sync) 로 도달 가능한 피크**다. Hopper 의 데이터시트 피크(H100 NVL dense FP16/FP32누산 약 835 TFLOP/s)는 wgmma (warpgroup async, 3.x API) 로만 나온다 — 같은 GPU에서 cuBLAS(CUBLAS_COMPUTE_32F, 4096^3) 가 717 TFLOP/s @ 관측 1590 MHz 로 mma.sync 대비 1.29 배였다. 이 하네스는 2.x 만 재므로 2.x 피크를 쓴다 (frac_of_peak / ridge point 가 실제로 도달 가능한 값 기준이어야 한다). consumer_contract.md 12 절 참조. 메모리: 6144-bit HBM3 @ 2619 MHz x 2 = 4022.78 GB/s (데이터시트 표기 3.9 TB/s). ★ ECC 켜짐이 기본이고 끄지 않았다 — 실효 대역폭은 이 계산값보다 낮다.",
+    "peak_tflops_f16_at_mhz": 1785,
+    "bandwidth_gbps_at_mem_mhz": 2619,
+    "bandwidth_gbps_spec": 4022.78,
+    "mem_bus_bits": 6144
   }
 }
