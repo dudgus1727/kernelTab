@@ -6,20 +6,31 @@
     "peak_tflops_f16_at_mhz": "peak_tflops_f16 이 성립하는 SM 클럭(MHz). 클럭을 고정해 측정할 때 실효 피크 = peak_tflops_f16 * locked_mhz / 이 값. 고정 클럭에서 이 보정을 하지 않으면 roofline ridge point 가 틀린다 (메모리 클럭은 SM 클럭 고정과 무관하게 그대로다).",
     "bandwidth_gbps_at_mem_mhz": "bandwidth_gbps_spec 이 성립하는 메모리 클럭(MHz). 주의: 컴퓨트(CUDA) 워크로드는 P2 상태로 동작하므로 P0 최대치보다 낮은 클럭에서 돈다 (A6000: P0 8001 / P2 7601). 즉 스펙 대역폭은 이 하네스의 워크로드에서 애초에 도달 불가능한 값이다. cuBLAS 도 같은 P2 에서 돌므로 비교는 공정하다.",
     "bandwidth_gbps_spec": "데이터시트의 P0 기준 최대 대역폭. **교차검증 전용이다.** 실효 대역폭은 항상 mem_bus_bits x 2(DDR) x 관측_mem_mhz / 8 로 계산한다 (계산 경로가 하나여야 다른 GPU 에서 항목을 빼먹어도 조용히 틀리지 않는다).",
-    "mem_bus_bits": "메모리 버스 폭(bit). CUDA driver API 로도 읽히므로 여기 값은 감지값과 대조하는 용도다."
+    "mem_bus_bits": "메모리 버스 폭(bit). CUDA driver API 로도 읽히므로 여기 값은 감지값과 대조하는 용도다.",
+    "peak_derivation": "peak_tflops_f16 을 만든 산식의 구조화된 형태. sm_count x fma_f16_per_clk_per_sm x 2 flop x boost_mhz = peak_tflops_f16 이어야 한다 (tests/test_hwspec.py 가 검사한다). ★ source 산문에만 적어 두면 값과 어긋나도 아무도 모른다 — 실제로 4090 항목의 산문이 값의 2배(330.3)를 내는 산식을 적고 있었다. 대역폭을 mem_bus_bits 로 교차검증하는 것과 같은 이유다. fma_f16_per_clk_per_sm 은 **FP32 누산 기준**이다: GeForce Ada/Blackwell 은 FP32 누산이 반감되어 256, A6000 같은 프로 SKU 는 반감이 없어 512 다. 새 GPU 를 넣을 때 반감 여부를 mma.sync 로 실측해 확정하라."
   },
   "NVIDIA RTX A6000": {
     "peak_tflops_f16": 154.8,
     "source": "84 SM x 512 FP16 FMA/clk/SM x 2 flop x 1.80 GHz boost = 154.8 TFLOP/s (dense). 데이터시트 헤드라인 309.7 은 2:4 희소 기준이므로 쓰면 안 된다. GA102 프로 SKU 는 FP32 누산이 반감되지 않는다 (실측 cuBLAS 8192^3: FP16 누산 128.8, FP32 누산 118.0 TFLOP/s -> 두 모드 동일 피크). 384-bit GDDR6 @ 16 Gbps = 768 GB/s / 154.8 은 boost 1800 MHz 기준",
     "peak_tflops_f16_at_mhz": 1800,
+    "peak_derivation": {
+      "sm_count": 84,
+      "fma_f16_per_clk_per_sm": 512,
+      "boost_mhz": 1800
+    },
     "bandwidth_gbps_at_mem_mhz": 8001,
     "bandwidth_gbps_spec": 768.0,
     "mem_bus_bits": 384
   },
   "NVIDIA GeForce RTX 4090": {
     "peak_tflops_f16": 165.2,
-    "source": "NVIDIA Ada GPU Architecture whitepaper: FP16 Tensor TFLOPS with FP32 Accumulate 165.2 (330.3 with sparsity); 384-bit GDDR6X @ 21 Gbps = 1008 GB/s / 165.2 는 boost 2520 MHz 기준 (128 SM x 512 x 2 x 2.52 GHz)",
+    "source": "NVIDIA Ada GPU Architecture whitepaper: FP16 Tensor TFLOPS with FP32 Accumulate 165.2 (330.3 with sparsity); 384-bit GDDR6X @ 21 Gbps = 1008 GB/s / 165.2 는 boost 2520 MHz 기준 (128 SM x **256** FP16 FMA/clk/SM x 2 flop x 2.52 GHz). ★ 256 인 것이 핵심이다 — GeForce Ada 는 FP32 누산이 반감된다 (5090 과 같고 A6000 프로 SKU 와 다르다). 512 로 적으면 330.3 이 나오는데 그것은 밀집 FP16 누산 또는 2:4 희소 기준이라 이 하네스(ElementAccumulator=float)에 쓰면 안 된다. 이 항목의 산문은 2026-09-02 까지 512 로 적혀 있어 값(165.2)과 2배 어긋나 있었다 — 값이 옳고 산문이 틀렸다. 반감은 G-3 에서 mma.sync 로 실측해 확정할 것",
     "peak_tflops_f16_at_mhz": 2520,
+    "peak_derivation": {
+      "sm_count": 128,
+      "fma_f16_per_clk_per_sm": 256,
+      "boost_mhz": 2520
+    },
     "bandwidth_gbps_at_mem_mhz": 10501,
     "bandwidth_gbps_spec": 1008.0,
     "mem_bus_bits": 384
@@ -28,6 +39,11 @@
     "peak_tflops_f16": 209.5,
     "source": "170 SM x 256 FP16 FMA/clk/SM x 2 flop x 2.407 GHz boost = 209.5 TFLOP/s (dense, FP32 누산). 2407 MHz 는 **정격 부스트 스펙값**이다 — 관측된 부하 중 클럭(2880~2902)도 최대 클럭(3105)도 아니다. FP32 누산이 FP16 누산의 절반인 것을 mma.sync.m16n8k16 으로 직접 실측해 확정했다 (메모리 접근 없는 루프): FP32누산 244.6 vs FP16누산 485.1 TFLOP/s, 비율 1.983. 두 모드에서 역산한 클럭이 2810/2787 MHz 로 일치하므로 FP32 누산 = 256 FMA/clk/SM, FP16 누산 = 512. GeForce Ada(4090)와 같은 반감이고 A6000(프로 SKU, 반감 없음)과 다르다. 교차검증: cuBLAS 8192^3 FP32누산 실측 242.2 TFLOP/s 는 2880 MHz 에서의 실효 피크 250.6 대비 96.6%. 데이터시트 헤드라인(FP4 희소 3352 AI TOPS 계열)을 그대로 쓰면 안 된다. 512-bit GDDR7 @ 28 Gbps = 1792 GB/s",
     "peak_tflops_f16_at_mhz": 2407,
+    "peak_derivation": {
+      "sm_count": 170,
+      "fma_f16_per_clk_per_sm": 256,
+      "boost_mhz": 2407
+    },
     "bandwidth_gbps_at_mem_mhz": 14001,
     "bandwidth_gbps_spec": 1792.0,
     "mem_bus_bits": 512
