@@ -716,6 +716,15 @@ def main() -> int:
         "clock_lock_error": lock.error,
         "drift_check_seconds": drift_s,
         "peak_tflops_f16_spec": hw.peak_tflops_f16,
+        # ★ 기록 전용. 해시에도 계산에도 들어가지 않는다.
+        #
+        #   H100 부터 `peak_tflops_f16`(= mma.sync / CUTLASS 2.x 로 도달
+        #   가능한 값)과 데이터시트 피크(wgmma / 3.x 로만 나온다)가 갈렸다.
+        #   ridge point 와 frac_of_peak 는 **도달 가능한 값**을 써야 하지만,
+        #   "이 표의 최적이 GPU 최고 성능의 몇 %인가" 를 나중에 계산하려면
+        #   데이터시트 값도 함께 남아 있어야 한다.
+        #   (docs/consumer_contract.md 12 절)
+        "peak_tflops_f16_datasheet": spec.get("peak_tflops_f16_datasheet"),
         "peak_tflops_f16_at_mhz": peak_ref,
         "peak_tflops_f16_effective": peak_eff,
         "bandwidth_gbps_spec": bw_spec,

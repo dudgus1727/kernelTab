@@ -135,6 +135,10 @@ EXCLUDED_WITH_REASON = {
     "cutlass_example_check": "빌드 확인 결과. 조건이 아니다",
     "clock_lock_check": "부하 검증 **측정값**",
     "manifest_hash": "소스 tree_hash 포함 -> 한 글자만 고쳐도 바뀐다",
+    "peak_tflops_f16_datasheet": (
+        "★ 기록 전용. 데이터시트(H100 은 wgmma/3.x 로만 나오는 값)는 이 표의 "
+        "config 공간이 **도달할 수 없다**. 조건이 아니라 참고값이므로 뺀다 — "
+        "넣으면 같은 조건이 known.json 주석 한 줄에 갈린다"),
     "phase": "진행 단계 표시",
     "schema_version": "파일 형식 버전",
 }
