@@ -186,7 +186,21 @@ class CutlassV2Backend:
     #: 이 백엔드가 담당하는 arch. **API 계열이 같으면 같은 백엔드다** —
     #: sm_120 은 세대가 다르지만 2.x GEMM 경로가 그대로 성립한다
     #: (빌드 298/300, 참조 대조 12/12, split-K serial/parallel 포함).
-    arch_family = ("sm_80", "sm_86", "sm_89", "sm_120")
+    #:
+    #: sm_90(Hopper)도 같은 근거로 들어온다. H100 NVL 에서 실측했다
+    #: (2026-09-02, CUDA 12.8 / CUTLASS v4.7.0, -arch=sm_90a):
+    #:   빌드      표본 240/240 + 프로브 25/25, cuobjdump 로 sm_90a cubin 확인
+    #:   참조 대조 24/24 가 max_rel_error 0.000e+00 (나머지 1 개는
+    #:             launch_infeasible — regs 137 x threads 512 > 65,536)
+    #:   split-K   요청 == 실제 grid.z 가 32/32 일치, serial/parallel 둘 다
+    #:             참조와 일치 (serial 의 1e-3 대는 fp16 부분합, 결정 6)
+    #:   pipeline  stages=2 는 LDGSTS 0, stages>=3 은 전부 > 0 —
+    #:             A6000/4090/5090 과 같은 갈림
+    #: ⚠️ H100 의 최고 성능은 3.x(TMA/wgmma/cluster)에서 나온다. 이 표의
+    #:    최적은 **2.x 안에서의 최적**이다 (consumer_contract.md 12 절).
+    #:    2.x 로 재는 이유는 A6000/5090 과 config 공간을 맞춰 전이 실험을
+    #:    성립시키기 위함이다.
+    arch_family = ("sm_80", "sm_86", "sm_89", "sm_90", "sm_120")
 
     # -- 열거 -------------------------------------------------------------
     def enumerate_ext(self, hw: Hardware) -> list:

@@ -13,15 +13,17 @@ __all__ = ["Backend", "UnsupportedArch", "get_backend"]
 
 
 def get_backend(arch: str) -> Backend:
-    # CUTLASS 2.x 경로가 성립하는 arch. sm_120 은 세대가 다르지만 같은 API
-    # 계열이고 수치까지 일치하는 것을 확인했다 (decisions.md).
-    if arch in ("sm_80", "sm_86", "sm_89", "sm_120"):
+    # CUTLASS 2.x 경로가 성립하는 arch. sm_120 과 sm_90 은 세대가 다르지만
+    # 같은 API 계열이고 수치까지 일치하는 것을 확인했다 (decisions.md).
+    if arch in ("sm_80", "sm_86", "sm_89", "sm_90", "sm_120"):
         from kerneltab.backends.cutlass_v2 import CutlassV2Backend
 
         return CutlassV2Backend()
-    if arch in ("sm_90", "sm_100"):
+    if arch in ("sm_100",):
         raise NotImplementedError(
             f"{arch} 백엔드 미구현 (향후 backends/cutlass_v3.py).\n"
             "  3.x API 는 SM90 '전용' 이 아니라 '이상용' 이다 — 파일 이름도\n"
-            "  아키텍처가 아니라 API 계열로 짓는다.")
+            "  아키텍처가 아니라 API 계열로 짓는다.\n"
+            "  sm_90 은 2.x 로 열려 있다 (H100 캠페인). 3.x 는 config 공간이\n"
+            "  달라 전이 비교가 성립하지 않으므로 **별도 캠페인**이다.")
     raise UnsupportedArch(arch)
