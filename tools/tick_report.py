@@ -27,6 +27,7 @@ from collections import defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from kerneltab.core.noise import (
     TICK_COVER_MIN, TICK_ON_GRID_TOL, odd_multiple_frac, tick_grid,
     tick_ms_observed,
@@ -83,7 +84,20 @@ def main() -> int:
     if len(sys.argv) < 2:
         print(__doc__)
         return 2
-    rows = [ln.split(",") for ln in Path(sys.argv[1]).read_text().splitlines()
+    text = Path(sys.argv[1]).read_text()
+
+    # ⛔ **캠페인 조건 밖에서 잰 표본이면 여기서 멈춘다.**
+    #    눈금은 이벤트 타이머의 해상도이고 그것을 정하는 것은 **드라이버**다
+    #    (nvcc 가 아니다). 호스트 native libcuda 로 잰 값과 이미지 compat 으로
+    #    잰 값은 다른 조건이고, 결과만 보고는 구분할 방법이 없다 —
+    #    실제로 그렇게 잰 눈금 하나가 무효가 됐다 (2026-09-02).
+    #    `--no-env-check` 는 두지 않는다. 빠져나갈 문을 만들면 그리로 간다.
+    from probe_env import check, header_stamp
+    rc = check(header_stamp(text[:2000]), where=Path(sys.argv[1]).name)
+    if rc:
+        return rc
+
+    rows = [ln.split(",") for ln in text.splitlines()
             if ln and not ln.startswith("#") and not ln.startswith("target")]
     by: dict[str, list[float]] = defaultdict(list)
     for tgt, ms in rows:
