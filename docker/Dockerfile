@@ -152,6 +152,13 @@ COPY tests/        /work/tests/
 # tests/test_portability.py 의 lock 검사가 컨테이너에서도 돈다.
 COPY docker/       /work/docker/
 COPY docker/entrypoint.sh /usr/local/bin/kerneltab
+# ⛔ `docs/baselines/` 는 문서가 아니라 **테스트 입력**이다.
+#    `tests/test_axis_coverage.py` 가 커밋된 벤더 추출물(vendor_*.json)을
+#    열어 3.x 추천이 없는지 확인한다. 안 넣으면 이미지 안 pytest 가
+#    "벤더 추출물이 없다" 로 실패해 **빌드가 통째로 안 된다** — 실제로
+#    2026-09-02 H100 캠페인에서 이 이유로 빌드가 깨져 있었다 (그 테스트가
+#    이미지 재빌드 없이 추가됐다). 두 파일 합쳐 376 KB 다.
+COPY docs/baselines/ /work/docs/baselines/
 COPY pyproject.toml README.md LICENSE NOTICE /work/
 
 # ⚠️ `pip install` 하지 않는다. **PYTHONPATH 로 붙인다.**
