@@ -74,7 +74,10 @@ REQUIRED_V2: tuple[str, ...] = (
 #: | 3 | `cuda.driver_user_mode` 추가 (아래 참조) |
 #: | 4 | **탐색 축 / 형상 그리드 / 앵커 형상**을 넣고, `env_hash` 필드를
 #:      이 정의로 통일 (D-3, D-4). 아래 참조 |
-ENV_HASH_DEF_VERSION = 4
+#: | 5 | `conditions_revision` 추가. ⛔ 측정 경로를 고쳐도 해시가 안 바뀌는
+#:      구멍이 있었다 — 문서의 "phase0 를 다시 돌려라" 는 **실제로 아무 일도
+#:      하지 않았다** (해시는 안 바뀐 입력의 순수 함수다). 아래 참조 |
+ENV_HASH_DEF_VERSION = 5
 
 #: 해시에 들어가는 것. `(env 키, 하위 경로)` — 하위 경로는 점으로 구분한다.
 ENV_HASH_KEYS_V2: tuple[str, ...] = (
@@ -118,6 +121,21 @@ ENV_HASH_KEYS_V2: tuple[str, ...] = (
     "axis_space_hash",      # canonical_hash(backend.axis_space())
     "shape_grid_hash",      # canonical_hash([(M,N,K), ...])
     "anchor_shape_hash",    # canonical_hash(rehearse.DRIFT_SHAPES)
+    # --- 정의 5 에서 추가 ---------------------------------------------------
+    #
+    # ⛔ **측정 경로를 고쳐도 해시가 안 바뀌었다.**
+    #
+    #    `manifest_hash`(소스 tree_hash)를 일부러 뺐고(오타 수정에도 바뀌면
+    #    측정 중 아무것도 못 고친다), 그 대가로 "사람이 판단해서 phase0 를
+    #    다시 돌려라" 를 문서에 적어 두었다. 그런데 해시는 위 키들의 순수
+    #    함수라 **다시 돌려도 같은 값이 나온다** — 그 지시는 아무 일도 하지
+    #    않았다. H100 에서 버퍼 선할당(측정 시간이 최대 5.4 % 바뀐다)을 넣고
+    #    나서야 드러났다 (2026-09-03).
+    #
+    #    `measure.runner.MEASURE_PATH_REVISION` 이 그 값이고, 측정된 시간을
+    #    바꾸는 변경이 있을 때 사람이 올린다. tree_hash 처럼 예민하지 않은
+    #    굵은 입도이면서, 규율이 아니라 **해시 입력**이다.
+    "conditions_revision",
 )
 
 #: 별칭. 코드에서는 이쪽을 쓴다 — `_V2` 라는 이름이 정의 버전과 어긋난다.

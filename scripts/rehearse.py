@@ -699,6 +699,35 @@ def main() -> int:
             kernels[r["kernel_id"]] = Kernel(paths.kernel_so(r["kernel_id"]))
     probe = NvmlProbe(uuid=env["hardware_extra"]["uuid"], index=0)
 
+    # ⛔ **버퍼를 최대 크기로 미리 잡는다.**
+    #
+    #    `Buf::ensure` 는 고수위 방식이라 더 큰 형상을 만나면 free 후 재할당
+    #    한다. 그러면 한 프로세스 안에서 **큰 형상을 만나기 전과 후의 측정
+    #    조건이 다르다** — 짧은 메모리 바운드 커널(M<=128)에서 그 차이가
+    #    5.4 % 다. 셔플 때문에 어느 쪽에서 재는지가 우연히 갈리고, 그 구분은
+    #    데이터에 남지 않는다.
+    #
+    #    H100 실측 (M=1, N=11008, K=4096, split_k=16 serial, 79 us):
+    #        작은 버퍼   0.07856 0.07850 0.07858 ms
+    #        큰 버퍼     0.08320 0.08266 0.08294 ms   ★ +5.4 %
+    #    각 구간 안에서는 0.1~0.65 % 로 안정적이다 — **섞일 때만** 문제다.
+    #
+    #    ★ 어느 값이 "참" 인지는 정할 수 없다. 배포 시점의 할당 상태는 응용에
+    #      달렸다. 우리가 필요한 것은 참값이 아니라 **일관성**이다 — 한 형상의
+    #      config 들이 같은 조건에서 재져야 순위가 유효하다.
+    #
+    #    G-7 5 번(재현성 5 % 초과 0 건)이 이것 때문에 실패했다 (2026-09-03).
+    #    A6000/5090/4090 도 같은 코드였고, 그 표는 99 % 이상의 행이 이미 최대
+    #    버퍼 상태였다 (H100 G-7 실측: 도달 전 3.79 %, 그중 M<=128 은 0.77 %).
+    #    선할당은 조건을 바꾸는 것이 아니라 **그 예외를 없애는 것**이다.
+    _big = max(shapes, key=lambda q: (q.M * q.K, q.K * q.N, q.M * q.N))
+    _bm = max(q.M for q in shapes)
+    _bn = max(q.N for q in shapes)
+    _bk = max(q.K for q in shapes)
+    ctx.prepare_problem(_bm, _bn, _bk)
+    print(f"[버퍼] 최대 {_bm}x{_bn}x{_bk} 로 선할당 "
+          f"(고수위 재할당이 짧은 커널을 5% 흔든다)", flush=True)
+
     # 드리프트 감시 커널은 **모든 세그먼트에서 같아야** 한다. 세그먼트마다
     # 다른 커널을 쓰면 drift.jsonl 을 세그먼트 사이에서 비교할 수 없다.
     # 그리고 picked 는 세그먼트 필터 **전**의 목록이라 그대로 쓰면 이 세그먼트에
@@ -1493,12 +1522,32 @@ def report(stats, repro, clock_locked):
         _eh = json.loads(paths.ENV_JSON.read_text())["env_hash"]
         ds = records.load_records(DRIFT, _eh)
         if ds:
-            ts = [d["time_ms"] for d in ds]
+            # ⛔ **커널로도 나눠야 한다.** 같은 env_hash 안에서도 드리프트
+            #    프로브 커널이 바뀌면 절대 시간이 달라진다 — 세그먼트마다
+            #    자기 커널 목록에서 고르기 때문이다(`_pick_drift_kernel`).
+            #
+            #    실제로 H100 G-7 에서 이렇게 나왔다:
+            #        커널 A  79 행  변동폭 ★ 0.83 %   (진짜 드리프트)
+            #        커널 B   1 행  (앞선 rehearse --all 이 남긴 것)
+            #        합치면        변동폭  64.23 %  ->  "!! 5% 이상 변동" 오경보
+            #
+            #    조건 격리를 env_hash 로만 하면 부족하다. `f7ad211`(기준값과
+            #    감시값의 형상이 달랐다)과 같은 계열이다 — **비교하는 두 값이
+            #    같은 것을 재고 있는지**를 먼저 확인해야 한다.
+            by_kernel: dict[str, list[float]] = {}
+            for d in ds:
+                by_kernel.setdefault(d.get("kernel_id", "?"), []).append(
+                    d["time_ms"])
+            kid, ts = max(by_kernel.items(), key=lambda kv: len(kv[1]))
             mean = sum(ts) / len(ts)
             span = (max(ts) - min(ts)) / mean if mean else 0
-            print(f"\n드리프트: {len(ds)}회 점검  "
+            others = sum(len(v) for k, v in by_kernel.items() if k != kid)
+            print(f"\n드리프트: {len(ts)}회 점검  "
                   f"min={min(ts):.4f} max={max(ts):.4f} mean={mean:.4f} ms  "
                   f"변동폭={100 * span:.2f}%")
+            if others:
+                print(f"  (다른 커널 {len(by_kernel) - 1}종 {others}행은 제외했다 "
+                      "— 절대 시간이 달라 같은 축에 놓을 수 없다)")
             if span > 0.05:
                 print("  !! 5% 이상 변동. clock_locked="
                       f"{clock_locked} 상태에서의 드리프트다.")

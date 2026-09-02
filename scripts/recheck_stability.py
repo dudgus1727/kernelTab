@@ -232,11 +232,19 @@ def main() -> int:
         for i, x in enumerate(v):
             per_pass.setdefault(i, []).append(
                 x / statistics.median(v) if statistics.median(v) else 1.0)
-    print("\n  pass 별 상대값 중앙값 (1.0 = 그 조합의 중앙값):")
+    print("\n  pass 별 상대값 (1.0 = 그 조합의 중앙값):")
     for i in sorted(per_pass):
         v = sorted(per_pass[i])
         print(f"    pass {i + 1}: median={v[len(v) // 2]:.4f}  "
-              f"max={v[-1]:.4f}")
+              f"mean={sum(v) / len(v):.4f}  min={v[0]:.4f}  max={v[-1]:.4f}")
+    # 원자료 — 판정에는 안 쓴다. 실패했을 때 "표집인가 계통인가" 를 사후에
+    # 다시 물을 수 있어야 한다.
+    raw = paths.RESULTS_DIR / "stability_rows.jsonl"
+    with raw.open("w") as f:
+        for key, v in samples.items():
+            f.write(json.dumps({"key": [str(x) for x in key],
+                                "times_ms": v}, ensure_ascii=False) + "\n")
+    print(f"    원자료 {raw}")
 
     print("\n" + "=" * 74)
     print(f"재현성: {len(spreads)}개 조합, {args.passes}회 측정")

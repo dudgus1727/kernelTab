@@ -468,3 +468,68 @@ def test_재현성_보고가_흔들린_조합을_제대로_지목한다():
     # ★ 이름이 값과 같은 행에 붙어 있는가 (옛 버그는 여기서 전부 같았다)
     assert len({r[1][0] for r in rows}) == 3, (
         "여러 조합이 같은 이름을 달고 나온다 — 바깥 스코프의 key 를 담고 있다")
+
+
+class TestDriftSummaryGroupsByKernel:
+    """★ 드리프트 요약은 **커널로도 나눠야** 한다.
+
+    같은 `env_hash` 안에서도 드리프트 프로브 커널이 바뀌면 절대 시간이
+    달라진다 (세그먼트마다 자기 커널 목록에서 고른다). 나누지 않으면
+    서로 다른 것을 잰 두 값의 차이가 "드리프트" 로 보고된다.
+
+    H100 G-7 실측: 커널 A 79행 0.83 % + 커널 B 1행 -> 합치면 64.23 %.
+    `f7ad211`(기준값과 감시값의 형상이 달랐다)과 같은 계열이다.
+    """
+
+    def test_요약이_커널로_나눈다(self):
+        import re
+        from pathlib import Path
+        src = Path(__file__).resolve().parent.parent / "scripts" / "rehearse.py"
+        t = src.read_text()
+        blk = t[t.index("if DRIFT.exists():"):]
+        blk = blk[:blk.index("tel = analyze_telemetry()")]
+        assert "by_kernel" in blk, (
+            "드리프트 요약이 커널로 나누지 않는다 — 다른 커널의 절대 시간이 "
+            "섞여 오경보가 난다")
+        # env_hash 필터도 그대로 있어야 한다 (둘 다 필요하다)
+        assert "load_records(DRIFT, _eh)" in blk
+        assert re.search(r"max\(by_kernel\.items\(\)", blk), (
+            "행이 가장 많은 커널을 골라야 한다")
+
+    def test_섞이면_변동폭이_부풀려진다(self):
+        """수정의 근거를 수치로 고정한다."""
+        a = [1.3264 + 0.0001 * i for i in range(79)]      # 커널 A
+        b = [2.1785]                                       # 커널 B
+        span = lambda v: (max(v) - min(v)) / (sum(v) / len(v))
+        assert span(a) < 0.05                              # 진짜 드리프트
+        assert span(a + b) > 0.5                           # 섞으면 오경보
+
+
+class TestBufferPreallocation:
+    """★ 버퍼는 **최대 크기로 미리 잡는다** — 고수위 재할당이 조건을 가른다.
+
+    `Buf::ensure` 는 더 큰 형상을 만나면 free 후 재할당한다. 그러면 한
+    프로세스 안에서 큰 형상 **전/후**의 측정 조건이 달라지고, 짧은 메모리
+    바운드 커널(M<=128)이 5.4 % 흔들린다. 셔플 때문에 어느 쪽에서 재는지가
+    우연히 갈리며 그 구분은 데이터에 남지 않는다.
+
+    H100 실측 (M=1,N=11008,K=4096, sk16 serial, 79 us):
+        작은 버퍼 0.0786 / 큰 버퍼 0.0829  (각 구간 안은 0.1~0.65 % 로 안정)
+    G-7 5 번을 실패시킨 원인이고, 영향 행은 3.79 % (그중 M<=128 은 0.77 %).
+
+    ⚠️ 지연 dlopen 은 **원인이 아니다** — 프로세스를 분리해 A/B 로 재서
+       기각했다 (5.23/5.89 % vs 5.41/5.33 %). 같은 프로세스에서 A 다음 B 를
+       돌리면 B 가 A 의 모듈 상태를 물려받아 잘못된 결론이 난다.
+    """
+
+    def test_세그먼트_시작에_최대_형상으로_잡는다(self):
+        from pathlib import Path
+        src = (Path(__file__).resolve().parent.parent / "scripts"
+               / "rehearse.py").read_text()
+        i = src.index("probe = NvmlProbe(")
+        blk = src[i:i + 2000]
+        assert "ctx.prepare_problem(_bm, _bn, _bk)" in blk, (
+            "세그먼트 시작에 최대 형상으로 선할당하지 않는다 — 큰 형상 전후의 "
+            "측정 조건이 갈린다")
+        assert "max(q.M for q in shapes)" in blk
+

@@ -166,6 +166,7 @@ class TestManifestInEnv:
     #: 그 파일이 없고(results/ 는 볼륨이다), 검사하려는 성질은 실제 데이터가
     #: 필요하지 않다. 파일에 의존하면 컨테이너에서 이 검사가 통째로 죽는다.
     ENV: ClassVar[dict] = {
+        "conditions_revision": 2,
         "hardware": {"name": "X", "arch": "sm_86", "sm_count": 84},
         "nvcc_arch_flag": "sm_86",
         "protocol": {"min_warmup": 10},

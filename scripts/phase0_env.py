@@ -26,6 +26,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from kerneltab.backends import get_backend
 from kerneltab.core import paths
+from kerneltab.measure.runner import MEASURE_PATH_REVISION
 from kerneltab.core.shapes import all_shapes
 from kerneltab.core.env_hash import (
     ENV_HASH_DEF_VERSION,
@@ -731,6 +732,9 @@ def main() -> int:
         "hardware": hardware_to_dict(hw),
         "hardware_extra": extra,
         "nvcc_arch_flag": arch_flag,
+        # ★ 측정 경로 리비전 (정의 5). 측정된 시간을 바꾸는 변경이 있으면
+        #   measure/runner.py 의 MEASURE_PATH_REVISION 을 올린다.
+        "conditions_revision": MEASURE_PATH_REVISION,
         "pynvml": nvml,
         "cutlass_example_check": ex,
         "clock_locked": lock.locked,

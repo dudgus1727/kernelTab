@@ -194,7 +194,7 @@ class TestDefinitionVersion:
     """
 
     #: (정의 버전, 키 목록 해시). 키를 고쳤으면 **둘 다** 갱신하라.
-    FROZEN = (4, "2c7d2bd066385aba")
+    FROZEN = (5, "ed91e4949a1323ab")
 
     def test_키를_고치면_버전을_올려야_한다(self):
         ver, digest = self.FROZEN
@@ -206,6 +206,32 @@ class TestDefinitionVersion:
             "  키를 고쳤으면 ENV_HASH_DEF_VERSION 을 올리고 이 테스트의 "
             "FROZEN 을 함께 갱신하라. 그러지 않으면 이미 기록된 "
             "env_hash 값이 무엇이었는지 알 수 없게 된다.")
+
+    def test_측정_경로_리비전이_해시에_들어간다(self):
+        """⛔ 측정 경로를 고쳐도 `env_hash` 가 안 바뀌는 구멍이 있었다.
+
+        `manifest_hash` 를 일부러 뺀 대가로, 문서에 "조건이 달라졌으면
+        사람이 판단해서 phase0 를 다시 돌려라" 라고 적어 두었다. 그런데
+        해시는 나머지 키들의 **순수 함수**라 다시 돌려도 같은 값이 나온다 —
+        그 지시는 아무 일도 하지 않았다. H100 에서 버퍼 선할당(측정 시간이
+        최대 5.4 % 바뀐다)을 넣고 나서야 드러났다.
+        """
+        from kerneltab.measure.runner import MEASURE_PATH_REVISION
+        assert "conditions_revision" in ENV_HASH_KEYS
+        base = {
+            "hardware": {"name": "X", "arch": "sm_90"},
+            "nvcc_arch_flag": "sm_90a",
+            "axis_space_hash": "a" * 64,
+            "shape_grid_hash": "s" * 64,
+            "anchor_shape_hash": "k" * 64,
+            "cutlass": {"commit": "c" * 40},
+            "cuda": {"nvcc_version": "13.3.73", "driver_user_mode": "610.43.02"},
+            "conditions_revision": 1,
+        }
+        assert env_hash_v2(base) != env_hash_v2(
+            dict(base, conditions_revision=2)), (
+            "리비전을 올려도 해시가 그대로다 — 격리 경계가 작동하지 않는다.")
+        assert isinstance(MEASURE_PATH_REVISION, int)
 
     def test_유저모드_드라이버가_해시에_들어간다(self):
         assert "cuda.driver_user_mode" in ENV_HASH_KEYS
@@ -255,7 +281,7 @@ class TestDefinitionVersion:
 # 정의 4 (D-3, D-4) — 측정 대상이 바뀌면 해시가 바뀐다
 # --------------------------------------------------------------------------
 
-class TestDefinition4:
+class TestDefinition5:
     """축 / 형상 / 앵커가 해시 입력에 있어야 한다.
 
     ⛔ 정의 3 까지는 없었다. 5090 준비 중 `SPLIT_K` 를 8 -> 10 으로 늘리고
@@ -281,6 +307,7 @@ class TestDefinition4:
         "axis_space_hash": "a" * 64,
         "shape_grid_hash": "s" * 64,
         "anchor_shape_hash": "k" * 64,
+        "conditions_revision": 2,
     }
 
     @pytest.mark.parametrize("key", ["axis_space_hash", "shape_grid_hash",
@@ -299,8 +326,8 @@ class TestDefinition4:
         with pytest.raises(EnvHashIncomplete):
             env_hash_v2({**self.BASE, key: None})
 
-    def test_정의_버전이_4다(self):
-        assert ENV_HASH_DEF_VERSION == 4
+    def test_정의_버전이_5다(self):
+        assert ENV_HASH_DEF_VERSION == 5
 
     def test_shuffle_seed_에_기대지_않는다(self):
         """시드를 고정해도 축이 다르면 해시가 달라야 한다.
