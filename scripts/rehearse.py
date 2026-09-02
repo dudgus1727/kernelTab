@@ -724,8 +724,21 @@ def main() -> int:
     _bn = max(q.N for q in shapes)
     _bk = max(q.K for q in shapes)
     ctx.prepare_problem(_bm, _bn, _bk)
-    print(f"[버퍼] 최대 {_bm}x{_bn}x{_bk} 로 선할당 "
-          f"(고수위 재할당이 짧은 커널을 5% 흔든다)", flush=True)
+
+    #    ⛔ **workspace 도 같은 `Buf` 다.** `prepare_problem` 은 A/B/C/D 만
+    #       잡고, workspace 는 `kt_ctx_ensure_workspace` 로 따로 커진다 —
+    #       그래서 A/B/C/D 만 선할당하면 **결함의 절반만 덮는다.**
+    #       parallel split-K 에서 workspace 는 GEMM 의 D(부분합 버퍼)라
+    #       `2 x M x N x split_k` 까지 커지고, serial 에서는 타일별 세마포어
+    #       (수 KB)다. 둘 다 같은 고수위 경로를 지난다.
+    #
+    #       상한은 `backend.workspace_bytes` 공식의 격자 위 상한이다.
+    #       H100 (16384x16384, split_k 16): 8.00 GiB.
+    _ws = (2 * max(q.M * q.N for q in shapes)
+           * max(backend.axis_space()["split_k"]))
+    ctx.buffers(_ws, parallel=False)
+    print(f"[버퍼] 최대 {_bm}x{_bn}x{_bk} + workspace {_ws / 2**30:.2f} GiB "
+          f"선할당 (고수위 재할당이 짧은 커널을 5% 흔든다)", flush=True)
 
     # 드리프트 감시 커널은 **모든 세그먼트에서 같아야** 한다. 세그먼트마다
     # 다른 커널을 쓰면 drift.jsonl 을 세그먼트 사이에서 비교할 수 없다.

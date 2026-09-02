@@ -29,7 +29,10 @@ KT_ABI_VERSION = 2
 #: | 1 | 최초 (A6000/5090/4090 캠페인이 여기 해당한다) |
 #: | 2 | 세그먼트 시작에 **버퍼를 최대 형상으로 선할당**한다. 고수위 재할당이
 #:      짧은 메모리 바운드 커널(M<=128)을 5.4 % 흔들었다 |
-MEASURE_PATH_REVISION = 2
+#: | 3 | ⛔ 2 는 **절반만 덮었다.** `prepare_problem` 은 A/B/C/D 만 잡고
+#:      workspace 는 같은 고수위 `Buf` 로 따로 커진다 (parallel split-K 의
+#:      부분합 버퍼, 최대 8 GiB). workspace 도 선할당한다 |
+MEASURE_PATH_REVISION = 3
 
 __all__ = [
     "DEFAULT_PROTOCOL",
