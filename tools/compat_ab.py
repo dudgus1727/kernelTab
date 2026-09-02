@@ -64,13 +64,32 @@ def run(exe: Path, env_extra: dict) -> dict:
 
 
 def mannwhitney_u(a: list[float], b: list[float]) -> float:
-    """작은 표본용 순위합 U. 두 분포가 겹치면 len(a)*len(b)/2 근처다."""
-    ranked = sorted([(v, 0) for v in a] + [(v, 1) for v in b])
-    r = 0.0
-    for i, (_, g) in enumerate(ranked, start=1):
-        if g == 0:
-            r += i
+    """작은 표본용 순위합 U. 두 분포가 겹치면 len(a)*len(b)/2 근처다.
+
+    ⛔ **동점에 중간 순위를 준다.** 예전에는 `sorted((값, 그룹))` 의 순서를
+       그대로 순위로 썼는데, 그러면 값이 같을 때 그룹 0 이 항상 앞에 서서
+       **한쪽이 전부 이긴 것처럼 보인다.** 실제로 `launch_bracketed_grid` 는
+       compat/native 의 중앙값이 정확히 같은데(둘 다 3.0720 us) `U = 0/625`
+       가 나왔다 — "완전히 다르다" 는 판정이다.
+
+       이 하네스의 값은 **이벤트 눈금(4090: 32 ns)에 양자화**되어 있어 동점이
+       흔하다. 동점 처리는 선택이 아니라 필수다.
+    """
     n1, n2 = len(a), len(b)
+    if not n1 or not n2:
+        return 0.0
+    xs = sorted([(v, 0) for v in a] + [(v, 1) for v in b])
+    ranks = [0.0] * len(xs)
+    i = 0
+    while i < len(xs):
+        j = i
+        while j + 1 < len(xs) and xs[j + 1][0] == xs[i][0]:
+            j += 1
+        mid = (i + 1 + j + 1) / 2.0        # 1-기반 중간 순위
+        for k in range(i, j + 1):
+            ranks[k] = mid
+        i = j + 1
+    r = sum(rk for rk, (_, g) in zip(ranks, xs) if g == 0)
     return r - n1 * (n1 + 1) / 2.0
 
 

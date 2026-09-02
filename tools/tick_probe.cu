@@ -34,15 +34,8 @@ int main(int argc, char **argv) {
   for (int i = 1; i < argc; ++i)
     if (!strcmp(argv[i], "--reps") && i + 1 < argc) reps = atoi(argv[++i]);
 
-  cudaDeviceProp p; cudaGetDeviceProperties(&p, 0);
-  // ⛔ `cudaDeviceProp::clockRate` 는 **CUDA 13 에서 삭제됐다.**
-  //    12.x 에서 컴파일하면 통과하므로 호스트 툴킷으로 재면 모른 채 넘어간다 —
-  //    실제로 이 파일은 호스트 nvcc 12.8 로는 빌드됐고 캠페인 이미지(13.3)
-  //    에서만 깨졌다. 4090 세션이 같은 자리를 먼저 밟았다.
-  //    ★ 도구는 **캠페인 이미지 안에서** 빌드해 재라. 눈금은 드라이버/툴킷의
-  //      성질이므로 다른 툴체인에서 잰 값을 그대로 쓰면 안 된다.
-  int clk_khz = 0;
-  cudaDeviceGetAttribute(&clk_khz, cudaDevAttrClockRate, 0);
+  const int dev = 0;
+  cudaDeviceProp p; cudaGetDeviceProperties(&p, dev);
   int *sink; cudaMalloc(&sink, 4);
   cudaEvent_t e0, e1; cudaEventCreate(&e0); cudaEventCreate(&e1);
 
@@ -51,14 +44,29 @@ int main(int argc, char **argv) {
   const double targets_us[] = {2, 8, 30, 120, 500, 2000};
   const int nt = sizeof(targets_us) / sizeof(targets_us[0]);
 
+  // ⛔ `cudaDeviceProp::clockRate` 는 **CUDA 13 에서 제거됐다.** 이 이미지
+  //    (nvcc 13.3.73)에서는 컴파일 자체가 안 된다:
+  //        error: class "cudaDeviceProp" has no member "clockRate"
+  //    `cudaDeviceGetAttribute` 는 남아 있으므로 그쪽을 쓴다.
+  //
+  //    ★ 12.x 에서는 **컴파일이 통과한다.** 그래서 호스트 툴킷으로 빌드해
+  //      재면 모른 채 넘어간다 — H100 세션이 정확히 그렇게 32 ns 를 보고했다
+  //      (호스트 nvcc 12.8). 눈금은 드라이버/툴킷의 성질이므로 **캠페인
+  //      이미지 안에서 빌드해 재라.** 두 세션이 같은 자리를 따로 밟았다.
+  int clock_khz = 0;
+  cudaDeviceGetAttribute(&clock_khz, cudaDevAttrClockRate, dev);
+  if (clock_khz <= 0) {           // 조용히 0 으로 진행하지 않는다
+    fprintf(stderr, "cudaDevAttrClockRate 를 읽지 못했다\n");
+    return 1;
+  }
   printf("# gpu=%s sm_%d%d clock_khz=%d reps=%d\n",
-         p.name, p.major, p.minor, clk_khz, reps);
+         p.name, p.major, p.minor, clock_khz, reps);
   printf("target_us,elapsed_ms\n");
 
   for (int t = 0; t < nt; ++t) {
-    // 이 클럭은 부스트 최대치라 실제보다 짧게 나올 수 있다 — 목표 길이는
+    // clockRate 는 부스트 최대치라 실제보다 짧게 나올 수 있다 — 목표 길이는
     // 근사면 충분하다. 눈금은 길이와 무관하다.
-    long long cyc = (long long)(targets_us[t] * 1e-6 * clk_khz * 1000.0);
+    long long cyc = (long long)(targets_us[t] * 1e-6 * clock_khz * 1000.0);
     if (cyc < 1) cyc = 1;
     for (int w = 0; w < 20; ++w) spin<<<1, 32>>>(cyc, sink);   // 워밍업
     cudaDeviceSynchronize();

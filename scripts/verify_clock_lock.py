@@ -173,13 +173,19 @@ def main() -> int:
     # ⛔ 여기에 특정 GPU 의 숫자를 적지 마라. 예전에는 "(캡 300W)" 와
     #    "(유휴 시 810 까지)" 가 박혀 있었는데 둘 다 A6000 값이다 — H100 NVL
     #    은 캡 400W 이고 지원 메모리 클럭이 2619 하나뿐이라 유휴에도 안
-    #    떨어진다. 판정부는 NVML 의 power_limit 을 읽고 있었으므로 **출력만
-    #    틀린 값을 말하고 있었다.** 5090 캠페인이 릴리즈 노트에서 잡은 것과
-    #    같은 계열이다 (스펙 하드코딩).
+    #    떨어진다. RTX 4090 은 캡 450W 이고 유휴 405 다. 판정부는 NVML 의
+    #    power_limit 을 읽고 있었으므로 **출력만 틀린 값을 말하고 있었다.**
+    #    5090 캠페인이 릴리즈 노트에서 잡은 것과 같은 계열이다 (스펙 하드코딩).
     limits_all = [t["power_limit"] for t in tel if t.get("power_limit")]
     cap_txt = f"  (캡 {max(limits_all):.0f}W)" if limits_all else ""
+    # ⚠️ 변동한다고 해서 "고정을 안 했다" 가 아니다. **고정해도 컴퓨트
+    #    워크로드는 P2 로 내려간다** — A6000 은 요청 8001 / 부하 7601,
+    #    RTX 4090 은 요청 10501 / 부하 10251 이다. 그래서 문구를 "고정하라"
+    #    가 아니라 "부하 중 실측값을 쓰라" 로 둔다. env.json 의
+    #    locked_mem_mhz 에 요청값을 넣으면 실효 대역폭이 그만큼 틀린다.
     mem_txt = ("" if min(mem) == max(mem)
-               else "  ← 부하 중 변동. 메모리 클럭도 고정할 것")
+               else "  ← 변동. locked_mem_mhz 에는 **부하 중 실측값**을 넣어라 "
+                    "(고정해도 P2 로 내려간다)")
     print(f"  clocks.mem  min={min(mem)} max={max(mem)} "
           f"median={statistics.median(mem)} MHz{mem_txt}")
     print(f"  power.draw  min={min(pw):.1f} max={max(pw):.1f} "
