@@ -104,6 +104,45 @@ _EPILOGUE_PAD_COLS = 8
 _ACC_BYTES = 4
 
 
+#: `PredicatedTileAccessIterator` 가 들 수 있는 predicate 개수 상한.
+#:
+#: CUTLASS 2.x 는 predicate 를 워드에 채워 넣는데 `kPredicateWordCount <= 4`
+#: 이고 워드당 16 개라 **64 개**가 상한이다 (넘으면
+#: `static_assert: Too many predicates.` 로 컴파일이 거부된다).
+MAX_PREDICATES = 64
+
+
+def predicate_count_ok(tile_m: int, tile_n: int, tile_k: int, threads: int,
+                       align_a: int, align_b: int) -> bool:
+    """A/B 반복자의 predicate 수가 상한 안인가 (컴파일 가능성 판정).
+
+    스레드 하나가 하는 접근 횟수 = (타일 원소 수 / 스레드 수) / alignment 다.
+    alignment 가 작을수록 한 번에 가져오는 원소가 적어 접근이 늘고, 그만큼
+    predicate 가 늘어난다.
+
+    ## 실측 근거 (H100 NVL, 13,975 커널 전수 빌드)
+
+    실패 20 건이 **전부** 이 조건 하나로 갈린다 — `a118`(alignment 1) +
+    `tile_k=64` + 4 워프(스레드 128):
+
+        tile(64,256,64)   B: 64x256/128/1 = 128 > 64   -> 실패
+        tile(128,256,64)  B: 동일                       -> 실패
+        tile(256,64,64)   A: 256x64/128/1 = 128 > 64    -> 실패
+        tile(256,128,64)  A: 동일                       -> 실패
+
+    같은 (tile, warp, stages) 라도 alignment 가 2 이상이면 100 건 전부
+    성공했다. 경계가 깨끗하다 — **성공 커널의 최대 접근수 64, 실패 커널의
+    최소 접근수 128.**
+
+    판정: TP 20 / TN 13,955 / FN 0 / FP 0 (scripts/validate_constraints.py).
+
+    ⚠️ 성능 필터가 아니다. 컴파일이 **거부되는** 조합만 자른다.
+    """
+    per_a = tile_m * tile_k / threads / align_a
+    per_b = tile_n * tile_k / threads / align_b
+    return max(per_a, per_b) <= MAX_PREDICATES
+
+
 def epilogue_thread_map_ok(
     tile_n: int, warp_m_count: int, warp_n_count: int, warp_k_count: int,
     align_c: int, elem_bits: int = 16,
@@ -363,6 +402,12 @@ class CutlassV2Backend:
             cfg.tile_k // e.warp_k, cfg.align_c,
         ):
             return "epilogue_thread_map"
+
+        # 세 번째 컴파일 제약 (2026-09-02, H100 전수 빌드에서 확인).
+        # 낮은 alignment + 큰 타일에서 predicate 가 상한(64)을 넘는다.
+        if not predicate_count_ok(cfg.tile_m, cfg.tile_n, cfg.tile_k, threads,
+                                  cfg.align_a, cfg.align_b):
+            return "predicate_count"
 
         return None
 

@@ -22,6 +22,7 @@ from kerneltab.backends import get_backend
 from kerneltab.backends.cutlass_v2 import (
     epilogue_thread_map_ok,
     mainloop_smem_thread_map_ok,
+    predicate_count_ok,
 )
 from kerneltab.core import paths
 from kerneltab.core.types import KernelConfig
@@ -36,6 +37,8 @@ EPILOGUE_ASSERTS = (
 )
 MAINLOOP_ASSERTS = ("Number of iterations must be non-zero",)
 CPASYNC_ASSERTS = ("Size is not supported",)
+#: PredicatedTileAccessIterator 의 predicate 상한 (2026-09-02 추가).
+PREDICATE_ASSERTS = ("Too many predicates.",)
 
 
 def predict_ok(r: dict) -> tuple[bool, bool]:
@@ -47,9 +50,11 @@ def predict_ok(r: dict) -> tuple[bool, bool]:
     threads = wm * wn * wk * 32
     # cp.async 는 4/8/16 바이트만 지원한다 (fp16 x alignment 1 = 2바이트 불가)
     cpasync_ok = not (e["stages"] > 2 and min(a["a"], a["b"]) * 2 < 4)
+    pred_ok = predicate_count_ok(t["m"], t["n"], t["k"], threads, a["a"], a["b"])
     return (
         epilogue_thread_map_ok(t["n"], wm, wn, wk, a["c"]),
-        mainloop_smem_thread_map_ok(t["m"], t["n"], t["k"], threads) and cpasync_ok,
+        (mainloop_smem_thread_map_ok(t["m"], t["n"], t["k"], threads)
+         and cpasync_ok and pred_ok),
     )
 
 
@@ -79,7 +84,8 @@ def main() -> int:
         if st == "build_fail":
             known = (any(s in err for s in EPILOGUE_ASSERTS)
                      or any(s in err for s in MAINLOOP_ASSERTS)
-                     or any(s in err for s in CPASYNC_ASSERTS))
+                     or any(s in err for s in CPASYNC_ASSERTS)
+                     or any(s in err for s in PREDICATE_ASSERTS))
             if not known:
                 other_fail[err] += 1
                 continue

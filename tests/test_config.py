@@ -80,3 +80,52 @@ class TestDtypeBytes:
         """조용히 기본값을 쓰면 alignment 가 통째로 틀린다. 반드시 예외."""
         with pytest.raises(ValueError, match="알 수 없는 dtype"):
             dtype_bytes("fp8_e4m3_but_typo")
+
+
+class TestPredicateCount:
+    """★ 세 번째 컴파일 제약 — `static_assert: Too many predicates.`
+
+    H100 NVL 전수 빌드 13,975 개에서 실패 20 건이 **전부** 이 조건 하나로
+    갈렸다 (TP 20 / TN 13,955 / FN 0 / FP 0). 성공 커널의 최대 접근수 64,
+    실패 커널의 최소 접근수 128 로 경계가 깨끗하다.
+    """
+
+    def test_실측_실패_조합을_거른다(self):
+        from kerneltab.backends.cutlass_v2 import predicate_count_ok
+        # 실제 실패한 넷 (alignment 1, tile_k 64, 스레드 128)
+        assert not predicate_count_ok(64, 256, 64, 128, 1, 1)
+        assert not predicate_count_ok(128, 256, 64, 128, 1, 1)
+        assert not predicate_count_ok(256, 64, 64, 128, 1, 1)
+        assert not predicate_count_ok(256, 128, 64, 128, 1, 1)
+
+    def test_같은_타일이라도_alignment_가_2_면_통과한다(self):
+        """실측: 같은 (tile, warp, stages) 로 align>=2 인 100 건 전부 성공."""
+        from kerneltab.backends.cutlass_v2 import predicate_count_ok
+        for al in (2, 4, 8):
+            assert predicate_count_ok(64, 256, 64, 128, al, al)
+            assert predicate_count_ok(256, 128, 64, 128, al, al)
+
+    def test_경계값(self):
+        """접근수 64 는 통과, 65 부터 거부 (kPredicateWordCount <= 4)."""
+        from kerneltab.backends.cutlass_v2 import MAX_PREDICATES, predicate_count_ok
+        assert MAX_PREDICATES == 64
+        assert predicate_count_ok(64, 64, 64, 128, 1, 1)        # 32 접근
+        assert predicate_count_ok(128, 64, 64, 128, 1, 1)       # 64 접근 (경계)
+        assert not predicate_count_ok(256, 64, 64, 128, 1, 1)   # 128 접근
+
+    def test_성능_필터가_아니다(self, hw_h100, backend):
+        """이 제약은 **컴파일 가능성**만 본다 — 걸리는 것은 alignment 1 뿐이다.
+
+        alignment 8 인 정상 config 를 하나라도 자르면 성능 필터가 된 것이다.
+        """
+        from kerneltab.core.shapes import all_shapes
+        from kerneltab.core.config import alignment_combos, enumerate_kernels_with_funnel
+        combos = alignment_combos(all_shapes(hw_h100))
+        _, funnel = enumerate_kernels_with_funnel(hw_h100, backend, combos, "f16")
+        # funnel 은 첫 조합((1,1,8))만 센다 — 거기서만 걸려야 한다
+        assert funnel.get("predicate_count", 0) > 0
+        for al in ((8, 8, 8), (4, 4, 8), (2, 2, 8)):
+            ks, f2 = enumerate_kernels_with_funnel(hw_h100, backend, [al], "f16")
+            assert f2.get("predicate_count", 0) == 0, (
+                f"align {al} 에서 predicate_count 가 걸렸다 — 이 제약은 "
+                "alignment 1 전용이어야 한다")
