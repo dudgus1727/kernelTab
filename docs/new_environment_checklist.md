@@ -106,6 +106,61 @@ GPU 는 UUID 로 지정한다. 인덱스는 `CUDA_VISIBLE_DEVICES` 와 컨테이
 nvidia-smi --query-gpu=index,uuid,name --format=csv
 ```
 
+### ⛔ 호스트 패키지를 건드리기 전에 시뮬레이션하라
+
+새 호스트에서는 `nvidia-container-toolkit` 이 없어 `--gpus` 가 실패하는 일이
+흔하다 (4090/H100 세션 둘 다 겪었다). 설치해야 하는데, **`apt-get install` 이
+무엇을 함께 끌어올릴지 예측이 안 된다.**
+
+실제로 `apt-get install nvidia-container-toolkit` 하나가 드라이버 스택 전체를
+올렸다 (2026-09-02, 4090):
+
+```
+Upgrade: nvidia-driver-580-server-open  580.95.05 -> 580.173.02
+         libnvidia-compute / libnvidia-ml / nvidia-utils / nvidia-dkms ...
+```
+
+유저 모드만 교체되고 커널 모듈은 부팅 때 것이 남아 **불일치**가 된다:
+
+```
+Failed to initialize NVML: Driver/library version mismatch
+nvidia-container-cli: initialization error: nvml error   <- 새 컨테이너가 안 뜬다
+```
+
+그리고 **되돌릴 수 없다** — 배포판이 옛 버전을 저장소에서 교체하면 apt 로
+받을 수 없다. 유일한 해소는 모듈을 새 버전으로 재로드하거나 재부팅하는 것,
+즉 **드라이버가 바뀐 채로 가는 것**이다.
+
+```bash
+apt-get install -s --no-install-recommends <패키지>    # ★ 먼저 시뮬레이션
+#   Upgrade: 목록에 nvidia-driver / libnvidia-* 가 있으면 ⛔ 멈추고 물어라
+```
+
+> ### ★ 게이트 중에는 무해하고, 측정 중에는 치명적이다
+>
+> ```
+> 게이트 중   조건을 다시 발급하면 끝난다 (env.json 재생성)
+>             드라이버가 바뀐 것 자체는 문제가 아니다 — 기록하면 된다
+> ★ 측정 중  그 캠페인이 통째로 무효가 된다
+>             env_hash 가 갈라지고 resume 이 끊긴다
+> ```
+>
+> **"앞선 캠페인과 드라이버를 맞춰야 한다" 는 규칙은 없다.** `env_hash` 의
+> 목적은 *다른 조건을 한 표에 섞지 마라* 이지 *조건을 같게 하라* 가 아니다.
+> 조건이 다르면 다른 번들이고, 그걸로 끝난다.
+
+불일치를 해소할 때 (모듈 재로드):
+
+```bash
+sudo nvidia-smi -pm 0                  # NVML 이 죽었으면 nvidia-persistenced 를 stop
+sudo fuser -v /dev/nvidia*             # GPU 를 쓰는 프로세스 전부 (좀비 포함)
+sudo rmmod nvidia_uvm nvidia_drm nvidia_modeset nvidia   # 의존 역순
+sudo modprobe nvidia && nvidia-smi     # 커널/유저 모드가 일치하는지
+```
+
+실패하면 재부팅한다. 그 뒤 `campaign_<gpu>.md` 에 **바뀐 드라이버를 조건으로
+적는다** — 손실이 아니라 다른 조건이다.
+
 ## G-0b. 축 덮개 점검 (측정 전, 5분)
 
 GPU 가 바뀌면 벤더 프리셋도 바뀌고 **추천도 바뀐다.** 우리 축 밖의 값을
