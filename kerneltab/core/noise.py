@@ -75,6 +75,7 @@ __all__ = [
     "coef_from_observed",
     "coefficients",
     "from_bundle",
+    "odd_multiple_frac",
     "tick_ms_observed",
 ]
 
@@ -353,6 +354,47 @@ def tick_ms_observed(values) -> float | None:
 #: 눈금 후보가 값들을 이 비율 이상 설명해야 채택한다.
 TICK_COVER_MIN = 0.95
 
+#: 값이 격자 위에 있다고 볼 상대 허용오차. `tick_grid()` 와
+#: `odd_multiple_frac()` 이 **같은 값**을 써야 한다 — 다르면 한쪽이 격자로
+#: 인정한 값을 다른 쪽이 세지 않는다 (decisions 12: 같은 판정이 두 곳에
+#: 있으면 하나는 어긋난다).
+TICK_ON_GRID_TOL = 0.02
+
+
+def odd_multiple_frac(values, tick_ms: float) -> float:
+    """이 눈금의 **홀수 배수**인 값의 비율. 과대 추정을 위에서 조인다.
+
+    ## 왜 필요한가
+
+    `tick_grid()` 의 후보는 **관측된 최소 간격의 배수**로만 만들어진다.
+    표본이 성기면 진짜 눈금의 2 배·3 배가 뽑히는데, 값만 보고는 구분할 수
+    없다 — q 격자 위의 값은 2q 격자로도 전부 설명된다. 그래서 그 추정은
+    **항상 상한**이고, 5090 이 32 ns 로 결론냈다가 16 ns 로 정정한 자리다
+    (`docs/decisions.md` 26).
+
+    아래에서 조이는 방법은 이미 있다(부분표본 재추정 — `tools/tick_probe.py`).
+    이것은 **위에서** 조인다:
+
+        후보 q 가 진짜 눈금의 짝수배라면 q 의 홀수 배수인 값이 존재할 수 없다.
+        홀수 배수가 충분히 관측되면 그 후보는 과대 추정이 아니다.
+
+    H100 NVL 실측 (2026-09-02, 목표 2 us ~ 2 ms 여섯 구간 x 800 회):
+
+        16 ns   설명력 100 %   홀수 배수 ★ 0.0 %   -> 기각 (32 의 절반)
+        32 ns   설명력 100 %   홀수 배수  51.7 %   -> 채택
+
+    ⚠️ 두 검사는 상보적이다. 부분표본은 "이 추정이 표본 하나에 매달렸나" 를,
+       홀수 배수는 "이 후보가 진짜 눈금의 배수인가" 를 본다. 둘 다 통과해야
+       상한이 아니라 값이라고 말할 수 있다.
+    """
+    if tick_ms <= 0:
+        return 0.0
+    on = [x for x in values
+          if abs(x / tick_ms - round(x / tick_ms)) < TICK_ON_GRID_TOL]
+    if not on:
+        return 0.0
+    return sum(1 for x in on if round(x / tick_ms) % 2 == 1) / len(on)
+
 
 def tick_grid(values, cover_min: float = TICK_COVER_MIN):
     """`(눈금, 설명력)`. **값들이 실제로 그 격자 위에 있는지 확인한다.**
@@ -385,7 +427,7 @@ def tick_grid(values, cover_min: float = TICK_COVER_MIN):
         if cand <= 0:
             return 0.0
         return sum(1 for x in xs
-                   if abs(x / cand - round(x / cand)) < 0.02) / len(xs)
+                   if abs(x / cand - round(x / cand)) < TICK_ON_GRID_TOL) / len(xs)
 
     best = (None, 0.0)
     seen = set()

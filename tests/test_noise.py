@@ -246,3 +246,40 @@ def test_bundle_이_모듈_상수를_그대로_싣지_않는다():
         "번들이 이 캠페인의 앵커에서 계수를 뽑지 않는다 — "
         "A6000 값이 실리면 정답 집합이 짧은 형상에서 1,000 배 넓어진다 (D-6)")
     assert "return noise.coefficients()" not in fn
+
+
+class TestOddMultiple:
+    """★ 눈금 추정을 **위에서** 조인다 (부분표본 재추정은 아래에서 조인다).
+
+    후보가 진짜 눈금의 짝수배면 그 후보의 홀수 배수인 값이 존재할 수 없다.
+    H100 에서 16 ns 가 설명력 100 % 인데 홀수 배수 0 % 라 기각됐다.
+    """
+
+    def test_진짜_눈금은_홀수_배수를_갖는다(self):
+        from kerneltab.core.noise import odd_multiple_frac
+        q = 32e-6
+        vals = [q * n for n in (3, 5, 7, 9, 11, 100, 101)]
+        assert odd_multiple_frac(vals, q) > 0.5
+
+    def test_절반_후보는_홀수_배수가_없다(self):
+        """32 ns 격자 위의 값은 16 ns 격자로도 전부 설명되지만 전부 짝수배다."""
+        from kerneltab.core.noise import odd_multiple_frac, tick_grid
+        q = 32e-6
+        vals = [q * n for n in (3, 5, 7, 9, 11, 100, 101)]
+        assert tick_grid(vals)[1] == 1.0            # 설명력만으로는 못 가른다
+        assert odd_multiple_frac(vals, q / 2) == 0.0
+
+    def test_격자_밖_값은_세지_않는다(self):
+        from kerneltab.core.noise import odd_multiple_frac
+        q = 32e-6
+        assert odd_multiple_frac([q * 2.5], q) == 0.0
+
+    def test_두_함수가_같은_허용오차를_쓴다(self):
+        """다르면 한쪽이 격자로 인정한 값을 다른 쪽이 세지 않는다."""
+        import inspect
+
+        from kerneltab.core import noise
+        src = inspect.getsource(noise)
+        assert src.count("TICK_ON_GRID_TOL") >= 3, (
+            "격자 허용오차가 상수로 공유되지 않는다")
+        assert "< 0.02) / len(" not in src, "허용오차를 다시 박아 넣었다"

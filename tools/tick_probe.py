@@ -47,7 +47,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from kerneltab.core import paths                      # noqa: E402
-from kerneltab.core.noise import tick_grid, tick_ms_observed   # noqa: E402
+from kerneltab.core.noise import (                     # noqa: E402
+    odd_multiple_frac, tick_grid, tick_ms_observed,
+)
 
 
 def collect(kernel_id: str, M: int, N: int, K: int, reps: int) -> list[float]:
@@ -138,9 +140,26 @@ def main() -> int:
     print(f"부분표본 재추정 {frag}")
     if len(frag) > 1:
         print("  ⚠️ 부분표본에서 값이 갈린다. 표본을 늘려라 (--reps).")
-    print("\n⛔ 이 값은 **상한**이다. 진짜 눈금이 절반이어도 이 데이터로는"
-          " 배제할 수 없다.\n   5090 이 고유값 92 개에서 32 ns 로 결론냈다가"
-          " 16 ns 로 정정했다 (decisions 26).")
+
+    # ★ 위에서 조인다 — 부분표본(아래에서 조이기)과 상보적이다.
+    #
+    #   후보가 진짜 눈금의 짝수배라면 그 후보의 **홀수 배수**인 값이 존재할
+    #   수 없다. 홀수 배수가 충분히 관측되면 "상한" 을 값으로 좁힐 수 있다.
+    #   H100 에서 16 ns 가 설명력 100 % 인데 홀수 배수 0 % 라 기각됐고
+    #   32 ns 가 51.7 % 로 채택됐다 (2026-09-02).
+    tick = out["tick_ns"] * 1e-6
+    odd_here = odd_multiple_frac(xs, tick)
+    odd_half = odd_multiple_frac(xs, tick / 2)
+    print(f"\n홀수 배수 검사  이 후보 {100 * odd_here:.1f}%"
+          f"   절반({out['tick_ns'] / 2:g} ns) {100 * odd_half:.1f}%")
+    if odd_here >= 0.05:
+        print("  ★ 이 후보의 홀수 배수가 관측된다 — 진짜 눈금의 짝수배가"
+              " 아니다. 부분표본도 안정이면 상한이 아니라 **값**이다.")
+    else:
+        print("  ⛔ 이 후보의 홀수 배수가 없다 — **진짜 눈금이 절반일 수"
+              " 있다.** 절반 후보의 설명력을 확인하라.")
+        print("\n⛔ 이 값은 **상한**이다. 5090 이 고유값 92 개에서 32 ns 로"
+              " 결론냈다가 16 ns 로 정정했다 (decisions 26).")
     return 0
 
 

@@ -27,29 +27,24 @@ from collections import defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from kerneltab.core.noise import TICK_COVER_MIN, tick_grid, tick_ms_observed
+from kerneltab.core.noise import (
+    TICK_COVER_MIN, TICK_ON_GRID_TOL, odd_multiple_frac, tick_grid,
+    tick_ms_observed,
+)
 
 
 def cover(values, tick_ms: float) -> float:
-    """값들이 이 격자 위에 있는 비율. `tick_grid` 과 같은 허용오차."""
+    """값들이 이 격자 위에 있는 비율. `tick_grid` 과 같은 허용오차를 쓴다."""
     if tick_ms <= 0:
         return 0.0
     return sum(1 for x in values
-               if abs(x / tick_ms - round(x / tick_ms)) < 0.02) / len(values)
+               if abs(x / tick_ms - round(x / tick_ms)) < TICK_ON_GRID_TOL) / len(values)
 
 
-def odd_multiple_frac(values, tick_ms: float) -> float:
-    """★ 이 눈금의 **홀수 배수**인 값의 비율.
-
-    후보가 진짜 눈금의 2 배면 홀수 배수가 관측될 수 없다. 홀수 배수가
-    충분히 나오면 그 후보는 과대 추정이 아니다.
-    """
-    if tick_ms <= 0:
-        return 0.0
-    on = [x for x in values if abs(x / tick_ms - round(x / tick_ms)) < 0.02]
-    if not on:
-        return 0.0
-    return sum(1 for x in on if round(x / tick_ms) % 2 == 1) / len(on)
+# ⛔ 홀수 배수 판정은 `core.noise.odd_multiple_frac()` 하나뿐이다.
+#    여기 다시 구현하지 마라 — `tools/tick_probe.py`(실측 경로 수집 +
+#    부분표본 재추정)도 같은 함수를 쓴다. 두 도구가 서로 다른 허용오차로
+#    판정하면 한쪽이 격자로 인정한 값을 다른 쪽이 세지 않는다.
 
 
 def analyze(label: str, values: list[float]) -> float | None:
