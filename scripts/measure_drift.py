@@ -426,6 +426,22 @@ def main() -> int:
         "touch_failed": dict(touch_fail),
         "steps": steps,
     }
+    r2_first = statistics.median(f["r2"] for f in steps[0]["fit"].values())
+    r2_last = statistics.median(f["r2"] for f in steps[-1]["fit"].values())
+    # 짧은 프로브들이 서로 몇 % 안에 들어왔는가 (수렴 = 런치 경로 지배)
+    short_last = None
+    if steps[-1]["times_ms"]:
+        one = next(iter(steps[-1]["times_ms"].values()))
+        vals = [v for k, v in one.items() if int(k) <= max(PROBE_SHAPES) // 2]
+        if len(vals) >= 2 and max(vals):
+            short_last = (max(vals) - min(vals)) / max(vals)
+    out["r2_first"] = round(r2_first, 6)
+    out["r2_last"] = round(r2_last, 6)
+    out["short_probe_spread_last"] = (round(short_last, 4)
+                                      if short_last is not None else None)
+    fit_broke = (r2_last < 0.995) or (short_last is not None and short_last < 0.05)
+    out["b_drift_is_fit_artifact"] = bool(fit_broke)
+
     Path(args.out).write_text(json.dumps(out, ensure_ascii=False, indent=1))
 
     print("\n" + "=" * 68)
@@ -434,8 +450,38 @@ def main() -> int:
     print(f"기울기      {out['us_per_1k_modules']} us / 모듈 1,000개")
     print(f"왜곡 배율   {out['distortion_ratio']}배  "
           f"(짧은 {out['rel_drift_short_pct']}% vs 긴 {out['rel_drift_long_pct']}%)")
-    print(f"b 변화      {out['b_drift_pct']}%  "
-          "<- 0 에 가까워야 한다. 크면 모듈이 아니라 클럭/발열이다.")
+    # ⛔ **`b` 변화를 그대로 "클럭/발열" 로 읽지 마라.**
+    #
+    #    `t = a + b·work` 는 `a << b·work` 인 동안만 성립한다. 모듈 압력이
+    #    커져 `a` 가 프로브 시간에 육박하면 **짧은 프로브들이 전부 같은 값으로
+    #    수렴**한다 — 그 지점부터는 커널이 아니라 런치 경로를 재는 것이라
+    #    기울기 정보가 사라지고, 선형 적합이 그 비선형성을 `b` 로 흡수한다.
+    #
+    #    RTX 4090 실측 (모듈 0 -> 5,230):
+    #        256³   12.29 ->  567.30 us   (+555)
+    #        512³   19.46 ->  567.30       (+548)   ★ 넷이 566~567 로 수렴
+    #       1024³   34.82 ->  566.27       (+531)
+    #       2048³  125.92 ->  566.38       (+440)
+    #       4096³  911.36 -> 1195.01       (+284)   ★ 짧은 쪽의 절반이다
+    #    -> b 가 -25.8 % 인데 SM 2400 / mem 10251 고정이고 **온도는 오히려
+    #       내려갔다**(55 -> 51 °C). 클럭도 발열도 아니다.
+    #
+    #    긴 커널의 증가량이 절반인 것은 오버헤드가 **실행과 겹치기** 때문이다.
+    #    그래서 판별은 r² 로 한다: 적합이 무너지면서 b 가 움직이면 모델의
+    #    한계이고, r² 가 멀쩡한데 b 가 움직이면 그때가 클럭/발열이다.
+    print(f"b 변화      {out['b_drift_pct']}%   "
+          f"(r² {r2_first:.5f} -> {r2_last:.5f}"
+          + (f", 짧은 프로브 퍼짐 {100 * short_last:.1f}%"
+             if short_last is not None else "") + ")")
+    if fit_broke:
+        print("            ★ 적합이 무너지면서 생긴 값이다 — 짧은 프로브들이 "
+              "같은 값으로 수렴해")
+        print("              기울기 정보가 사라졌다. **클럭/발열이 아니다.** "
+              "a 는 여전히 유효하다")
+        print("              (커널 간 a 편차로 확인하라).")
+    else:
+        print("            <- r² 가 멀쩡한데 b 가 움직이면 그때는 "
+              "클럭/발열을 의심하라.")
     if touch_fail:
         n_f = sum(touch_fail.values())
         att = min(len(touch_rows), i * args.step)

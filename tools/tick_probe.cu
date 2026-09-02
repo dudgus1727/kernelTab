@@ -21,6 +21,27 @@
 #include <cstring>
 #include <cuda_runtime.h>
 
+
+// --- 캠페인 조건 스탬프 -----------------------------------------------------
+// ⛔ 이 프로브를 **캠페인 조건 밖**(호스트 nvcc / native libcuda)에서 돌리면
+//    나온 값은 캠페인 값이 아니다. 그리고 그것은 **조용히 틀린다** — 프로브가
+//    돌고 값이 나오므로 결과만 보고는 구분할 방법이 없다.
+//    실제로 그렇게 잰 눈금 하나가 무효가 됐다 (2026-09-02, H100 세션).
+//
+//    ★ 축은 nvcc 버전이 아니라 **libcuda** 다. 이벤트 눈금·런치 오버헤드·
+//      드라이버 경로가 전부 거기 달렸다. 호스트 native 와 이미지 compat 은
+//      다른 드라이버다 (4090: 580.173.02 vs 610.43.02).
+#define _KT_STR(x) #x
+#define KT_STR(x) _KT_STR(x)
+#define KT_NVCC_VERSION \
+  KT_STR(__CUDACC_VER_MAJOR__) "." KT_STR(__CUDACC_VER_MINOR__) "." \
+  KT_STR(__CUDACC_VER_BUILD__)
+static int kt_driver_api_version(void) {
+  int v = 0;
+  cudaDriverGetVersion(&v);
+  return v;
+}
+
 // 정확히 `cycles` 만큼 도는 커널. 메모리를 건드리지 않아 클럭 외의
 // 변동 요인이 없다.
 __global__ void spin(long long cycles, int *sink) {
@@ -59,16 +80,10 @@ int main(int argc, char **argv) {
     fprintf(stderr, "cudaDevAttrClockRate 를 읽지 못했다\n");
     return 1;
   }
-  // ★ **어느 조건에서 잰 값인가**를 산출물에 박는다 (decisions 28).
-  //    프로브를 캠페인 이미지 밖에서 돌리면 값은 나오지만 그 값은 캠페인
-  //    값이 아니다. 결과만 보고는 구분할 수 없으므로 여기 남기고,
-  //    `tools/tick_report.py` 가 env.json 과 대조해 **다르면 실패한다.**
-  int drv = 0;
-  cudaDriverGetVersion(&drv);          // 로드된 libcuda (compat 이면 그쪽)
   printf("# gpu=%s sm_%d%d clock_khz=%d reps=%d "
-         "cuda_driver_version=%d nvcc=%d.%d\n",
-         p.name, p.major, p.minor, clock_khz, reps, drv,
-         __CUDACC_VER_MAJOR__, __CUDACC_VER_MINOR__);
+         "driver_api_version=%d nvcc_version=%s\n",
+         p.name, p.major, p.minor, clock_khz, reps,
+         kt_driver_api_version(), KT_NVCC_VERSION);
   printf("target_us,elapsed_ms\n");
 
   for (int t = 0; t < nt; ++t) {

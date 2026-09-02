@@ -43,6 +43,27 @@
     }                                                                         \
   } while (0)
 
+
+// --- 캠페인 조건 스탬프 -----------------------------------------------------
+// ⛔ 이 프로브를 **캠페인 조건 밖**(호스트 nvcc / native libcuda)에서 돌리면
+//    나온 값은 캠페인 값이 아니다. 그리고 그것은 **조용히 틀린다** — 프로브가
+//    돌고 값이 나오므로 결과만 보고는 구분할 방법이 없다.
+//    실제로 그렇게 잰 눈금 하나가 무효가 됐다 (2026-09-02, H100 세션).
+//
+//    ★ 축은 nvcc 버전이 아니라 **libcuda** 다. 이벤트 눈금·런치 오버헤드·
+//      드라이버 경로가 전부 거기 달렸다. 호스트 native 와 이미지 compat 은
+//      다른 드라이버다 (4090: 580.173.02 vs 610.43.02).
+#define _KT_STR(x) #x
+#define KT_STR(x) _KT_STR(x)
+#define KT_NVCC_VERSION \
+  KT_STR(__CUDACC_VER_MAJOR__) "." KT_STR(__CUDACC_VER_MINOR__) "." \
+  KT_STR(__CUDACC_VER_BUILD__)
+static int kt_driver_api_version(void) {
+  int v = 0;
+  cudaDriverGetVersion(&v);
+  return v;
+}
+
 #define CHAINS 4
 
 __global__ void mma_f32_accum(float *sink, int iters) {
@@ -150,8 +171,10 @@ int main(int argc, char **argv) {
   // FMA/clk/SM = TFLOP/s / (SM x 2 flop x clock)
   printf("{\"gpu\":\"%s\",\"sm_count\":%d,\"iters\":%d,\"reps\":%d,"
          "\"tflops_f32_accum\":%.2f,\"tflops_f16_accum\":%.2f,"
-         "\"ratio_f16_over_f32\":%.4f,\"clock_khz_attr\":%d}\n",
+         "\"ratio_f16_over_f32\":%.4f,\"clock_khz_attr\":%d,"
+         "\"driver_api_version\":%d,\"nvcc_version\":\"%s\"}\n",
          prop.name, sm, iters, reps, f32, f16,
-         (f32 > 0 ? f16 / f32 : 0.0), clk_khz);
+         (f32 > 0 ? f16 / f32 : 0.0), clk_khz,
+         kt_driver_api_version(), KT_NVCC_VERSION);
   return 0;
 }
