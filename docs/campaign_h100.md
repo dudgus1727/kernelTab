@@ -257,6 +257,46 @@ cuDriverGetVersion : 13030   nvcc : 13.3.73   device : H100 NVL sm_90
 > 없었다 — **호스트에서는 375 passed 라 이미지를 만들어 봐야만 드러난다.**
 > `COPY docs/baselines/` 를 넣어 고쳤다.
 
+## 10. 컨테이너 `detect` 실측 (2026-09-02, 클럭 미고정 잠정)
+
+```
+이미지        kerneltab:cu133-233e21c0
+env_hash      3b765cb6...        ★ 잠정 (clock_locked=false). 고정 후 다시 뽑는다
+셔플 시드     20260902 (--seed 로 고정)
+CUTLASS 예제  ampere_gemm_universal_streamk  5 passed / 0 failed, best 401.6 TFLOP/s
+```
+
+| | 호스트 CUDA 12.8 | **컨테이너 13.3 + compat** |
+|---|---:|---:|
+| `launch_async_grid` | 3.289 us | **3.154 us** |
+| `launch_bracketed_grid` (기준값) | 3.584 us | **3.424 us** |
+| `below_launch_overhead` 문턱 | 10.752 us | **10.272 us** |
+| ridge point (실효) | 155.1 | 155.1 |
+
+문턱이 더 낮아졌지만 고친 그리드의 최소 여유가 **13.77 us = 134 %** 라
+그대로 안전하다. 5090 의 문턱은 12.288 us 였다.
+
+## 11. 커널 빌드 — `static_assert: Too many predicates.`
+
+전체 13,975 개 빌드 중(진행 중) 실패가 **한 종류**로만 나온다.
+
+```
+sm90_tb64x256x64_w64x64x64_st2_swid{1,2,4}_a118 ...
+  -> static_assert: Too many predicates.
+```
+
+`a118`(alignment 1) + 큰 타일(64x256x64) 조합이다. CUTLASS 2.x
+`PredicatedTileAccessIterator` 의 컴파일 시점 제약이고, alignment 가 작을수록
+접근 횟수가 늘어 predicate 수가 상한을 넘는다.
+
+**결측이 아니라 `build_fail` 행으로 남는다** (원칙대로). 빌드가 끝나면
+`validate_constraints.py` 가 "모델링하지 않은 실패" 로 집계하므로, 거기서
+FN/FP 를 보고 `explain_kernel` 에 세 번째 컴파일 제약으로 넣을지 정한다 —
+`decisions.md` 4 번이 같은 방식으로 두 개를 추가한 자리다.
+
+⚠️ 넣더라도 **성능 필터가 아니라 컴파일 가능성 판정**이어야 하고, 실측
+전수와 대조해 오탐 0 / 미탐 0 을 확인한 뒤에만 필터로 쓴다.
+
 ## 캠페인 중 관측
 
 (전수 시작 후 여기에 덧붙인다)
