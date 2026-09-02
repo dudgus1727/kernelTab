@@ -170,11 +170,20 @@ def main() -> int:
     print(f"              기대치({expect}) 이상 유지: {at_target}/{n} "
           f"= {100 * at_target / n:.1f}%")
     mem = [t["mem"] for t in tel]
+    # ⛔ 여기에 특정 GPU 의 숫자를 적지 마라. 예전에는 "(캡 300W)" 와
+    #    "(유휴 시 810 까지)" 가 박혀 있었는데 둘 다 A6000 값이다 — H100 NVL
+    #    은 캡 400W 이고 지원 메모리 클럭이 2619 하나뿐이라 유휴에도 안
+    #    떨어진다. 판정부는 NVML 의 power_limit 을 읽고 있었으므로 **출력만
+    #    틀린 값을 말하고 있었다.** 5090 캠페인이 릴리즈 노트에서 잡은 것과
+    #    같은 계열이다 (스펙 하드코딩).
+    limits_all = [t["power_limit"] for t in tel if t.get("power_limit")]
+    cap_txt = f"  (캡 {max(limits_all):.0f}W)" if limits_all else ""
+    mem_txt = ("" if min(mem) == max(mem)
+               else "  ← 부하 중 변동. 메모리 클럭도 고정할 것")
     print(f"  clocks.mem  min={min(mem)} max={max(mem)} "
-          f"median={statistics.median(mem)} MHz "
-          f"(고정 안 하면 유휴 시 810 까지 떨어진다)")
+          f"median={statistics.median(mem)} MHz{mem_txt}")
     print(f"  power.draw  min={min(pw):.1f} max={max(pw):.1f} "
-          f"mean={statistics.mean(pw):.1f} W  (캡 300W)")
+          f"mean={statistics.mean(pw):.1f} W{cap_txt}")
     print(f"  temp        시작={tp[0]} 최고={max(tp)} 마지막={tp[-1]} °C")
     print("  throttle    ", end="")
     if thr:

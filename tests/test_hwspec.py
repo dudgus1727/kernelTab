@@ -35,6 +35,9 @@ REQUIRED = {
         "데이터시트 P0 대역폭. 교차검증 전용",
     "mem_bus_bits":
         "메모리 버스 폭. 실효 대역폭은 이것 x 2 x 관측 클럭으로 계산한다",
+    "peak_derivation":
+        "★ peak_tflops_f16 을 만든 산식 {sm_count, fma_f16_per_clk_per_sm, "
+        "boost_mhz}. 산문(source)에만 적으면 값과 어긋나도 아무도 모른다",
     "source":
         "이 숫자가 어디서 왔는가. 추정하면 결과 전체가 오염된다",
 }
@@ -93,3 +96,67 @@ def test_source_에_근거가_있다(gpu):
         f"'{gpu}' 의 source 가 너무 짧다 ({len(src)}자). "
         "이 숫자가 어디서 나왔는지 — 계산식이든 실측이든 — 적어라. "
         "roofline 이 여기 직접 의존한다.")
+
+
+@pytest.mark.parametrize("gpu", sorted(_entries()))
+def test_피크_교차검증이_맞는다(gpu):
+    """`peak_tflops_f16` 과 `sm x fma x 2 x boost` 가 일치해야 한다.
+
+    ⛔ 대역폭에는 이 교차검증이 있었는데(`mem_bus_bits`) **피크에는 없었다.**
+       그래서 4090 항목의 `source` 산문이 `128 SM x 512 x 2 x 2.52 GHz`
+       (= 330.3)라고 적혀 있는데 값은 165.2 인 상태가 통과했다. 값이 옳고
+       산문이 틀린 경우였다 — `docs/decisions.md` 23 이 "가장 찾기 어렵다"
+       고 적은 바로 그 형태다.
+
+    산문을 grep 해서 판정하지 않는다 (`decisions.md` 24). 구조화된
+    `peak_derivation` 을 두고 그것으로 검사한다.
+
+    ⚠️ `fma_f16_per_clk_per_sm` 은 **FP32 누산 기준**이다. GeForce Ada /
+       Blackwell 은 반감되어 256, 프로 SKU(A6000)는 512 다. 새 GPU 를
+       넣을 때 반감 여부를 `mma.sync` 로 실측해 확정하라 — 여기서 512 와
+       256 을 잘못 고르면 ridge point 가 2 배 틀린다.
+    """
+    e = _entries()[gpu]
+    d = e["peak_derivation"]
+    calc = d["sm_count"] * d["fma_f16_per_clk_per_sm"] * 2 * d["boost_mhz"] / 1e6
+    peak = e["peak_tflops_f16"]
+    assert abs(calc - peak) / peak < 0.01, (
+        f"'{gpu}': {d['sm_count']} SM x {d['fma_f16_per_clk_per_sm']} "
+        f"FMA/clk/SM x 2 flop x {d['boost_mhz']} MHz = {calc:.1f} TFLOP/s 인데 "
+        f"peak_tflops_f16 은 {peak} 다. 둘 중 하나가 틀렸다.\n"
+        "  2 배 어긋나면 FP32 누산 반감(GeForce = 256, 프로 SKU = 512)을 "
+        "잘못 골랐을 가능성이 높다.")
+    assert d["boost_mhz"] == e["peak_tflops_f16_at_mhz"], (
+        f"'{gpu}': peak_derivation.boost_mhz({d['boost_mhz']}) 와 "
+        f"peak_tflops_f16_at_mhz({e['peak_tflops_f16_at_mhz']}) 가 다르다. "
+        "실효 피크 보정이 다른 클럭을 기준으로 계산된다.")
+
+
+#: 실측으로 확인된 FMA/clk/SM 과 그 근거. **추정값을 넣지 마라.**
+KNOWN_FMA = {
+    256: "GeForce Ada/Blackwell — FP32 누산 반감",
+    512: "A6000 프로 SKU — 반감 없음",
+    1324: "H100(Hopper) mma.sync FP32 누산 실측. 반감은 없고 발행률이 다르다",
+}
+
+
+@pytest.mark.parametrize("gpu", sorted(_entries()))
+def test_fma_가_알려진_값이다(gpu):
+    """반감 여부만이 아니라 **명령 발행률**도 세대마다 다르다.
+
+    ⛔ H100 에서 셋째 값이 나왔다. 반감은 없는데(FP32/FP16 비 1.031) 값이
+       512 가 아니다 — Hopper 의 `mma.sync` 는 서브파티션당 HMMA.16816 을
+       6 사이클에 하나가 상한이라 4 x 2048 / 6 = 1365 가 설계 상한이고
+       FP32 누산 실측이 1324 다 (`tools/peak_mma_probe.cu`).
+
+       ★ 이 표의 config 공간(2.x = mma.sync)이 도달할 수 있는 값이므로
+       이것이 맞는 값이다. 데이터시트 피크는 wgmma(3.x)로만 나오며
+       `peak_tflops_f16_datasheet` 에 기록만 한다
+       (`docs/consumer_contract.md` 12 절).
+    """
+    fma = _entries()[gpu]["peak_derivation"]["fma_f16_per_clk_per_sm"]
+    assert fma in KNOWN_FMA, (
+        f"'{gpu}' 의 FMA/clk/SM 이 {fma} 다. 알려진 값은 "
+        + ", ".join(f"{k}({v})" for k, v in KNOWN_FMA.items())
+        + ". 새 값이면 mma.sync 실측 근거를 source 에 적고 이 목록을 넓혀라 "
+        "— **추정하지 말고 tools/peak_mma_probe.cu 로 재라.**")

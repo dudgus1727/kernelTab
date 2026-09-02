@@ -617,6 +617,29 @@ def main() -> int:
     # 클럭을 고정하면 SM 클럭만 내려가고 메모리 클럭은 그대로다. 스펙 피크를
     # 그대로 쓰면 roofline ridge point 가 실제보다 높게 나와 어떤 형상이
     # 메모리 바운드인지 판정이 틀린다. 실효 피크를 함께 기록한다.
+    # ⛔ 같은 이름의 다른 SKU 를 조용히 받아들이지 않는다.
+    #
+    #    RTX 4090 은 128 SM 이고 중국 시장용 **4090D 는 114 SM** 이다.
+    #    이름이 똑같이 보고되는 경우 `known.json` 의 128 SM 기준 피크가
+    #    그대로 적용되어 실효 피크가 **12 % 높게** 잡힌다 — 경고도 없이
+    #    ridge point 와 `is_memory_bound` 가 전 형상에서 틀어진다.
+    #    (docs/decisions.md 14, docs/new_environment_checklist.md G-0)
+    _der = known_spec(hw.name).get("peak_derivation") or {}
+    _sm_spec = _der.get("sm_count")
+    if _sm_spec and _sm_spec != hw.sm_count:
+        print(
+            f"\n⛔ SM 개수가 known.json 과 다르다.\n"
+            f"   감지 {hw.sm_count} SM  vs  known.json '{hw.name}' {_sm_spec} SM\n"
+            f"\n   같은 이름의 다른 SKU 일 수 있다 (예: RTX 4090 128 SM vs\n"
+            f"   4090D 114 SM). 그대로 진행하면 peak_tflops_f16\n"
+            f"   ({hw.peak_tflops_f16} TFLOP/s)이 이 카드의 값이 아니게 되어\n"
+            f"   ridge point 와 is_memory_bound 가 전 형상에서 틀린다.\n"
+            f"\n   이 카드의 항목을 known.json 에 따로 만들고 peak_derivation\n"
+            f"   (sm_count / fma_f16_per_clk_per_sm / boost_mhz)을 실측 근거와\n"
+            f"   함께 적어라. 형상 그리드도 sm_count 에서 유도되므로 함께 바뀐다.",
+            file=sys.stderr)
+        return 4
+
     peak_ref = peak_reference_mhz(hw.name)
     peak_eff = hw.peak_tflops_f16
     # ⛔ 클럭을 고정했는데 기준 클럭이 없으면 **실패한다** (D-1).

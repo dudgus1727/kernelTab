@@ -369,3 +369,64 @@ def test_드리프트_감시는_가장_짧은_형상으로_한다():
     assert "return m_mon.time_ms" in fn, (
         "drift_check 이 감시 형상의 값을 돌려주지 않는다. "
         "기록만 하고 판정을 큰 형상으로 하면 감시가 둔감해진다.")
+
+
+def test_드리프트_기준값이_감시와_같은_형상이다():
+    """⛔ 기준값과 감시값의 **형상이 다르면** 비율이 통째로 무의미해진다.
+
+    `drift_check()` 은 `DRIFT_MONITOR_SHAPE`(가장 짧은 것)를 돌려주는데,
+    누적 드리프트의 기준값은 소킹이 남긴 `soak_ref_last_ms` 였고 그것은
+    `_probe_ref()` 의 기본값 = `DRIFT_SHAPE`(가장 긴 것)로 잰 값이다.
+    2048³ 대 4096³ 이면 일의 양이 8 배 다르므로:
+
+        drift_ratio = t_drift / drift_base ~= 0.12       <- 1.0 이 아니다
+        |t - base| / base ~= 87 %  >  DRIFT_ABS_WARN(8 %)
+
+    누적 경고는 스트라이크가 아니라 **래치**라서 점검마다 다시 찍힌다 —
+    10 분 주기 24 시간이면 96 회다. 그리고 `drift_ratio` 는 모든 측정
+    줄에 실려 `table.parquet` 까지 나간다 (`core/table.py` 의 D-3 열).
+
+    `DRIFT_MONITOR_SHAPE` 를 도입할 때(31d5926) 반환값만 바꾸고 기준값
+    쪽을 안 고쳐서 생겼다 — `decisions.md` 3 (같은 값이 여러 곳에 살면
+    하나는 어긋난다). 소킹이 기본 비활성이라 드러나지 않고 있었다.
+    """
+    src = (REPO / "scripts" / "rehearse.py").read_text(encoding="utf-8")
+
+    # (a) 소킹이 감시 형상의 값을 남기는가
+    soak = src[src.index("def thermal_soak("):]
+    soak = soak[:soak.index("\ndef ", 1)]
+    assert "soak_ref_monitor_last_ms" in soak, (
+        "thermal_soak 이 감시 형상(DRIFT_MONITOR_SHAPE)으로 잰 기준값을 "
+        "남기지 않는다. 긴 형상 값만 남기면 드리프트 기준으로 쓸 수 없다.")
+    assert "DRIFT_MONITOR_SHAPE" in soak, (
+        "thermal_soak 이 감시 형상을 아예 재지 않는다.")
+
+    # (b) 그리고 측정 루프가 **그 값을** 기준으로 쓰는가
+    assert 'drift_base = soak_info.get("soak_ref_monitor_last_ms")' in src, (
+        "drift_base 가 감시 형상의 기준값에서 오지 않는다.\n"
+        "  soak_ref_last_ms 는 DRIFT_SHAPE(가장 긴 형상)로 잰 값이라 "
+        "감시값과 비교하면 형상이 다른 두 값의 비가 된다.")
+    assert 'soak_info.get("soak_ref_last_ms")' not in src, (
+        "긴 형상의 소킹 기준값을 아직 어딘가에서 드리프트 기준으로 쓴다.")
+
+
+def test_누적_드리프트_경고가_상태_전환에서만_찍힌다():
+    """반복되는 경고는 감시가 아니라 소음이다.
+
+    누적 드리프트 경고는 스트라이크가 아니라 래치다 — 조건이 지속되면
+    점검마다 같은 줄이 나온다. 같은 이유로 `sw_power_cap` 경고를 이미 한
+    번 걷어냈다("24시간 캠페인에서 144회 오경보가 나면 진짜 클럭 풀림을
+    놓친다"). 억제하는 대신 **횟수를 요약에 남긴다** — 안 그러면 "경고가
+    안 떴다" 가 정상과 감시 죽음을 다 뜻하게 된다 (decisions 27).
+    """
+    src = (REPO / "scripts" / "rehearse.py").read_text(encoding="utf-8")
+    assert "drift_abs_latched" in src, (
+        "누적 드리프트 경고가 래치 상태를 들고 있지 않다 — 조건이 지속되면 "
+        "점검마다 반복해서 찍힌다.")
+    assert "drift_abs_overs" in src, "억제한 초과 횟수를 세지 않는다."
+    # 요약과 하트비트 양쪽에 남아야 한다.
+    tail = src[src.index("    print(\"\\n\" + probe.report())"):]
+    assert "drift_abs_overs" in tail[:1200], (
+        "억제한 경고 횟수가 슬라이스 요약에 안 나온다.")
+    assert "drift_abs_overs=drift_abs_overs" in src, (
+        "하트비트에 안 남는다 — 감시자가 읽을 수 없다.")

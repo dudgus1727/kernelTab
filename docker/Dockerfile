@@ -160,6 +160,14 @@ COPY docker/entrypoint.sh /usr/local/bin/kerneltab
 #    이미지 재빌드 없이 추가됐다). 두 파일 합쳐 376 KB 다.
 COPY docs/baselines/ /work/docs/baselines/
 COPY pyproject.toml README.md LICENSE NOTICE /work/
+# docs/ 는 통째로 넣지 않지만 `docs/baselines/` 는 **테스트 데이터**다.
+# `tests/test_axis_coverage.py` 가 커밋된 벤더 추출물을 읽어 "3.x 추천이
+# 섞여 있지 않은가" 를 확인한다 (d8bfdfd). 이 디렉토리가 없으면 그 검사가
+# 이미지 안에서 **파일이 없다는 이유로 실패**하고, 아래 자체 점검의
+# `pytest /work/tests` 가 통째로 죽는다. 실제로 그렇게 죽었다.
+# ⚠️ 저장소 데이터를 읽는 테스트를 추가하면 그 경로도 여기 넣어야 한다 —
+#    `tests/test_portability.py::TestImageShipsTestData` 가 강제한다.
+COPY docs/baselines/ /work/docs/baselines/
 
 # ⚠️ `pip install` 하지 않는다. **PYTHONPATH 로 붙인다.**
 #
