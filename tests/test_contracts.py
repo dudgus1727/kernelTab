@@ -430,3 +430,41 @@ def test_누적_드리프트_경고가_상태_전환에서만_찍힌다():
         "억제한 경고 횟수가 슬라이스 요약에 안 나온다.")
     assert "drift_abs_overs=drift_abs_overs" in src, (
         "하트비트에 안 남는다 — 감시자가 읽을 수 없다.")
+
+
+def test_재현성_보고가_흔들린_조합을_제대로_지목한다():
+    """⛔ 값은 맞는데 **이름이 틀린** 보고서였다.
+
+    `recheck_stability.py` 의 변동폭 계산이 `main()` 안에 인라인으로 있었고
+    루프 변수가 `_key` 인데 결과에는 **바깥 스코프의 `key`**(측정 루프가 남긴
+    마지막 조합)를 담았다. 그래서 상위 8줄이 전부 같은 이름을 달고 나왔다 —
+    시간이 0.1485 ms 와 4.1667 ms 로 다른데 이름은 같았다.
+
+    판정(`over_5pct`)은 값에서 나오므로 멀쩡했고, 그래서 게이트는 통과했다.
+    **틀린 것은 "무엇이 흔들렸는가" 뿐인데 그것이 이 보고서를 읽는 이유다.**
+    5 % 를 넘는 조합이 나오면 엉뚱한 커널을 쫓게 된다 (`decisions.md` 23).
+
+    인라인이라 테스트를 붙일 자리가 없었다 — 그래서 `spread_rows()` 로 뺐다.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_recheck", REPO / "scripts" / "recheck_stability.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+
+    samples = {
+        ("kA", 64, 64, 64, 1, "serial"): [1.00, 1.00, 1.00],       # 0 %
+        ("kB", 128, 128, 128, 2, "parallel"): [1.00, 1.10, 1.05],  # 10 %
+        ("kC", 256, 256, 256, 4, "serial"): [2.00, 2.02, 2.01],    # 1 %
+        ("kD", 512, 512, 512, 8, "serial"): [5.0],                 # 표본 부족
+    }
+    rows = m.spread_rows(samples)
+
+    assert len(rows) == 3, "표본이 2개 미만인 조합은 빠져야 한다"
+    assert [r[1][0] for r in rows] == ["kB", "kC", "kA"], (
+        f"변동폭 순서나 이름이 틀렸다: {[(r[0], r[1][0]) for r in rows]}")
+    assert abs(rows[0][0] - 0.10 / 1.05) < 1e-9
+    # ★ 이름이 값과 같은 행에 붙어 있는가 (옛 버그는 여기서 전부 같았다)
+    assert len({r[1][0] for r in rows}) == 3, (
+        "여러 조합이 같은 이름을 달고 나온다 — 바깥 스코프의 key 를 담고 있다")

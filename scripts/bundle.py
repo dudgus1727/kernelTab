@@ -217,8 +217,21 @@ def _noise_coefficients(env_hash: str) -> dict:
             f"⛔ {path} 가 없다. 노이즈 계수를 이 캠페인의 앵커에서 뽑아야 "
             "한다 — A6000 값으로 대체하면 정답 집합이 틀린다 (D-6).")
     rows = list(records.iter_records(path, env_hash))
-    coef = noise.coef_from_anchors(rows, f"env_hash={env_hash[:8]}")
+    # ⛔ 앵커로 **눈금**을 못 뽑는 환경이 있다. 앵커의 `time_ms` 는 IQR 후
+    #    중앙값이라 표본이 짝수면 격자를 벗어나고, 최소 간격이 터무니없이
+    #    작아진다 (RTX 4090 앵커 1,200 행에서 0.007 ns -> 물리 범위 밖).
+    #    `TICK_PLAUSIBLE_MS` 가 그것을 잡아 A6000 대체를 막는 것은 옳지만
+    #    (D-6), **올바른 값을 넣을 문이 없으면 번들을 못 만든다.**
+    #    `tools/tick_probe.cu` + `tick_report.py` 가 남긴 실측값을 쓴다.
+    tick_path = paths.RESULTS_DIR / "tick_measured.json"
+    tick_ms = None
+    if tick_path.exists():
+        tick_ms = json.loads(tick_path.read_text()).get("tick_ms")
+    coef = noise.coef_from_anchors(rows, f"env_hash={env_hash[:8]}",
+                                   tick_ms=tick_ms)
     out = coef.as_dict()
+    out["tick_source"] = ("tick_probe 실측 (results/tick_measured.json)"
+                          if tick_ms else "앵커에서 추정")
     out.update(
         env_hash=env_hash,
         n_anchor_rows=len(rows),

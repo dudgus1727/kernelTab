@@ -55,10 +55,36 @@ from pathlib import Path
 from kerneltab.core import noise as noise_model
 
 #: 앵커 분석은 **측정 직후 그 장비에서** 돌기 때문에 번들이 아직 없다.
-#: A6000 계수를 쓰되, 이름으로 출처를 드러낸다 — 다른 GPU 에서는
-#: `model_pct`/`tick_pct` 열이 참고치라는 뜻이다 (판정은 관측 산포 `s_within`
-#: 으로 하므로 계수에 의존하지 않는다).
-NOISE = noise_model.A6000_MEASURED
+#: 기본값은 A6000 계수이고 이름으로 출처를 드러낸다.
+#:
+#: ⛔ **"판정은 계수에 의존하지 않는다" 가 전부 사실은 아니었다.**
+#:    `scripts/gate_g7.py` 의 3 번(슬라이스 start->end)이 `tick_pct` 로
+#:    "눈금 미만이면 평균으로 판정" 을 한다. 그 눈금이 A6000 의 1.024 us
+#:    이면 RTX 4090(32 ns)에서 **32 배 큰 눈금**으로 판정하게 되고,
+#:    실제로 4090 리포트가 0.13 ms 앵커에 "눈금 0.78%" 를 찍었다
+#:    (참값은 0.024%). 판정 결과는 안 바뀌었지만 **이유가 틀렸다.**
+#:
+#:    그래서 `results/tick_measured.json`(tick_probe 실측)이 있으면 그것을
+#:    쓴다. 없으면 A6000 값을 쓰되 출처를 출력에 밝힌다.
+def _campaign_noise():
+    """이 캠페인의 실측 눈금이 있으면 반영한 계수를 돌려준다."""
+    import json as _json
+
+    from kerneltab.core import paths as _paths
+    try:
+        p = _paths.RESULTS_DIR / "tick_measured.json"
+        tick = _json.loads(p.read_text())["tick_ms"]
+    except Exception:
+        return noise_model.A6000_MEASURED, "A6000 계수 (이 환경 실측 아님)"
+    base = noise_model.A6000_MEASURED
+    return (noise_model.NoiseCoef(
+        sigma_abs_ms=base.sigma_abs_ms, sigma_rel=base.sigma_rel,
+        tick_ms=tick,
+        source=f"sigma 는 A6000, 눈금은 이 환경 실측 {tick * 1e6:.0f} ns"),
+        f"눈금 {tick * 1e6:.0f} ns 실측 / sigma 는 A6000 참고치")
+
+
+NOISE, NOISE_SOURCE = _campaign_noise()
 from kerneltab.core import records
 
 __all__ = [

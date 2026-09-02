@@ -40,6 +40,32 @@ OUT = paths.RESULTS_DIR / "stability.json"
 DRIFT_SHAPE = Problem(4096, 4096, 4096)
 
 
+def spread_rows(samples: dict) -> list:
+    """`{key: [측정값...]}` -> `[(변동폭, key, 값들)]`, 큰 순.
+
+    ⛔ 예전에는 이 계산이 `main()` 안에 인라인으로 있었고 루프 변수가
+       `_key` 인데 `spreads.append((spread, key, v))` 로 **바깥 스코프의
+       `key`** 를 담았다. 그 `key` 는 측정 루프가 남긴 **마지막 조합**이라
+       보고서의 여덟 줄이 전부 같은 이름을 달고 나왔다 — 시간이
+       0.1485 ms 와 4.1667 ms 로 다른데 이름은 같았다.
+
+       판정(`over_5pct` / `spread_max`)은 값에서 나오므로 멀쩡했다.
+       **틀린 것은 "무엇이 흔들렸는가" 뿐이다** — 그런데 그것이 이 보고서를
+       읽는 이유다. 5 % 를 넘는 조합이 나오면 엉뚱한 커널을 쫓게 된다.
+       (`docs/decisions.md` 23 — 돌기는 도는데 틀린 종류)
+
+       인라인이라 테스트를 붙일 자리가 없었다. 그래서 함수로 뺀다.
+    """
+    out = []
+    for key, v in samples.items():
+        if len(v) < 2:
+            continue
+        med = statistics.median(v)
+        out.append(((max(v) - min(v)) / med if med else 0.0, key, v))
+    out.sort(key=lambda r: r[0], reverse=True)
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=30, help="재측정할 조합 수")
@@ -198,14 +224,7 @@ def main() -> int:
         probe.close()
         ctx.close()
 
-    spreads = []
-    for _key, v in samples.items():
-        if len(v) < 2:
-            continue
-        med = statistics.median(v)
-        spread = (max(v) - min(v)) / med if med else 0
-        spreads.append((spread, key, v))
-    spreads.sort(reverse=True)
+    spreads = spread_rows(samples)
 
     # pass 별 편차 — 첫 회만 튀는지(cold) 전반적으로 흔들리는지 구분
     per_pass = {}
@@ -245,6 +264,14 @@ def main() -> int:
         "spread_median": statistics.median(allv) if allv else None,
         "spread_max": max(allv) if allv else None,
         "over_5pct": len(over5),
+        # ⛔ 어느 조합이 흔들렸는지 **파일에 남긴다.** 예전에는 stdout 에만
+        #    있었고 그마저 이름이 틀렸다. 게이트가 "1건 초과" 라고만 하면
+        #    무엇을 쫓아야 할지 알 수 없다.
+        "worst": [{"spread": round(sp, 6), "kernel_id": k[0],
+                   "M": k[1], "N": k[2], "K": k[3],
+                   "split_k": k[4], "split_k_mode": k[5],
+                   "times_ms": [round(x, 6) for x in v]}
+                  for sp, k, v in spreads[:8]],
         "drift_times_ms": ts,
         "clock_locked": env["clock_locked"],
     }, indent=2))

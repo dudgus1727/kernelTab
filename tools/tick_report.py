@@ -21,6 +21,7 @@
 """
 from __future__ import annotations
 
+import json
 import statistics
 import sys
 from collections import defaultdict
@@ -122,6 +123,24 @@ def main() -> int:
     print(f"★ 결론: tick_ms = {min(vals):.9f}  ({min(vals) * 1e6:.0f} ns)")
     print("  core/noise.py 의 NoiseCoef.tick_ms 와 대조하라. 다르면 "
           "앵커에서 뽑은 값이 이 실측과 왜 다른지 규명한 뒤 진행할 것.")
+
+    # ⛔ **파일로 남긴다.** 앵커로는 눈금을 못 뽑는 환경이 있다 — `time_ms` 가
+    #    IQR 후 중앙값이라 표본이 짝수면 격자를 벗어나고, 최소 간격이
+    #    터무니없이 작아진다 (RTX 4090 앵커 1,200 행에서 0.007 ns).
+    #    `TICK_PLAUSIBLE_MS` 가 그것을 잡아 A6000 값 대체를 막지만(D-6),
+    #    **올바른 값을 넣을 문이 없으면 번들을 못 만든다.** 이 파일이 그 문이다.
+    #    `coef_from_anchors(..., tick_ms=)` / `bundle.py` 가 읽는다.
+    out = Path(sys.argv[2]) if len(sys.argv) > 2 else (
+        Path(sys.argv[1]).parent / "tick_measured.json")
+    stamp = header_stamp(text[:2000])
+    out.write_text(json.dumps({
+        "tick_ms": min(vals),
+        "tick_ns": round(min(vals) * 1e6),
+        "per_target_ns": {k: round(v * 1e6) for k, v in picks.items()},
+        "source": Path(sys.argv[1]).name,
+        **stamp,
+    }, ensure_ascii=False, indent=1))
+    print(f"-> {out}")
     return 0
 
 

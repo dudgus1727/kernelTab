@@ -267,7 +267,7 @@ def coef_from_observed(values, name: str) -> NoiseCoef:
                      f"(관측 추정 버림 — {why})")
 
 
-def coef_from_anchors(rows, name: str) -> NoiseCoef:
+def coef_from_anchors(rows, name: str, tick_ms: float | None = None) -> NoiseCoef:
     """**그 캠페인의 앵커에서** 계수 셋을 전부 뽑는다.
 
     `coef_from_observed()` 와 다르다 — 그쪽은 눈금만 관측값으로 바꾸고
@@ -317,18 +317,37 @@ def coef_from_anchors(rows, name: str) -> NoiseCoef:
 
     sigma_abs = statistics.median([g[1] for g in short])
     sigma_rel = statistics.median([g[1] / g[0] for g in long_ if g[0]])
-    tick, cover = tick_grid(sorted({x for g in groups for x in g[2]}))
 
     lo, hi = TICK_PLAUSIBLE_MS
-    if not tick or not (lo <= tick <= hi):
-        raise NoiseCoefUnavailable(
-            f"{name}: 관측 눈금이 물리적 범위 밖이다 "
-            f"({'추정 실패' if not tick else format(tick * 1e6, '.4g') + ' ns'}, "
-            f"허용 {lo * 1e6:g}~{hi * 1e6:g} ns).\n"
-            "  **A6000 값으로 대체하지 않는다.** 앵커가 충분한지, 값이 "
-            "중앙값 보간으로 격자를 벗어나지 않았는지 확인하라.")
-
-    note = f", 눈금 격자 설명력 {cover * 100:.0f}%"
+    if tick_ms is not None:
+        # ⛔ **앵커로 눈금을 추정할 수 없는 환경이 있다.**
+        #
+        #    앵커의 `time_ms` 는 IQR 제거 후 **중앙값**이라 표본이 짝수면 두
+        #    값의 평균 — 격자를 벗어난다. 그러면 최소 간격이 터무니없이
+        #    작아진다 (RTX 4090 앵커 1,200 행에서 **0.007 ns**).
+        #    `TICK_PLAUSIBLE_MS` 가 그것을 잡아 A6000 값 대체를 막는 것은
+        #    옳지만(D-6), **올바른 값을 넣을 문이 없으면 번들을 못 만든다.**
+        #
+        #    그래서 `tools/tick_probe.cu` 가 전용 프로브로 잰 값을 받는다.
+        #    그쪽은 개별 브래킷 원시값이라 격자 위에 정확히 놓이고, 설명력과
+        #    홀수 배수 검사까지 거친다 (`tools/tick_report.py`).
+        if not (lo <= tick_ms <= hi):
+            raise NoiseCoefUnavailable(
+                f"{name}: 넘겨받은 눈금 {tick_ms * 1e6:.4g} ns 가 물리적 "
+                f"범위({lo * 1e6:g}~{hi * 1e6:g} ns) 밖이다.")
+        tick, cover = tick_ms, None
+        note = " / 눈금은 tick_probe 실측값"
+    else:
+        tick, cover = tick_grid(sorted({x for g in groups for x in g[2]}))
+        if not tick or not (lo <= tick <= hi):
+            raise NoiseCoefUnavailable(
+                f"{name}: 관측 눈금이 물리적 범위 밖이다 "
+                f"({'추정 실패' if not tick else format(tick * 1e6, '.4g') + ' ns'}, "
+                f"허용 {lo * 1e6:g}~{hi * 1e6:g} ns).\n"
+                "  **A6000 값으로 대체하지 않는다.** 앵커의 time_ms 는 중앙값이라\n"
+                "  격자를 벗어날 수 있다 — `tools/tick_probe.cu` 로 직접 재서\n"
+                "  `tick_ms=` 로 넘겨라 (results/tick_measured.json).")
+        note = f", 눈금 격자 설명력 {cover * 100:.0f}%"
     if sigma_abs <= 0:
         sigma_abs = tick / 2
         note += " / sigma_abs 관측 0 -> 눈금의 절반으로 보수적 대체"
