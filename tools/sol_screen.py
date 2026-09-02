@@ -90,10 +90,16 @@ def main() -> int:
               f"{len(bad)}개)")
         for frac, p, s, why in bad:
             if frac < 1.0:
-                flag = "  ⛔ 결측과 같다"
+                # ⛔ SOL 이 문턱 아래 = **빠른 config 부터 잘린다.**
+                #    70~90 % 대가 최악이다 (느린 것만 살아남아 정답이 검열된다).
+                flag = ("  ⛔ 빠른 config 부터 잘린다"
+                        + (" ★ 최악 구간" if frac >= 0.5 else " (거의 전부 결측)"))
                 n_dead += 1
             else:
-                flag = "  ★ 빠른 config 만 잘린다 — 가장 나쁜 구간"
+                # 문턱 **위**면 어떤 config 도 잘리지 않는다. 다만 런치
+                # 오버헤드가 측정 시간의 큰 몫이라 분해능이 나빠진다.
+                flag = (f"  ⚠️ 여유 {frac:.2f}배 — 잘리지는 않지만 런치가 "
+                        f"시간의 {100 / frac / 3:.0f}% 다")
                 n_warn += 1
             print(f"    {p.M:6d}x{p.N:6d}x{p.K:6d}  SOL {s * 1e3:9.2f} us "
                   f"= 문턱의 {frac * 100:7.1f} %  ({why}){flag}")
@@ -102,12 +108,16 @@ def main() -> int:
             print(f"    나머지 {len(rest)}개는 문턱의 "
                   f"{rest[0][0] * 100:.0f} % ~ {rest[-1][0] * 100:.0f} % 다")
     print()
-    if n_dead or n_warn:
-        print(f"⛔ 문턱 아래 {n_dead}개 / ★ 위험 구간 {n_warn}개 — "
-              "형상 그리드(core/shapes.py)나 앵커(rehearse.DRIFT_SHAPES)를 "
-              "**측정 전에** 고쳐라.")
+    if n_dead:
+        print(f"⛔ 문턱 아래 {n_dead}개 — 형상 그리드(core/shapes.py)나 "
+              "앵커(rehearse.DRIFT_SHAPES)를 **측정 전에** 고쳐라.")
         return 1
-    print("모든 형상과 앵커가 문턱 위다.")
+    if n_warn:
+        print(f"문턱 아래 0개. 여유가 {args.warn_frac}배 미만인 것 "
+              f"{n_warn}개는 **잘리지 않는다** — 분해능만 주의하면 된다.")
+    else:
+        print("모든 형상과 앵커가 문턱의 "
+              f"{args.warn_frac}배 위다.")
     return 0
 
 

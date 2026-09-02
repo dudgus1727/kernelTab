@@ -18,9 +18,14 @@ from kerneltab.core.shapes import (
 
 class TestLayerCounts:
     def test_documented_counts(self, hw_a6000):
-        assert len(shapes_layer_a()) == 40      # (N,K) 4종 x M 10종
+        # 층 A 는 2026-09-02 에 40 -> 36 으로 줄었다. (4096,4096) 열의
+        # M<=128 네 칸이 H100 의 below_launch_overhead 문턱 아래다
+        # (8.4 us vs 10.75 us — B 33.5 MB 를 4.0 TB/s 로 읽는 시간이 지배).
+        assert len(shapes_layer_a()) == 36      # 4종 x 10종 - 4칸
         assert len(shapes_layer_b()) == 12      # 8 + 4
-        assert len(shapes_layer_c(hw_a6000)) == 11
+        # 층 C 는 m_tiles=1 인 목표를 버린다 (목표 waves 를 못 맞추고,
+        # 그 형상이 문턱 아래다). A6000 은 목표 0.3·0.5 가 둘 다 여기 걸린다.
+        assert len(shapes_layer_c(hw_a6000)) == 10
         assert len(shapes_layer_d()) == 5
         # 층 E 는 2026-08-28 에 5 -> 4 로 줄었다 (512, 1024 제외 / 16384 추가).
         # 5090 의 below_launch_overhead 문턱 아래라 순위가 안 나온다.
@@ -28,8 +33,8 @@ class TestLayerCounts:
 
     def test_layer_sum_and_unique(self, hw_a6000):
         layers = all_layers(hw_a6000)
-        assert sum(len(v) for v in layers.values()) == 72
-        assert len(all_shapes(hw_a6000)) == 65     # 층 간 중복 7개 제거
+        assert sum(len(v) for v in layers.values()) == 67
+        assert len(all_shapes(hw_a6000)) == 61     # 층 간 중복 6개 제거
 
     def test_all_shapes_dedups(self, hw_a6000):
         shapes = all_shapes(hw_a6000)
@@ -61,8 +66,12 @@ class TestLayerCIsHardwareDerived:
         cfg = mk_cfg(tile=(128, 128, 32))
         got = sorted({round(F.waves(p, hw_a6000, cfg, RuntimeConfig(1, "serial")), 2)
                       for p in shapes_layer_c(hw_a6000)})
-        # 목표 [0.3, 0.5, 0.76, 1.2, 1.5, 2.3, 3.05, 4.5, 6.7] 부근을 덮는가
-        assert min(got) < 0.6 and max(got) > 6.0
+        # 목표 [0.3, 0.5, 0.76, 1.2, 1.5, 2.3, 3.05, 4.5, 6.7] 부근을 덮는가.
+        # ★ 하한이 0.6 -> 0.8 로 올라간 것은 m_tiles>=2 제약 때문이다.
+        #   m_tiles=1 은 애초에 목표를 못 맞춘다 (A6000 에서 목표 0.3 과
+        #   0.5 가 둘 다 실제 0.38 로 떨어졌다). 1 wave 아래 구간 자체는
+        #   여전히 덮인다.
+        assert min(got) < 0.8 and max(got) > 6.0
         assert len(got) >= 8
 
     def test_fixed_m_values_present(self, hw_a6000):
@@ -144,6 +153,32 @@ class TestBelowLaunchOverhead:
         nbytes = (p.M * p.K + p.K * p.N + p.M * p.N) * 2
         return max(flops / (self.PEAK_TFLOPS * 1e12),
                    nbytes / (self.BW_GBPS * 1e9)) * 1e6
+
+    #: H100 NVL — 클럭 미고정 실측(최대 부스트 1785 / 메모리 2619).
+    #: ★ 메모리 클럭 지원값이 2619 하나뿐이라 대역폭은 클럭 고정과 무관하다.
+    #: 문턱은 5090(12.288)보다 **낮은데도** 대역폭이 2.3 배라 더 빡빡하다.
+    H100 = dict(peak=623.9, bw=4022.78, thr_us=10.752, sm=132)
+
+    def _sol_us_hw(self, p, peak, bw):
+        flops = 2.0 * p.M * p.N * p.K
+        nbytes = (p.M * p.K + p.K * p.N + p.M * p.N) * 2
+        return max(flops / (peak * 1e12), nbytes / (bw * 1e9)) * 1e6
+
+    def test_no_shape_below_launch_overhead_h100(self, hw_h100):
+        """★ H100 NVL 회귀 검사.
+
+        2026-09-02 에 여섯 형상이 문턱의 64~82 % 였다 — 빠른 config 만
+        잘리는 가장 나쁜 구간이다. 층 A/B/C 를 고쳐 0 으로 만들었다.
+        """
+        h = self.H100
+        bad = [(p, self._sol_us_hw(p, h["peak"], h["bw"]))
+               for p in all_shapes(hw_h100)
+               if self._sol_us_hw(p, h["peak"], h["bw"]) < h["thr_us"]]
+        assert not bad, (
+            "H100 NVL 에서 SOL 이 문턱 아래인 형상이 있다:\n" +
+            "\n".join(f"  {p.M}x{p.N}x{p.K}  SOL {s:.2f} us "
+                       f"(문턱의 {s / h['thr_us'] * 100:.0f}%)"
+                       for p, s in sorted(bad, key=lambda x: x[1])))
 
     def test_no_shape_below_launch_overhead(self, hw_5090):
         bad = [(p, self._sol_us(p)) for p in all_shapes(hw_5090)

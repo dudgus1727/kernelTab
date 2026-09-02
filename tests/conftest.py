@@ -156,6 +156,21 @@ def hw_5090():
 
 
 @pytest.fixture
+def hw_h100():
+    """H100 NVL. ★ SXM 도 PCIe 도 아닌 제 3 변종이다.
+
+    peak 은 **mma.sync(CUTLASS 2.x)로 도달 가능한** 623.9 다 — 데이터시트
+    (wgmma 기준 ~835)가 아니다. Hopper 에서 처음으로 둘이 갈렸다
+    (docs/consumer_contract.md 12 절).
+    """
+    return Hardware(
+        name="NVIDIA H100 NVL", arch="sm_90", sm_count=132,
+        smem_per_block=232448, max_threads_per_sm=2048, regs_per_sm=65536,
+        peak_tflops_f16=623.9, bandwidth_gbps=4022.78, l2_bytes=62914560,
+    )
+
+
+@pytest.fixture
 def hw_other():
     """SM 개수만 다른 가상 GPU. 하드웨어 상수 하드코딩 검출용."""
     return Hardware(

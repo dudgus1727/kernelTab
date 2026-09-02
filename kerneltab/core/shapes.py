@@ -30,9 +30,30 @@ _LLAMA_NK = [
 _LLAMA_M = [1, 8, 32, 128, 256, 512, 1024, 2048, 4096, 8192]
 
 
+#: ★ `(N,K) = (4096,4096)` 열에서 이 M 미만은 제외한다 (2026-09-02, H100).
+#:
+#: 이 열은 B 가 4096x4096 = 33.5 MB 로 네 열 중 가장 작다. 작은 M 에서는
+#: 그 33.5 MB 를 읽는 시간이 지배하는데, H100 NVL(4.0 TB/s)에서는 **8.4 us**
+#: 로 `below_launch_overhead` 문턱(10.75 us = 3 x 3.58 us)보다 짧다.
+#:
+#: 문턱의 78~82 % 는 **가장 나쁜 구간**이다 — 느린 config 는 살아남고 빠른
+#: config 만 잘려 정답 쪽만 검열된다. 통째로 결측인 편이 차라리 낫다.
+#:
+#: 나머지 세 열은 B 가 더 커서 M=1 에서도 문턱의 209~233 % 다. 즉 디코드
+#: 구간(M=1~128) 자체는 **세 열에서 그대로 보존된다.**
+#:
+#: ⚠️ 층 A 는 GPU 무관 고정이므로 이 제외는 모든 GPU 에 적용된다 (층 B/E 를
+#:    5090 때 옮긴 것과 같은 처리다). A6000/5090 번들은 소급 변경되지 않고
+#:    `common_shapes_only` 가 차이를 걸러낸다.
+_M_FLOOR_4096x4096 = 256
+
+
 def shapes_layer_a() -> list[Problem]:
     """실제 워크로드. (N,K)는 Llama 7B 계열. GPU 무관 고정."""
-    return [Problem(m, n, k) for (n, k) in _LLAMA_NK for m in _LLAMA_M]
+    return [Problem(m, n, k)
+            for (n, k) in _LLAMA_NK
+            for m in _LLAMA_M
+            if not ((n, k) == (4096, 4096) and m < _M_FLOOR_4096x4096)]
 
 
 def shapes_layer_b() -> list[Problem]:
@@ -60,12 +81,23 @@ def shapes_layer_b() -> list[Problem]:
     -0.71 이었다 — **어려움의 원천은 M 대비가 아니라 작은 K 다.**
     K 네 칸을 잃는 것보다 M 대비를 줄이는 쪽이 싸다.
 
+    ## M 을 한 칸 더 올렸다 (2026-09-02, H100 NVL. 이전엔 4096 / 2048)
+
+    같은 일이 H100 에서 다시 일어났다. 문턱이 **10.752 us** (5090 12.288)
+    로 더 낮은데도 두 칸이 아래로 내려갔다:
+
+        4096x4096x128  -> 8.86 us (문턱의 82 %, memory)
+        2048x4096x256  -> 6.88 us (문턱의 64 %, compute)
+
+    M 을 8192 / 4096 으로 올려 최소 17.5 us(163 %)로 만들었다. **M 대비는
+    2 배로 유지**되고, 이 층의 목적인 K 축은 그대로다.
+
     ⚠️ A6000 캠페인(`c63710df` / `828baa64`)은 **옛 M(1024 / 128)로 쟀다.**
     그 그리드는 번들에 박혀 있으므로 소급 변경되지 않는다. 전이 실험에서는
     `common_shapes_only` 가 이 차이를 걸러낸다.
     """
-    out = [Problem(4096, 4096, k) for k in (128, 256, 512, 1024, 2048, 4096, 8192, 16384)]
-    out += [Problem(2048, 4096, k) for k in (256, 1024, 4096, 16384)]
+    out = [Problem(8192, 4096, k) for k in (128, 256, 512, 1024, 2048, 4096, 8192, 16384)]
+    out += [Problem(4096, 4096, k) for k in (256, 1024, 4096, 16384)]
     return out
 
 
@@ -75,6 +107,9 @@ def shapes_layer_c(hw: Hardware) -> list[Problem]:
     M 을 상수로 박으면 GPU 마다 sm_count 가 달라 같은 M 이 전혀 다른 물리적
     상황(예: 0.7 wave vs 1.3 wave)을 의미하게 되어 GPU 간 비교가 깨진다.
     waves 를 고정하고 M 을 역산해야 전이 실험이 성립한다.
+
+    ⚠️ **타일이 하나(m_tiles=1)로 떨어지는 목표는 버린다** — 목표 waves 를
+    맞추지 못하고, 그 형상이 런치 오버헤드 문턱 아래로 내려간다 (아래 주석).
     """
     TARGET_WAVES = [0.3, 0.5, 0.76, 1.2, 1.5, 2.3, 3.05, 4.5, 6.7]
     N = K = 4096
@@ -83,8 +118,15 @@ def shapes_layer_c(hw: Hardware) -> list[Problem]:
     ms: list[int] = []
     for w in TARGET_WAVES:
         m_tiles = round(w * hw.sm_count / n_tiles)
-        m = max(1, m_tiles) * 128
-        ms.append(m)
+        # ⛔ 타일이 하나뿐이면 목표 waves 를 애초에 못 맞춘다 — 실제 waves 는
+        #    n_tiles/sm_count 로 고정된다 (H100: 목표 0.3 -> 실제 0.24,
+        #    A6000: 목표 0.3·0.5 -> 둘 다 실제 0.38). 게다가 그 형상
+        #    (M=128, N=K=4096)이 H100 에서 `below_launch_overhead` 문턱의
+        #    82 % 로 내려간다 — 빠른 config 만 잘리는 가장 나쁜 구간이다.
+        #    (2026-09-02. 층 A 의 같은 형상 제외와 한 쌍이다)
+        if m_tiles < 2:
+            continue
+        ms.append(m_tiles * 128)
     # 2의 거듭제곱이 아닌 M — 타일 경계에 정확히 떨어지지 않는 상황
     ms += [1000, 1500, 3000]
 
