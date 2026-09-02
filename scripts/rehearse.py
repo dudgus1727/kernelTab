@@ -777,7 +777,29 @@ def main() -> int:
     # 절대 기준. 소킹을 했으면 소킹 직후 값, 안 했으면 **첫 드리프트 측정값**
     # 으로 래치한다. None 으로 두면 drift_ratio 가 영원히 1.0 이라 D-3 이
     # 무의미해진다.
-    drift_base = soak_info.get("soak_ref_last_ms")
+    # ⛔ **감시와 같은 형상의 값이어야 한다.**
+    #
+    #    `drift_check()` 는 `DRIFT_MONITOR_SHAPE`(2048³, 가장 짧은 것)를
+    #    돌려주는데(31d5926 에서 그렇게 바꿨다), 여기 기준값은 소킹이
+    #    남긴 `soak_ref_last_ms` = `DRIFT_SHAPE`(4096³, 가장 긴 것)였다.
+    #    일의 양이 8 배 다르므로 `t_drift / drift_base ≈ 0.12` 가 되어
+    #      * `!! 소킹 후 누적 드리프트 -87%` 가 **매 점검마다** 찍히고
+    #        (누적 경고는 스트라이크가 아니라 래치라 영원히 반복된다)
+    #      * 모든 측정 줄의 `drift_ratio` 가 1.0 이 아니라 0.12 로 기록된다
+    #        — 표에 실려 나가는 값이다 (core/table.py 의 D-3 열).
+    #    감시 형상을 바꾸면서 기준값 쪽을 안 고친 것이고,
+    #    `decisions.md` 3(같은 값이 여러 곳에 살면 하나는 어긋난다)이다.
+    #    소킹이 기본 비활성이라 지금까지 드러나지 않았다.
+    drift_base = soak_info.get("soak_ref_monitor_last_ms")
+    _base_shape = soak_info.get("soak_ref_monitor_shape")
+    _mon_shape = [DRIFT_MONITOR_SHAPE.M, DRIFT_MONITOR_SHAPE.N,
+                  DRIFT_MONITOR_SHAPE.K]
+    if drift_base and _base_shape and list(_base_shape) != _mon_shape:
+        # 조용히 진행하지 않는다 (decisions 14). 기준을 버리고 첫 측정으로
+        # 래치하는 편이, 형상이 다른 값을 기준으로 삼는 것보다 낫다.
+        print(f"  !! 소킹 기준 형상 {_base_shape} != 감시 형상 {_mon_shape} "
+              f"— 기준값을 버리고 첫 드리프트 측정으로 래치한다", flush=True)
+        drift_base = None
 
     # --- alignment 가드가 실제로 필요한지 확인 (측정 전에) ---------------
     print("\n[가드 검증] (1024,4096,4100) 에 a888 커널을 강제로 물려본다")
@@ -799,6 +821,9 @@ def main() -> int:
     last_status_log = time.time()
     drift_hist: list[float] = []          # D-2 이동 기준용
     drift_strikes = 0
+    #: 누적 드리프트 경고는 래치다 — 상태가 바뀔 때만 찍고 횟수만 센다.
+    drift_abs_latched = False
+    drift_abs_overs = 0
     aborted = None
     t_start = time.time()
 
@@ -872,14 +897,34 @@ def main() -> int:
                             else:
                                 drift_strikes = 0
                         drift_hist.append(t_drift)
-                        # 절대 상한: 소킹 직후 대비 누적 드리프트 경고
-                        if drift_base and abs(t_drift - drift_base) / drift_base \
-                                > DRIFT_ABS_WARN:
-                            print(f"  !! 소킹 후 누적 드리프트 "
-                                  f"{100 * (t_drift - drift_base) / drift_base:+.2f}% "
-                                  f"> {100 * DRIFT_ABS_WARN:.0f}% "
-                                  f"(이동기준으로는 정상이지만 느린 누적이다)",
-                                  flush=True)
+                        # 절대 상한: 기준값 대비 누적 드리프트 경고.
+                        #
+                        # ⛔ **상태가 바뀔 때만 찍는다.** 이것은 스트라이크가
+                        #    아니라 래치라, 조건이 지속되면 매 점검마다 같은
+                        #    줄이 나온다. 24 시간 캠페인이면 96 회다.
+                        #    같은 논리로 sw_power_cap 경고를 이미 한 번
+                        #    걷어냈다 (아래 POWER_CAP_TOL 주석: "144회
+                        #    오경보가 나면 진짜 클럭 풀림을 놓친다").
+                        #    반복되는 경고는 감시가 아니라 소음이다.
+                        if drift_base:
+                            _abs_dev = (t_drift - drift_base) / drift_base
+                            _over = abs(_abs_dev) > DRIFT_ABS_WARN
+                            if _over:
+                                drift_abs_overs += 1
+                            if _over and not drift_abs_latched:
+                                drift_abs_latched = True
+                                print(f"  !! 누적 드리프트 {100 * _abs_dev:+.2f}% "
+                                      f"> {100 * DRIFT_ABS_WARN:.0f}% "
+                                      f"(기준 {drift_base:.4f} ms, "
+                                      f"{DRIFT_MONITOR_SHAPE.M}³). "
+                                      f"이동기준으로는 정상이지만 느린 누적이다. "
+                                      f"★ 이 줄은 상태가 바뀔 때만 찍는다",
+                                      flush=True)
+                            elif not _over and drift_abs_latched:
+                                drift_abs_latched = False
+                                print(f"  -- 누적 드리프트가 문턱 아래로 "
+                                      f"돌아왔다 ({100 * _abs_dev:+.2f}%, "
+                                      f"초과 {drift_abs_overs}회)", flush=True)
                         if drift_strikes >= DRIFT_STRIKES:
                             aborted = (f"이동 기준 대비 {DRIFT_TOL:.0%} 초과가 "
                                        f"{DRIFT_STRIKES}회 연속 — 조건이 변했다")
@@ -969,8 +1014,16 @@ def main() -> int:
                     total=len(jobs), status=dict(stats),
                     env_hash=env["env_hash"], soak=soak_info,
                     thermal=dict(thermal), abort_reason=aborted,
-                    nvml=nvml_fail)
+                    nvml=nvml_fail,
+                    drift_abs_overs=drift_abs_overs,
+                    drift_checks=len(drift_hist))
     print("\n" + probe.report())
+    # 억제한 경고는 **반드시 요약에 남긴다.** 안 그러면 "경고가 안 떴다" 가
+    # 정상과 감시 죽음을 다 뜻하게 된다 (decisions.md 27).
+    if drift_abs_overs:
+        print(f"[drift] 누적 드리프트 문턱({100 * DRIFT_ABS_WARN:.0f}%) 초과 "
+              f"{drift_abs_overs}회 / 점검 {len(drift_hist)}회 "
+              f"(경고는 상태 전환 시에만 찍었다)")
     report(stats, repro, clock_locked)
     if aborted:
         print(f"\n!! 중단: {aborted}")
@@ -1201,6 +1254,7 @@ def thermal_soak(ctx, kernels, sample, probe, ref_kid: str,
 
     t0 = time.time()
     probes: list[tuple[float, float]] = []
+    mon_probes: list[tuple[float, float]] = []
     s0 = probe.snapshot()
     print(f"[soak] 시작  temp={s0['gpu_temp_c']}°C mem={s0['mem_clock_mhz']}MHz  "
           f"최소 {min_seconds // 60}분 / 최대 {max_seconds // 60}분", flush=True)
@@ -1219,6 +1273,12 @@ def thermal_soak(ctx, kernels, sample, probe, ref_kid: str,
             if t_ref is None:
                 break
             probes.append((el, t_ref))
+            # ★ 드리프트 기준값은 **감시와 같은 형상**이어야 한다.
+            #   아래 soak_ref_monitor_last_ms 참조.
+            t_mon = _probe_ref(ctx, ref, DRIFT_MONITOR_SHAPE)
+            if t_mon is not None:
+                mon_probes.append((el, t_mon))
+            ctx.prepare_problem(load_shape.M, load_shape.N, load_shape.K)
             sn = probe.snapshot()
             rel = 100 * (t_ref - probes[0][1]) / probes[0][1]
             span = None
@@ -1249,6 +1309,15 @@ def thermal_soak(ctx, kernels, sample, probe, ref_kid: str,
         "soak_reason": reason,
         "soak_ref_first_ms": base,
         "soak_ref_last_ms": last,
+        # ⛔ `soak_ref_last_ms` 는 `DRIFT_SHAPE`(가장 긴 형상)로 잰 값이다.
+        #    드리프트 감시는 `DRIFT_MONITOR_SHAPE`(가장 짧은 형상)를 쓰므로
+        #    그 둘을 비교하면 **형상이 다른 두 값의 비**가 된다. 아래 값을
+        #    기준으로 써야 한다.
+        "soak_ref_monitor_first_ms": mon_probes[0][1] if mon_probes else None,
+        "soak_ref_monitor_last_ms": mon_probes[-1][1] if mon_probes else None,
+        "soak_ref_monitor_shape": [DRIFT_MONITOR_SHAPE.M, DRIFT_MONITOR_SHAPE.N,
+                                   DRIFT_MONITOR_SHAPE.K],
+        "soak_ref_shape": [DRIFT_SHAPE.M, DRIFT_SHAPE.N, DRIFT_SHAPE.K],
         "soak_total_drift": (last - base) / base if base else None,
         "soak_slope_per_hour": slope,
         "soak_probes": [[round(a, 1), b] for a, b in probes],
