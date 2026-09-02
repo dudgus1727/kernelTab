@@ -286,3 +286,89 @@ class TestDockerfileSelfCheck:
             + "\n  ".join(bad)
             + "\n\n  이미지가 빌드되지 않는다. 경로를 옮겼으면 docker/ 도 "
               "함께 고쳐라:  grep -rn 'from kerneltab' docker/")
+
+
+class TestImageShipsTestData:
+    """테스트가 읽는 **저장소 데이터**가 이미지에도 들어가는가.
+
+    ⛔ `d8bfdfd` 가 `tests/test_axis_coverage.py` 에 "커밋된 벤더 추출물에
+       3.x 가 없다" 검사를 넣었다. 그 검사는 `docs/baselines/vendor_*.json`
+       을 읽는데 **Dockerfile 은 `docs/` 를 COPY 하지 않는다.** 호스트에서는
+       371 개가 전부 통과했고, 이미지 안에서는 파일이 없어서 실패했다:
+
+           AssertionError: 벤더 추출물이 없다
+
+       Dockerfile 의 자체 점검이 `pytest /work/tests` 를 돌리므로 **그 커밋
+       이후 이미지는 빌드되지 않았다.** `449c3f6`(D-2, import 경로)과 같은
+       사고가 한 커밋 뒤에 **다른 경로로** 반복된 것이다 — 그때 붙인
+       `TestDockerfileSelfCheck` 은 import 만 보고 `COPY` 대상은 못 본다고
+       docstring 에 적혀 있었고, 그 적어 둔 구멍이 그대로 터졌다.
+
+    이 검사는 그 구멍을 막는다. `tests/` 안에서 참조하는 저장소 경로를 뽑아,
+    **실재하는 것**은 전부 Dockerfile 의 `COPY` 가 덮는지 본다.
+
+    ⚠️ 여전히 못 잡는 것: apt 패키지, `ARG`, `pip` lock, 베이스 다이제스트.
+       그리고 테스트가 경로를 문자열 결합으로 만들면 정적으로는 안 보인다.
+       근본 대책은 CI 에서 이미지를 빌드하는 것이다.
+    """
+
+    DOCKERFILE = REPO / "docker" / "Dockerfile"
+
+    #: 이미지에 **없는 것이 정상**인 경로와 그 이유.
+    EXEMPT: ClassVar[dict[str, str]] = {
+        "results": "볼륨 마운트 지점 (KERNELTAB_RESULTS_DIR)",
+        "artifacts": "볼륨 마운트 지점 (KERNELTAB_ARTIFACT_DIR)",
+        "datasets": "번들 배포물. 저장소 밖에서 온다",
+    }
+
+    def _referenced(self) -> set[str]:
+        """`REPO / "a" / "b"` 꼴을 뽑아 `a/b` 로 돌려준다."""
+        import re
+
+        seg = re.compile(r'REPO(?:_ROOT)? ((?:/ "[^"]+" )*/ "[^"]+")')
+        out = set()
+        for f in sorted((REPO / "tests").glob("*.py")):
+            for m in seg.finditer(f.read_text(encoding="utf-8")):
+                parts = re.findall(r'"([^"]+)"', m.group(1))
+                out.add("/".join(parts))
+        return out
+
+    def _copied(self) -> list[str]:
+        """Dockerfile 의 `COPY <src> ... <dst>` 에서 저장소 쪽 경로만."""
+        import re
+
+        srcs = []
+        for line in self.DOCKERFILE.read_text(encoding="utf-8").splitlines():
+            m = re.match(r"\s*COPY\s+(?!--)(.+)", line)
+            if not m:
+                continue
+            # 마지막 토큰은 목적지다
+            srcs += m.group(1).split()[:-1]
+        return [s.rstrip("/") for s in srcs]
+
+    def test_참조를_실제로_뽑는다(self):
+        """정규식이 낡으면 이 검사는 **아무것도 안 보고 통과한다.**"""
+        got = self._referenced()
+        assert "docs/baselines" in got, (
+            "`REPO / \"docs\" / \"baselines\"` 를 못 뽑았다 — 이 검사의 "
+            f"패턴이 낡았다. 뽑힌 것: {sorted(got)}")
+
+    def test_테스트가_읽는_저장소_경로가_이미지에_있다(self):
+        copied = self._copied()
+        bad = []
+        for ref in sorted(self._referenced()):
+            top = ref.split("/")[0]
+            if top in self.EXEMPT:
+                continue
+            if not (REPO / ref).exists():
+                continue          # 문자열 예시이거나 런타임에 생기는 경로
+            if any(ref == c or ref.startswith(c + "/") for c in copied):
+                continue
+            bad.append(ref)
+        assert not bad, (
+            "테스트가 읽는데 이미지에 안 들어가는 저장소 경로:\n  "
+            + "\n  ".join(bad)
+            + "\n\n  Dockerfile 의 자체 점검이 `pytest /work/tests` 를 "
+              "돌리므로 **이미지가 빌드되지 않는다.**\n"
+              "  docker/Dockerfile 에 COPY 를 추가하거나, 이미지에 없는 것이 "
+              "정상이면 EXEMPT 에 이유와 함께 적어라.")
