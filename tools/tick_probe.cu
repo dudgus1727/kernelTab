@@ -59,8 +59,16 @@ int main(int argc, char **argv) {
     fprintf(stderr, "cudaDevAttrClockRate 를 읽지 못했다\n");
     return 1;
   }
-  printf("# gpu=%s sm_%d%d clock_khz=%d reps=%d\n",
-         p.name, p.major, p.minor, clock_khz, reps);
+  // ★ **어느 조건에서 잰 값인가**를 산출물에 박는다 (decisions 28).
+  //    프로브를 캠페인 이미지 밖에서 돌리면 값은 나오지만 그 값은 캠페인
+  //    값이 아니다. 결과만 보고는 구분할 수 없으므로 여기 남기고,
+  //    `tools/tick_report.py` 가 env.json 과 대조해 **다르면 실패한다.**
+  int drv = 0;
+  cudaDriverGetVersion(&drv);          // 로드된 libcuda (compat 이면 그쪽)
+  printf("# gpu=%s sm_%d%d clock_khz=%d reps=%d "
+         "cuda_driver_version=%d nvcc=%d.%d\n",
+         p.name, p.major, p.minor, clock_khz, reps, drv,
+         __CUDACC_VER_MAJOR__, __CUDACC_VER_MINOR__);
   printf("target_us,elapsed_ms\n");
 
   for (int t = 0; t < nt; ++t) {

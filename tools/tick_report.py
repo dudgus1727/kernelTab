@@ -21,12 +21,14 @@
 """
 from __future__ import annotations
 
+import json
 import statistics
 import sys
 from collections import defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from kerneltab.core import paths
 from kerneltab.core.noise import (
     TICK_COVER_MIN, TICK_ON_GRID_TOL, odd_multiple_frac, tick_grid,
     tick_ms_observed,
@@ -79,11 +81,55 @@ def analyze(label: str, values: list[float]) -> float | None:
     return picked
 
 
+def check_conditions(text: str) -> int:
+    """★ 프로브가 **캠페인 조건에서** 돌았는지 확인한다 (decisions 28).
+
+    눈금은 `libcuda` 의 성질이다. 호스트 native 와 이미지 compat 은 다른
+    드라이버이므로, 캠페인 밖에서 빌드·실행한 프로브의 값을 그대로 쓰면
+    조용히 틀린다 — **값은 나오고 아무 오류도 없다.**
+
+    실제로 밟았다: H100 에서 호스트 nvcc 12.8 로 빌드한 바이너리로 32 ns 를
+    보고했다. CUDA 13 이 `cudaDeviceProp::clockRate` 를 삭제해준 덕에
+    드러났을 뿐, 삭제가 없었으면 아무도 몰랐다.
+    """
+    head = next((l for l in text.splitlines() if l.startswith("# gpu=")), "")
+    got = dict(kv.split("=", 1) for kv in head[2:].split()
+               if "=" in kv and not kv.startswith("gpu="))
+    if "cuda_driver_version" not in got:
+        print("⛔ 이 표본에는 드라이버 정보가 없다 — 옛 tick_probe 로 잰 것이다.\n"
+              "   캠페인 이미지 안에서 다시 빌드해 재라 (decisions 28).")
+        return 1
+    env_path = paths.ENV_JSON
+    if not env_path.exists():
+        print(f"⚠️ {env_path} 가 없어 조건 대조를 건너뛴다 (게이트 전이면 정상)")
+        return 0
+    env = json.loads(env_path.read_text())
+    want_drv = env["cuda"].get("cuda_driver_version")
+    want_nvcc = ".".join(str(env["cuda"]["nvcc_version"]).split(".")[:2])
+    bad = []
+    if want_drv is not None and int(got["cuda_driver_version"]) != int(want_drv):
+        bad.append(f"libcuda {got['cuda_driver_version']} vs env.json {want_drv}")
+    if got.get("nvcc") != want_nvcc:
+        bad.append(f"nvcc {got.get('nvcc')} vs env.json {want_nvcc}")
+    if bad:
+        print("⛔ **프로브가 캠페인 조건 밖에서 돌았다** — 이 값은 캠페인 값이 아니다:\n  "
+              + "\n  ".join(bad)
+              + "\n  눈금은 libcuda 의 성질이다. 캠페인 이미지 안에서 다시 재라"
+                " (decisions 28).")
+        return 1
+    print(f"조건 확인 ✅ libcuda {got['cuda_driver_version']} / nvcc {got['nvcc']}"
+          f"  (env.json {env['env_hash'][:8]} 과 일치)")
+    return 0
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         print(__doc__)
         return 2
-    rows = [ln.split(",") for ln in Path(sys.argv[1]).read_text().splitlines()
+    text = Path(sys.argv[1]).read_text()
+    if check_conditions(text) != 0:
+        return 1
+    rows = [ln.split(",") for ln in text.splitlines()
             if ln and not ln.startswith("#") and not ln.startswith("target")]
     by: dict[str, list[float]] = defaultdict(list)
     for tgt, ms in rows:
