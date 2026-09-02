@@ -31,3 +31,4 @@ venv/
 
 # 배포 번들 — 측정 산출물이므로 커밋하지 않는다 (bundle.py 로 재생성)
 datasets/
+data/archive/

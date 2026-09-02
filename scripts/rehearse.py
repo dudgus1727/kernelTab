@@ -720,7 +720,6 @@ def main() -> int:
     #    A6000/5090/4090 도 같은 코드였고, 그 표는 99 % 이상의 행이 이미 최대
     #    버퍼 상태였다 (H100 G-7 실측: 도달 전 3.79 %, 그중 M<=128 은 0.77 %).
     #    선할당은 조건을 바꾸는 것이 아니라 **그 예외를 없애는 것**이다.
-    _big = max(shapes, key=lambda q: (q.M * q.K, q.K * q.N, q.M * q.N))
     _bm = max(q.M for q in shapes)
     _bn = max(q.N for q in shapes)
     _bk = max(q.K for q in shapes)
