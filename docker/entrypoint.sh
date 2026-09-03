@@ -23,6 +23,27 @@ need_write() {
     *) return 1 ;;
   esac
 }
+# ⛔ `bundle` 은 datasets 에도 쓴다. 기본 출력이 **이미지 안**(/work/datasets)
+#    이라 마운트 밖이면 `--rm` 과 함께 사라진다 — 4090 캠페인에서 93 MB 번들이
+#    "통과" 를 찍고 없어졌다. results/artifacts 만 보던 검사에 이것을 더한다.
+if [ "${1:-}" = "bundle" ]; then
+  D="${KERNELTAB_DATASETS:-}"
+  if [ -z "$D" ]; then
+    cat >&2 <<'ERR'
+⛔ bundle 인데 KERNELTAB_DATASETS 가 없다.
+   기본 출력은 /work/datasets = **이미지 안**이라 --rm 과 함께 사라진다.
+     docker run ... -e KERNELTAB_DATASETS=/data/datasets -v <호스트>:/data ...
+ERR
+    exit 6
+  fi
+  case "$D" in
+    /work|/work/*)
+      echo "⛔ KERNELTAB_DATASETS=$D 는 이미지 안이다. 마운트 아래로 지정하라." >&2
+      exit 6 ;;
+  esac
+  mkdir -p "$D" 2>/dev/null || true
+  [ -w "$D" ] || { echo "⛔ $D 에 쓸 수 없다 (uid=$(id -u))." >&2; exit 6; }
+fi
 if need_write "${1:-help}"; then
   for d in "${KERNELTAB_RESULTS_DIR:-/data/results}" \
            "${KERNELTAB_ARTIFACT_DIR:-/data/artifacts}"; do

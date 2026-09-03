@@ -51,14 +51,35 @@ nohup python3 -u scripts/rehearse.py --all >> <phase3 로그> 2>&1 &
 > | 2 | `validate_table.py --expect full` 통과 확인 | 3 |
 > | 3 | `export.py` → `table.parquet` | 4 |
 > | 4 | `bundle.py --archive --archive-raw` → 번들 (검증 실패 시 **거부됨**) | 4-b |
-> | 5 | **다른 물리 디스크**로 복사 | 4-b |
-> | 6 | 오프사이트 1 부 | 4-b |
-> | 7 | 체크섬 대조 | 4-b |
+> | 5 | **GitHub Release 에 셋을 올린다** (번들 + 원본 + 메타) | 4-b |
+> | 6 | 체크섬 대조 | 4-b |
 >
-> **5~6 번(다른 물리 디스크 + 오프사이트)을 마치기 전에는 `results/` 안의
-> 무엇도 수정하지 마라.** 같은 디스크 안의 tar 는 백업이 아니다 — 디스크가
-> 죽으면 원본과 사본이 같이 죽는다. 1 번은 "실수로 지웠을 때" 용이고,
-> 5~6 번이 "디스크가 죽었을 때" 용이다. 둘은 대체재가 아니다.
+> **5 번(릴리즈)을 마치기 전에는 `results/` 안의 무엇도 수정하지 마라.**
+> 같은 디스크 안의 tar 는 백업이 아니다 — 디스크가 죽으면 원본과 사본이
+> 같이 죽는다. 1 번은 "실수로 지웠을 때" 용이고, 5 번이 "디스크가 죽었을
+> 때" 용이다. 둘은 대체재가 아니다.
+>
+> ### ★ 릴리즈가 오프사이트를 겸한다 (2026-09-03, 4090)
+>
+> 예전 절차는 "다른 물리 디스크 + 오프사이트 1 부" 를 따로 요구했다.
+> **실제로는 GitHub Release 하나가 그 둘을 겸한다** — 다른 하드웨어이고
+> 다른 장소다. 없는 디스크를 찾느라 절차가 멈추는 것이 더 나쁘다.
+>
+> 대신 **올리는 것이 번들 하나여서는 안 된다:**
+>
+> ```
+> <bundle_id>.tar.zst              번들 — 소비 쪽이 쓰는 것
+> ★ results-raw-<hash8>.jsonl.zst   원본 — table.parquet 은 파생물이다.
+>                                   파생 지표 계산식이 바뀌면 여기서 다시 만든다
+> ★ campaign-meta-<hash8>.tar.zst   앵커 / 드리프트 / tick_measured / gate_g7 /
+>                                   stability / clock_lock_check / compat_ab /
+>                                   peak_mma / ticks.csv / sweep.jsonl
+> + 각각 .sha256
+> ```
+>
+> **원본과 메타가 없으면 "왜 이 노이즈 계수인가" 를 재현할 수 없다.**
+> 예컨대 `tick_measured.json` 이 없으면 앵커만으로는 눈금 추정이 실패하고
+> (4090 앵커에서 0.007 ns), 그 번들의 `noise_floor` 를 다시 만들 수 없다.
 
 ```bash
 cd /home/piai/workspace
@@ -207,30 +228,44 @@ ls -lh datasets/*/
 `results-raw-{env_hash8}.jsonl.zst` 로 따로 압축한다 — `table.parquet` 은
 파생물이라 파생 지표 계산식이 바뀌면 원본에서 다시 만들어야 한다.
 
-그 다음 **물리적으로 다른 곳에 두 부**를 만든다.
+> ### ⛔ 컨테이너로 돌린다면 `datasets` 출력 경로가 **마운트 아래인지** 봐라
+>
+> `bundle.py` 의 기본 출력은 `REPO_ROOT/datasets` = 이미지 안 `/work/datasets`
+> 다. 마운트는 `/data` 뿐이므로 **`--rm` 과 함께 93 MB 번들이 사라진다.**
+> 실제로 4090 캠페인에서 밟았다 — 번들 생성은 "통과" 를 찍고 끝났다.
+>
+> ```bash
+> docker run --rm -e KERNELTAB_DATASETS=/data/datasets -v $PWD/data:/data \
+>     $TAG bundle --archive --archive-raw
+> ```
+>
+> `entrypoint.sh` 의 쓰기 검사는 `results`/`artifacts` 만 본다.
+
+그 다음 **릴리즈에 셋을 올린다.**
 
 ```bash
-BID=$(ls datasets | head -1)
+BID=$(ls datasets | grep -v '\.' | head -1)
+H=${BID##*-}                                   # env_hash 앞 8자
 
-# 5. 다른 물리 디스크 (같은 디스크 안의 사본은 백업이 아니다)
-lsblk -o NAME,SIZE,MOUNTPOINT           # 마운트된 다른 디스크 확인
-cp -a datasets/$BID  /mnt/<other-disk>/kerneltab/
-cp -a datasets/$BID.tar.zst* ~/kerneltab-results-*.tar.gz  /mnt/<other-disk>/kerneltab/
+# 메타 묶음 (앵커/드리프트/눈금/게이트 — 계수 재현의 근거)
+mkdir -p /tmp/meta-$H && cp -a results/{anchors.jsonl,drift.jsonl,drift_profile.json,\
+tick_measured.json,gate_g7.json,stability.json,clock_lock_check.json,compat_ab.json,\
+peak_mma.json,ticks.csv,sweep.jsonl,repro.jsonl,guard_probe.json,env.json} /tmp/meta-$H/
+tar -I 'zstd -19 -T0' -cf datasets/campaign-meta-$H.tar.zst -C /tmp meta-$H
+(cd datasets && sha256sum campaign-meta-$H.tar.zst > campaign-meta-$H.tar.zst.sha256)
 
-# 6. 오프사이트 1 부 (rclone / scp / GitHub Release 중 하나)
-rclone copy datasets/$BID.tar.zst  remote:kerneltab/
+# 5. 릴리즈 (오프사이트를 겸한다)
+gh release create "data-$BID" --title "..." --notes-file <노트> \
+    datasets/$BID.tar.zst          datasets/$BID.tar.zst.sha256 \
+    datasets/results-raw-$H.jsonl.zst   datasets/results-raw-$H.jsonl.zst.sha256 \
+    datasets/campaign-meta-$H.tar.zst   datasets/campaign-meta-$H.tar.zst.sha256
 
-# 7. 체크섬 대조 — 복사가 조용히 깨졌을 수 있다
-sha256sum -c datasets/$BID.tar.zst.sha256
-(cd /mnt/<other-disk>/kerneltab && sha256sum -c $BID.tar.zst.sha256)
-python3 -c "
-import sys; sys.path.insert(0,'.')
-from kerneltab.core.bundle import load_bundle
-b = load_bundle('/mnt/<other-disk>/kerneltab/$BID')   # verify=True 가 기본
-print('사본 무결성 OK:', b.bundle_id)"
+# 6. 체크섬 대조 — 업로드가 조용히 깨졌을 수 있다
+(cd datasets && sha256sum -c $BID.tar.zst.sha256 campaign-meta-$H.tar.zst.sha256)
+gh release download "data-$BID" -p '*.sha256' -D /tmp/rel && diff -r /tmp/rel datasets/ | head
 ```
 
-> **5~6 번을 마치기 전에는 `results/` 안의 무엇도 수정하지 마라.**
+> **5 번을 마치기 전에는 `results/` 안의 무엇도 수정하지 마라.**
 > 7 절(마이그레이션) 이후의 코드 수정은 파생 지표 계산식을 바꿀 수 있고,
 > `results.jsonl` 은 append-only 라 **되돌릴 방법이 원본 사본뿐**이다.
 
@@ -363,7 +398,7 @@ python3 scripts/validate_table.py --expect full || echo "STOP"
 python3 scripts/export.py
 python3 scripts/bundle.py --archive --archive-raw
 
-# 5~7) 다른 물리 디스크 / 오프사이트 / 체크섬 — 여기까지 끝나야 수정 허용
+# 5~6) GitHub Release (번들+원본+메타) / 체크섬 — 여기까지 끝나야 수정 허용
 cp -a datasets/* /mnt/<other-disk>/kerneltab/
 rclone copy datasets/*.tar.zst remote:kerneltab/
 sha256sum -c datasets/*.tar.zst.sha256

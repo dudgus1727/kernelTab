@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import time
 
 __all__ = [
     "DeviceNotFoundError",
@@ -40,18 +41,53 @@ class DeviceNotFoundError(RuntimeError):
     """지정한 UUID 의 GPU 가 이 기계에 없다."""
 
 
+#: `nvidia-smi` 실행이 실패했을 때 다시 시도하는 횟수와 간격(초).
+#:
+#: ⛔ **"nvidia-smi 가 한 번 실패한 것" 과 "그 GPU 가 없는 것" 은 다르다.**
+#:    RTX 4090 캠페인에서 슬라이스 시작 106 회 중 2 회가 `rc=255` 로 죽었고,
+#:    그때마다 24 시간짜리 전수 측정이 통째로 섰다 (20.1 h 지점 / 재개 27 분
+#:    지점). GPU 는 멀쩡했고 `dmesg` 에 Xid/NVRM 오류가 없었다.
+#:    5 초 간격 2,200 회 폴링으로도 재현되지 않아 원인은 미규명이다
+#:    (`docs/campaign_4090.md`).
+#:
+#: ★ 재시도는 **실행 실패에만** 적용한다. 목록을 정상적으로 받아왔는데 그
+#:   UUID 가 없으면 그것은 진짜 부재이므로 `index_of_uuid` 가 즉시 실패한다
+#:   — P-2(조용히 0 번으로 가지 않는다)는 그대로다.
+SMI_RETRIES = 3
+SMI_RETRY_SLEEP = 2.0
+
+
 def list_devices() -> list[tuple[int, str, str]]:
     """`[(index, uuid, name)]`. `nvidia-smi` 로 본 **물리** 목록이다."""
-    try:
-        p = subprocess.run(
-            ["nvidia-smi", "--query-gpu=index,uuid,name",
-             "--format=csv,noheader"],
-            capture_output=True, text=True, timeout=30)
-    except (OSError, subprocess.SubprocessError) as e:
-        raise DeviceNotFoundError(f"nvidia-smi 를 실행할 수 없다: {e}") from e
-    if p.returncode != 0:
+    last = None
+    for attempt in range(1, SMI_RETRIES + 1):
+        try:
+            p = subprocess.run(
+                ["nvidia-smi", "--query-gpu=index,uuid,name",
+                 "--format=csv,noheader"],
+                capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.SubprocessError) as e:
+            last = f"실행할 수 없다: {e}"
+        else:
+            if p.returncode == 0:
+                break
+            # ⛔ nvidia-smi 는 실패 이유를 **stdout** 에 찍는다
+            #    ("Failed to initialize NVML: ...", "Unable to determine the
+            #    device handle for GPU ..."). 예전에는 `p.stderr` 만 보고해서
+            #    **실제 이유가 버려졌다** — 4090 캠페인의 rc=255 두 건이
+            #    빈 메시지로 남았고 그래서 원인을 못 밝혔다.
+            detail = " / ".join(x for x in (p.stdout.strip(), p.stderr.strip()) if x)
+            last = f"rc={p.returncode}: {detail or '(출력 없음)'}"
+        if attempt < SMI_RETRIES:
+            print(f"  !! nvidia-smi 실패 ({last}) — {SMI_RETRY_SLEEP}초 뒤 "
+                  f"재시도 {attempt}/{SMI_RETRIES - 1}", flush=True)
+            time.sleep(SMI_RETRY_SLEEP)
+    else:
         raise DeviceNotFoundError(
-            f"nvidia-smi 가 실패했다 (rc={p.returncode}): {p.stderr.strip()}")
+            f"nvidia-smi 가 {SMI_RETRIES}회 연속 실패했다 — {last}\n"
+            "  ★ 이것은 'GPU 가 없다' 가 아니라 'nvidia-smi 를 못 돌렸다' 다.\n"
+            "  드라이버 상태(nvidia-smi, /proc/driver/nvidia/version)와\n"
+            "  커널/유저 모드 버전 일치를 확인하라.")
     out = []
     for line in p.stdout.splitlines():
         parts = [x.strip() for x in line.split(",")]

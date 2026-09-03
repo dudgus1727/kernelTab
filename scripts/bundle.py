@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -432,6 +433,37 @@ def github_release(bundle: dict, out: Path, dsdir: Path, bundle_id: str,
     return 0
 
 
+def guard_output_dir(out: str) -> None:
+    """출력 경로가 **사라지는 곳**이면 거부한다.
+
+    ⛔ 4090 캠페인에서 `bundle --archive` 가 정상 종료하고 "통과" 를 찍었는데
+       93 MB 번들과 77 MB tar 가 **컨테이너와 함께 사라졌다.** 기본 출력이
+       `REPO_ROOT/datasets` = 이미지 안 `/work/datasets` 인데 마운트는
+       `/data` 뿐이었다. 쓰기는 되므로 아무 오류도 안 났다.
+
+    `entrypoint.sh` 에도 같은 검사를 뒀지만 **두 겹으로 둔다** — 셸 shim 을
+    안 거치고 `python3 scripts/bundle.py` 로 직접 부르는 경로가 있다.
+    (`docs/decisions.md` 14 — 조용히 아무것도 안 하는 것을 금지한다)
+    """
+    path = Path(out).resolve()
+    in_container = (Path("/.dockerenv").exists()
+                    or os.environ.get("KERNELTAB_RESULTS_DIR", "").startswith("/data"))
+    if not in_container:
+        return
+    try:
+        mounts = Path("/proc/self/mountinfo").read_text()
+    except OSError:
+        return
+    points = {ln.split()[4] for ln in mounts.splitlines() if len(ln.split()) > 4}
+    if not any(path == Path(m) or str(path).startswith(m.rstrip("/") + "/")
+               for m in points if m != "/"):
+        raise SystemExit(
+            f"\u26d4 출력 경로 {path} 가 **마운트 밖**이다 (이미지 안).\n"
+            "   컨테이너를 지우면 번들이 사라진다 — 실제로 그렇게 잃었다.\n"
+            "   -e KERNELTAB_DATASETS=/data/datasets 와 -v <호스트>:/data 를 주거나\n"
+            "   --out 으로 마운트 아래를 지정하라.")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--env-hash", default=None)
@@ -456,6 +488,7 @@ def main() -> int:
                     help="무결성 검사를 건너뛴다. 검증 안 된 데이터를 배포하게 "
                          "되므로 진단 목적에만 쓸 것")
     args = ap.parse_args()
+    guard_output_dir(args.out)
 
     if not TABLE.exists():
         print(f"{TABLE} 가 없다. 먼저 scripts/export.py 를 돌려라.")
