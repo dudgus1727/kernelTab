@@ -147,6 +147,37 @@ def main() -> int:
     ctx = Ctx(paths.ARTIFACT_DIR / "libkt_ctx.so", 0)
     ctx.set_protocol(env)
     probe = NvmlProbe(uuid=env["hardware_extra"]["uuid"], index=0)
+
+    # ⛔ **스윕과 같은 버퍼 상태에서 재야 한다.**
+    #
+    #    `rehearse.py` 는 세그먼트 시작에 모든 버퍼를 최대 크기로 선할당한다
+    #    (`MEASURE_PATH_REVISION` 2/3). 여기서 안 하면 이 도구만 옛 지연
+    #    경로로 재고, **재현성 통계가 실제 측정 경로의 것이 아니게 된다.**
+    #
+    #    실측으로 드러났다: pass1 에서 workspace 가 가장 큰 parallel split-K
+    #    조합 두 개에만 **상수 0.58 ms** 가 붙었다 (10.67 ms 기준 5.5 %,
+    #    14.64 ms 기준 3.9 % — 비율이 아니라 절대량이 같다). 별도 프로세스
+    #    두 회차에서 pass1 값이 0.03 % 이내로 재현됐다.
+    #
+    #        회차1  5.62%  [11.2556, 10.6791, 10.6549]  (4096,4096,16384) sk12para
+    #        회차2  5.55%  [11.2523, 10.6590, 10.6845]  같은 조합
+    #
+    #    ★ 이것은 기준을 푸는 것이 아니라 **조건을 맞추는 것**이다
+    #      (`decisions.md` 29 의 구분). 바로 위 `measure()` 의 "정확도 검사용
+    #      1회 실행" 주석과 같은 종류의 수정이다.
+    from kerneltab.backends import get_backend as _get_backend
+    from kerneltab.core.shapes import all_shapes as _all_shapes
+    _sh = list(_all_shapes(hw))
+    _bm = max(q.M for q in _sh)
+    _bn = max(q.N for q in _sh)
+    _bk = max(q.K for q in _sh)
+    ctx.prepare_problem(_bm, _bn, _bk)
+    _ws = (2 * max(q.M * q.N for q in _sh)
+           * max(_get_backend(hw.arch).axis_space()["split_k"]))
+    ctx.buffers(_ws, parallel=False)
+    print(f"[버퍼] 최대 {_bm}x{_bn}x{_bk} + workspace {_ws / 2**30:.2f} GiB "
+          f"선할당 (스윕과 같은 상태로 맞춘다)", flush=True)
+
     libs: dict[str, Kernel] = {}
 
     def get(kid):
@@ -178,6 +209,33 @@ def main() -> int:
     drift_rows = []
     t0 = time.time()
     deadline = t0 + args.minutes * 60
+
+    # ⛔ **버리는 사전 pass 하나.** 스윕과 같은 장치 상태에서 재기 위해서다.
+    #
+    #    실측 (H100, 2026-09-03): `sm90_tb256x256x64_w128x64x64_st3_swid8_a888`
+    #    을 한 번 돌리면 `sm90_tb256x256x32_w128x64x32_st6_swid4_a888`
+    #    (4096,4096,16384 sk12 parallel)이 그 프로세스 안에서 **그 뒤로 계속
+    #    4.7 % 빨라진다** (11.22 -> 10.67 ms). 짝을 여섯 번 바꿔 확인했고
+    #    (P=0/2/10/20/28 은 -0.03~+0.05 %), 형상이 같은 조합(P=0)은 아무 일도
+    #    하지 않으므로 형상이 아니라 **커널**이 일으킨다.
+    #
+    #    ⚠️ 지속 부하도 온도도 아니다 — 같은 조합만 6 분간 연속으로 재면
+    #       11.20~11.22 로 평평하다 (표류 -0.15 %, 클럭 1200/2619 고정).
+    #
+    #    스윕은 슬라이스마다 618 개 커널을 돌리므로 **항상 그 상태에서 잰다**
+    #    (이 조합의 스윕 값 10.7277 / 10.7857 = 빠른 쪽). 실제로 스윕 데이터는
+    #    슬라이스 앞 10 행이 중앙 -0.025 % 로 전이가 보이지 않는다.
+    #    반면 recheck 는 차가운 프로세스에서 시작해 **pass1 만 다른 상태**에서
+    #    잰다. G-7 5 번이 그것 때문에 실패했다.
+    #
+    #    ★ 기준을 푸는 것이 아니라 **조건을 맞추는 것**이다 (decisions 29).
+    #      `results.jsonl` 에는 아무것도 안 쓰므로 캠페인 데이터는 그대로다.
+    print(f"[예열] {len(pick)}개 조합 1회 (버림) — 스윕과 같은 장치 상태로 맞춘다",
+          flush=True)
+    for r in pick:
+        pr, rt = r["problem"], r["runtime"]
+        measure(r["kernel_id"], pr["M"], pr["N"], pr["K"],
+                rt["split_k"], rt["split_k_mode"])
 
     print(f"재현성 {len(pick)}개 조합 x {args.passes} 회, 드리프트 기준 커널 {drift_kid}")
     try:

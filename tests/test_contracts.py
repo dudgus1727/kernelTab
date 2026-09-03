@@ -532,4 +532,34 @@ class TestBufferPreallocation:
             "세그먼트 시작에 최대 형상으로 선할당하지 않는다 — 큰 형상 전후의 "
             "측정 조건이 갈린다")
         assert "max(q.M for q in shapes)" in blk
+        # ⛔ 리비전 2 는 절반만 덮었다 — workspace 는 같은 고수위 Buf 인데
+        #    prepare_problem 이 안 잡는다. parallel split-K 에서는 세마포어가
+        #    아니라 GEMM 의 D(부분합 버퍼)로 최대 8 GiB 까지 커진다.
+        assert "ctx.buffers(_ws, parallel=False)" in blk, (
+            "workspace 를 선할당하지 않는다 (MEASURE_PATH_REVISION 3)")
+
+    def test_recheck_도_같은_상태에서_잰다(self):
+        """★ 재현성 도구가 스윕과 다른 버퍼 상태에서 재면 안 된다.
+
+        `recheck_stability.py` 만 선할당을 안 하면 pass1 에서 workspace 가
+        가장 큰 parallel split-K 조합에 **상수 0.58 ms** 가 붙는다
+        (10.67 ms 기준 5.5 %, 14.64 ms 기준 3.9 % — 비율이 아니라 절대량이
+        같다). 별도 프로세스 두 회차에서 pass1 이 0.03 % 이내로 재현됐다 —
+        표본이 아니라 계통이다. G-7 5 번이 이 불일치로 실패했다.
+        """
+        from pathlib import Path
+        src = (Path(__file__).resolve().parent.parent / "scripts"
+               / "recheck_stability.py").read_text()
+        i = src.index("probe = NvmlProbe(")
+        blk = src[i:i + 2500]
+        assert "ctx.prepare_problem(_bm, _bn, _bk)" in blk, (
+            "recheck 가 선할당을 안 한다 — 스윕과 다른 경로로 잰다")
+        assert "ctx.buffers(_ws, parallel=False)" in blk, (
+            "recheck 가 workspace 를 선할당하지 않는다")
+        # ★ 버리는 사전 pass — 스윕은 슬라이스마다 618 개 커널을 돌린 상태에서
+        #   재는데 recheck 는 차가운 프로세스에서 시작한다. 커널 하나가
+        #   다른 커널을 그 프로세스 안에서 4.7 % 빠르게 만든다 (실측).
+        assert "[예열]" in src, (
+            "recheck 에 버리는 사전 pass 가 없다 — pass1 만 다른 장치 상태에서 "
+            "재게 되고 G-7 5 번이 그 때문에 실패한다")
 
