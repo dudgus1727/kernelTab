@@ -1495,6 +1495,13 @@ P=29  (2432,4096,4096) sk3 seri  ★tb256x256x64   +4.68%
 ⚠️ 기전(무엇이 장치에 남는가)은 **아직 모른다.** 상태가 프로세스 안에서
    지속되고 커널이 특정된다는 것까지가 실측이다. 모른다고 적어 둔다.
 
+★ **확인하지 않은 것** (추측이 아니라 다음 사람이 볼 자리다):
+  L2 설정 / persisting access window (`cudaLimitPersistingL2CacheSize`) /
+  smem carveout (`cudaFuncSetAttribute` 의 `MaxDynamicSharedMemorySize`,
+  `PreferredSharedMemoryCarveout`) / 클러스터 관련 상태.
+  `tb256x256x64` 는 smem 192 KB 로 **carveout 을 최대치로 요청**한다 —
+  그 설정이 프로세스 수준에 남는지는 보지 않았다.
+
 ### 캠페인 데이터는 멀쩡하다 — 가정하지 않고 셌다
 
 ```
