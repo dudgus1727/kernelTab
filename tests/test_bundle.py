@@ -370,3 +370,20 @@ class TestSchemaVersion:
         assert f"| {m.group(1)} |" in doc, (
             "core/bundle.py 의 schema_version 버전 표에 "
             f"{m.group(1)} 줄이 없다. 무엇이 늘었는지 적어라.")
+
+
+def test_번들이_conditions_revision_을_싣는다():
+    """⛔ 정의 5 의 핵심이 이 필드인데 번들에 안 실렸었다.
+
+    `env_hash_v2` 가 다르면 "조건이 다르다" 는 알 수 있지만 **무엇이
+    다른지**는 이 값이 있어야 안다 — 측정 경로가 바뀐 것인지(버퍼 선할당
+    유무 등), 클럭·축이 바뀐 것인지. H100 번들이 `None` 으로 나가서
+    드러났다 (`env.json` 에는 3 이 있었다).
+    """
+    from pathlib import Path
+    src = (Path(__file__).resolve().parent.parent / "scripts"
+           / "bundle.py").read_text()
+    assert '"conditions_revision": env.get("conditions_revision")' in src, (
+        "BUNDLE.json 이 conditions_revision 을 안 싣는다 — 소비 쪽이 두 표의 "
+        "조건 차이가 무엇인지 알 수 없다 (measure/runner.py "
+        "MEASURE_PATH_REVISION 이 원본)")

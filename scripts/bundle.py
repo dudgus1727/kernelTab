@@ -656,6 +656,12 @@ CUTLASS (NVIDIA, BSD-3-Clause) 는 이 번들에 포함되지 않는다.
         #   그것이 없으면 "이 두 표가 같은 조건인가" 를 파일만 보고 알 수 없다.
         "env_hash_v2": env.get("env_hash_v2"),
         "env_hash_def_version": env.get("env_hash_def_version"),
+        # ⛔ **정의 5 의 핵심이 이 필드인데 번들에 안 실렸었다** (H100 에서
+        #    드러났다). `env_hash_v2` 가 다르면 "조건이 다르다" 는 알 수
+        #    있지만 **무엇이 다른지**는 이 값이 있어야 안다 — 측정 경로가
+        #    바뀌었는지(선할당 유무 등), 아니면 클럭·축이 바뀌었는지.
+        #    `measure/runner.py` 의 `MEASURE_PATH_REVISION` 이 원본이다.
+        "conditions_revision": env.get("conditions_revision"),
         # 측정 노이즈 바닥. 소비 쪽이 재계산 없이 정답 허용치를 정할 수
         # 있어야 한다. 형상마다 다르므로 고정 1% 를 쓰면 안 된다.
         "noise_floor": _noise_coefficients(env["env_hash"]),
